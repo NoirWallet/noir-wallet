@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PortfolioReadModel, PortfolioAssetView } from '@/core/portfolio'
-import type { AssetPriceReadModel } from '@/core/prices'
 import nearLogo from '@/images/figma-near-confidential.svg'
 import { resolveEvmChainIconAlias } from '@/config/icons'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
@@ -17,8 +16,7 @@ import { useConfidentialFundingPreview } from '@/popup/hooks/useConfidentialFund
 import { useQuoteReview, useQuoteReviewTimer } from '@/popup/hooks/useQuoteReview'
 import { useShieldBalances } from '@/popup/hooks/useShieldBalances'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
-import { assetPriceClient } from '@/popup/services/asset-price-client'
-import { withConfidentialAssetPrices } from '@/popup/services/portfolio-prices'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { findAssetPrice } from '@/core/prices'
 import { getShieldTransferChainIds } from '@/popup/services/shield-transfer'
 import { useNavigate } from '@/popup/provider/Router'
@@ -170,10 +168,6 @@ export function ConfidentialSendForm({
     resolveManagedIntentsCatalog(getCachedTokens())
   )
   const [catalogSettled, setCatalogSettled] = useState(false)
-  const [priceSnapshot, setPriceSnapshot] = useState<{
-    scopeKey: string
-    value: AssetPriceReadModel
-  } | null>(null)
   const [routeSelection, setRouteSelection] = useState({
     sourceId: routeAssetId,
     destinationNetworkId: routeNetworkId,
@@ -191,6 +185,7 @@ export function ConfidentialSendForm({
     source: ShieldFundingAsset
     destination: ShieldFundingAsset
     amount: string
+    sourcePriceUsd: string | undefined
   }> | null>(null)
   const quoteReview = useQuoteReview()
   const preparedRef = useRef(prepared)
@@ -332,20 +327,6 @@ export function ConfidentialSendForm({
     }
   }, [active, sourceSelectorActive, network, routeAssetId])
 
-  useEffect(() => {
-    if (!active) return
-    let current = true
-    void assetPriceClient
-      .getPrices('read')
-      .then(value => {
-        if (current && value && value.status !== 'error') setPriceSnapshot({ scopeKey, value })
-      })
-      .catch(() => {})
-    return () => {
-      current = false
-    }
-  }, [active, scopeKey])
-
   const options = useMemo(
     () => listShieldFundingAssets(model, managedAssets, catalogTokens, network),
     [model, managedAssets, catalogTokens, network]
@@ -356,12 +337,7 @@ export function ConfidentialSendForm({
     () => shieldFundingSources(options, displayBalances),
     [options, displayBalances]
   )
-  const prices = priceSnapshot?.scopeKey === scopeKey ? priceSnapshot.value : null
-  const pickerPrices = useMemo(() => withConfidentialAssetPrices(model, prices), [model, prices])
-  const catalogPrices = useMemo(
-    () => new Map(catalogTokens.map(token => [token.assetId, token.price])),
-    [catalogTokens]
-  )
+  const pickerPrices = useAssetPrices(network, active)
   const sources = useMemo(() => {
     const fundedAssetIds = new Set(fundedSources.map(item => item.asset.asset.id))
     return [...fundedSources, ...options.filter(item => !fundedAssetIds.has(item.asset.asset.id))]
@@ -375,10 +351,7 @@ export function ConfidentialSendForm({
           shieldFundingAvailableRaw(item, displayBalances),
           item.asset.metadata.decimals
         ),
-        priceUsd:
-          findAssetPrice(pickerPrices, item.asset.asset.id)?.priceUsd ??
-          catalogPrices.get(item.managed.protocolAssetId) ??
-          null,
+        priceUsd: findAssetPrice(pickerPrices, item.asset.asset.id)?.priceUsd ?? null,
         item
       }))
     ).map(row => ({
@@ -401,7 +374,7 @@ export function ConfidentialSendForm({
       decimals: row.item.asset.metadata.decimals,
       priceUsd: row.priceUsd
     }))
-  }, [sourceSelectorActive, displayBalances, pickerPrices, catalogPrices, sources])
+  }, [sourceSelectorActive, displayBalances, pickerPrices, sources])
   const routedPublicAsset = model?.assets.find(item => item.asset.id === sourceId)
   const routedManaged = routedPublicAsset
     ? resolveShieldManagedAsset(routedPublicAsset, managedAssets, catalogTokens, network)
@@ -410,7 +383,7 @@ export function ConfidentialSendForm({
     ? (sources.find(item => item.asset.asset.id === sourceId) ??
       sources.find(item => item.managed.protocolAssetId === routedManaged?.protocolAssetId) ??
       null)
-    : selectDefaultShieldWithdrawSource(options, displayBalances, model, prices, network)
+    : selectDefaultShieldWithdrawSource(options, displayBalances, pickerPrices, network)
   const selectedSourceAssetId = source?.asset.asset.id
   const routes = useMemo(() => createShieldSendRoutes(options, network), [options, network])
   const selectedDestinationNetworkId = destinationNetworkId ?? source?.chain.chain.id ?? null
@@ -743,7 +716,14 @@ export function ConfidentialSendForm({
         return
       }
       cancelledPlanId.current = null
-      const pending = { review, request, source, destination, amount }
+      const pending = {
+        review,
+        request,
+        source,
+        destination,
+        amount,
+        sourcePriceUsd: findAssetPrice(pickerPrices, source.asset.asset.id)?.priceUsd
+      }
       preparedRef.current = pending
       setPrepared(pending)
     } catch (cause) {
@@ -1040,11 +1020,7 @@ export function ConfidentialSendForm({
           }}
           amount={prepared.amount}
           amountPrefix="-"
-          fiatValue={formatSendFiatValue(
-            prepared.amount,
-            findAssetPrice(pickerPrices, prepared.source.asset.asset.id)?.priceUsd ??
-              catalogPrices.get(prepared.source.managed.protocolAssetId)
-          )}
+          fiatValue={formatSendFiatValue(prepared.amount, prepared.sourcePriceUsd)}
           network={prepared.destination.chain.chain.displayName}
           rows={[
             {
@@ -1366,8 +1342,7 @@ export function ConfidentialSendForm({
             : selectDefaultShieldWithdrawSource(
                 routes.getSources(id),
                 displayBalances,
-                model,
-                prices,
+                pickerPrices,
                 network
               )
           if (nextSource) applyRouteSelection(nextSource.asset.asset.id, id)

@@ -1,6 +1,6 @@
+import { findCatalogPrice } from '@/core/prices/catalog-price-identity'
 import Big, { safeBig } from '@/lib/big'
-import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
-import { resolveRheaSwapCanonicalAssetId } from '@/core/services/rhea-swap/rhea-swap-asset-identity'
+import { type AssetPriceReadModel } from '@/core/prices'
 import type { RheaSwapToken } from '@/core/services/rhea-swap'
 import type { Network } from '@/types'
 
@@ -17,15 +17,13 @@ export function formatSwapReviewFiat(amount: string, price: number | string | un
 }
 
 export function resolveSwapMarketPrice(
-  token: Pick<RheaSwapToken, 'assetId' | 'price'> | null,
+  token: RheaSwapToken | null,
   prices: AssetPriceReadModel | null,
   network: Network
 ): number | undefined {
   if (!token) return undefined
-  const assetId = prices && resolveRheaSwapCanonicalAssetId(token.assetId, network)
-  const marketPrice = assetId ? Number(findAssetPrice(prices, assetId)?.priceUsd) : NaN
-  if (Number.isFinite(marketPrice) && marketPrice > 0) return marketPrice
-  return Number.isFinite(token.price) && token.price > 0 ? token.price : undefined
+  const price = findCatalogPrice(prices, token, network)
+  return price ? Number(price.priceUsd) : undefined
 }
 
 export function getSwapAmountValues(input: SwapAmountValuesInput) {

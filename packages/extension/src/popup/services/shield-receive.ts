@@ -138,10 +138,7 @@ export function sortShieldReceiveTokens(
         : native
           ? getAssetDomainRaw(native, 'shield')
           : null
-      const price =
-        [findAssetPrice(prices, route.assetId)?.priceUsd, holding?.priceUsd, catalogAsset?.price]
-          .map(parseTokenBalanceDecimal)
-          .find(value => value?.gt(0)) ?? null
+      const price = parseTokenBalanceDecimal(findAssetPrice(prices, route.assetId)?.priceUsd)
       if (raw === null) continue
       const quantity = new Big(
         formatBaseUnitDecimalAmount(raw, catalogAsset?.decimals ?? ZEC_DECIMALS)

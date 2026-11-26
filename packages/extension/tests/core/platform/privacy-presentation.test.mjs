@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
+import { catalogPriceAssetId } from '../../../src/core/prices/asset-price.ts'
 import {
   getPortfolioAssetUsdValue,
-  summarizePortfolioFiat,
-  withConfidentialAssetPrices
+  summarizePortfolioFiat
 } from '../../../src/popup/services/portfolio-prices.ts'
 import { getActivityTransactionReferences } from '../../../src/popup/services/activity-transaction-references.ts'
 import { shouldWarnSmallTransfer } from '../../../src/popup/services/activity-small-transfer-warning.ts'
@@ -670,7 +670,7 @@ test('Home distinguishes an initial load, an unavailable valuation and a confirm
   ).toBe('unavailable')
 })
 
-test('home totals include the Public balance priced by a matching Confidential holding', () => {
+test('home totals value Public and Confidential balances with the same market quote', () => {
   const chainId = 'eip155:56'
   const assetId = `${chainId}/erc20:0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d`
   const asset = {
@@ -696,20 +696,18 @@ test('home totals include the Public balance priced by a matching Confidential h
           decimals: 18,
           tokenId: 'private-usdc',
           protocolAssetId: 'usdc',
-          availableRaw: asset.balance.confidentialRaw,
-          priceUsd: '0.9996',
-          priceUpdatedAt: new Date().toISOString()
+          availableRaw: asset.balance.confidentialRaw
         }
       ]
     }
   }
-  const listPrices = withConfidentialAssetPrices(portfolio, null)
+  const listPrices = { quotes: [{ assetId, priceUsd: '0.9996', freshness: 'fresh' }] }
   expect(getPortfolioAssetUsdValue(asset, listPrices, asset.balance.mainRaw)).toBe('87.9648')
-  expect(summarizePortfolioFiat(portfolio, null)).toMatchObject({
+  expect(summarizePortfolioFiat(portfolio, listPrices)).toMatchObject({
     totalUsd: '88.9644',
     missingAssetCount: 0
   })
-  expect(getHomeAssetBreakdown({ livePortfolioTotal: true, portfolio })).toMatchObject({
+  expect(getHomeAssetBreakdown({ livePortfolioTotal: true, portfolio, prices: listPrices })).toMatchObject({
     publicUsd: '87.9648',
     shieldUsd: '0.9996'
   })
@@ -747,7 +745,8 @@ test('home asset domains count each EVM and Zcash balance once', () => {
   const prices = {
     quotes: [
       { assetId: evmAsset.asset.id, priceUsd: '2', freshness: 'fresh' },
-      { assetId: zcashAsset.asset.id, priceUsd: '3', freshness: 'fresh' }
+      { assetId: zcashAsset.asset.id, priceUsd: '3', freshness: 'fresh' },
+      { assetId: catalogPriceAssetId('confidential', 'usdc'), priceUsd: '1', freshness: 'fresh' }
     ]
   }
   const input = {
@@ -843,16 +842,13 @@ test('home asset domains count each EVM and Zcash balance once', () => {
           protocolAssetId: 'eth',
           availableRaw: '20',
           assetId: evmAsset.asset.id,
-          decimals: 0,
-          priceUsd: '2'
+          decimals: 0
         },
         {
           tokenId: 'private-usdc',
           protocolAssetId: 'usdc',
           availableRaw: '50',
-          decimals: 0,
-          priceUsd: '1',
-          priceUpdatedAt: new Date().toISOString()
+          decimals: 0
         }
       ]
     }
@@ -935,18 +931,13 @@ test('home asset domains count each EVM and Zcash balance once', () => {
     privateUsdPartial: false
   })
   expect(summarizePortfolioFiat(chainScoped, prices).totalUsd).toBe('286')
+  const independentUsdcId = catalogPriceAssetId('confidential', 'usdc')
   const staleCatalog = {
-    ...independent,
-    confidential: {
-      ...independent.confidential,
-      assets: independent.confidential.assets.map(asset =>
-        asset.tokenId === 'private-usdc'
-          ? { ...asset, priceUpdatedAt: '2020-01-01T00:00:00.000Z' }
-          : asset
-      )
-    }
+    quotes: prices.quotes.map(quote =>
+      quote.assetId === independentUsdcId ? { ...quote, freshness: 'stale' } : quote
+    )
   }
-  expect(summarizePortfolioFiat(staleCatalog, prices)).toMatchObject({
+  expect(summarizePortfolioFiat(independent, staleCatalog)).toMatchObject({
     totalUsd: '280',
     staleAssetCount: 1
   })
@@ -972,19 +963,13 @@ test('home asset domains count each EVM and Zcash balance once', () => {
     summarizeKnownShieldFiat({ status: 'unavailable', entries: [], fiat: null }, null)
   ).toEqual({ usd: null, partial: true })
   const missingPrice = {
-    ...independent,
-    confidential: {
-      ...independent.confidential,
-      assets: independent.confidential.assets.map(asset =>
-        asset.tokenId === 'private-usdc' ? { ...asset, priceUsd: undefined } : asset
-      )
-    }
+    quotes: prices.quotes.filter(quote => quote.assetId !== independentUsdcId)
   }
-  expect(summarizePortfolioFiat(missingPrice, prices)).toMatchObject({
+  expect(summarizePortfolioFiat(independent, missingPrice)).toMatchObject({
     totalUsd: '230',
     missingAssetCount: 1
   })
-  expect(summarizeAssetDomainsUsd(missingPrice, prices)).toMatchObject({
+  expect(summarizeAssetDomainsUsd(independent, missingPrice)).toMatchObject({
     shieldUsd: '58',
     shieldUsdPartial: true
   })
@@ -1072,8 +1057,7 @@ test('asset detail uses a unique Confidential identity without adding it to the 
     assetId: asset.asset.id,
     chainId: asset.asset.chainId,
     decimals: 0,
-    availableRaw: '20',
-    priceUsd: '3'
+    availableRaw: '20'
   }
   const model = { assets: [asset], confidential: { status: 'ready', assets: [holding] } }
   const categories = getAssetDetailCategories(asset, model, true, '2')
@@ -1083,19 +1067,9 @@ test('asset detail uses a unique Confidential identity without adding it to the 
   expect(getAssetDetailCategories(asset, model, true).fiat).toEqual({
     all: null,
     public: null,
-    shield: '60',
+    shield: null,
     private: null
   })
-  expect(
-    getAssetDetailCategories(
-      asset,
-      {
-        ...model,
-        confidential: { status: 'ready', assets: [{ ...holding, priceUsd: 'invalid' }] }
-      },
-      true
-    ).fiat.shield
-  ).toBeNull()
   expect(resolveConfidentialDetailAssetId(model, holding.tokenId)).toBe(asset.asset.id)
   expect(
     resolveConfidentialDetailAssetId(

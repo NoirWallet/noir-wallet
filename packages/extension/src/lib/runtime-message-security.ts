@@ -685,8 +685,8 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   GET_BITCOIN_ACTIVITY: { optional: { action: isPortfolioAction } },
   GET_BITCOIN_WALLET_IDENTITY: {},
-  GET_ASSET_PRICES: {
-    required: { action: isPortfolioAction },
+  REFRESH_ASSET_PRICES: {
+    required: { network: value => value === 'mainnet' || value === 'testnet' },
     optional: { assetId: isShortString }
   },
   GET_TOKEN_CONTRACT_ICON: {
@@ -1208,7 +1208,7 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     GET_ACTIVITY: ['extension-page'],
     GET_BITCOIN_ACTIVITY: ['extension-page'],
     GET_BITCOIN_WALLET_IDENTITY: ['extension-page'],
-    GET_ASSET_PRICES: ['extension-page'],
+    REFRESH_ASSET_PRICES: ['extension-page'],
     GET_TOKEN_CONTRACT_ICON: ['extension-page'],
     GET_RHEA_SWAP_TOKENS: ['extension-page'],
     QUOTE_RHEA_SWAP: ['extension-page'],

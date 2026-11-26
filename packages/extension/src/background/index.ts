@@ -218,6 +218,8 @@ import {
   hydrateBackgroundRheaSwapCatalog,
   prewarmBackgroundRheaSwapCatalog,
   getCachedBackgroundRheaSwapTokens,
+  getBackgroundRheaCatalogPriceTokens,
+  setRheaCatalogPriceListener,
   readRheaZcashTransferDeadline,
   recoverRheaWithdrawActivity
 } from './rhea-swap'
@@ -443,10 +445,14 @@ import { readLedgerProvisioningCredential } from './ledger-signing-bridge'
 import type { ChromeTokenVisibilityRepository } from '@/infrastructure/portfolio/chrome-token-visibility'
 import type { DetectedEvmAssetRecord, UserEvmAssetRecord } from '@/core/chains/user-assets'
 import { createBackgroundUserEvmAssetRuntime } from './user-evm-assets'
-import { type SwapToken } from '@/core/services/intents-api'
+import { getCachedTokens, type SwapToken } from '@/core/services/intents-api'
+import { ASSET_PRICE_ALARM, ASSET_PRICE_PORT } from '@/core/prices/asset-price-channel'
+import { resolveCatalogPriceAssetId } from '@/core/prices/catalog-price-identity'
+import { AssetPriceStore } from './asset-price-store'
 import {
   readBackgroundSwapCatalog,
   refreshBackgroundSwapCatalog,
+  setIntentsCatalogPriceListener,
   SWAP_CATALOG_REFRESH_ALARM
 } from './swap-token-catalog'
 import {
@@ -633,13 +639,35 @@ observeLegacyTransactionCommits((accountKey, previous, current) => {
     )
     .catch(() => {})
 })
-let assetPriceService = createBackgroundAssetPriceService()
-setObservationPriceReader(() => assetPriceService.readCached())
-let assetPriceRefreshTail: Promise<void> = Promise.resolve()
-const assetPriceRefreshes = new Map<
-  string,
-  { service: typeof assetPriceService; operation: ReturnType<typeof assetPriceService.refresh> }
->()
+const assetPriceStore = runtimeNetworkReady.then(
+  network =>
+    new AssetPriceStore(
+      network,
+      isCurrent => createBackgroundAssetPriceService([], [], [], isCurrent),
+      () =>
+        network === 'mainnet'
+          ? (
+              [
+                ['confidential', getCachedTokens()],
+                ['rhea', getBackgroundRheaCatalogPriceTokens()]
+              ] as const
+            ).flatMap(([provider, tokens]) =>
+              tokens.map(token => ({
+                assetId: resolveCatalogPriceAssetId(token, network, provider),
+                provider,
+                priceUsd: token.price,
+                updatedAt: token.priceUpdatedAt
+              }))
+            )
+          : []
+    )
+)
+const readAssetPrices = () => assetPriceStore.then(store => store.readCached())
+setObservationPriceReader(readAssetPrices)
+const onCatalogPricesChanged = () =>
+  void assetPriceStore.then(store => store.catalogChanged()).catch(() => {})
+setRheaCatalogPriceListener(onCatalogPricesChanged)
+setIntentsCatalogPriceListener(onCatalogPricesChanged)
 let assetMarketHistoryService = createBackgroundAssetMarketHistoryService()
 const rheaSwapService = DEFAULT_NETWORK === 'mainnet' ? createBackgroundRheaSwapService() : null
 const combinedSwapRepository = new IndexedDbTransactionRepository()
@@ -830,25 +858,7 @@ const chainEndpointSettingsCoordinator = new ChainEndpointSettingsCoordinator()
 const evmDAppNetworkSwitchCoordinator = new EvmDAppNetworkSwitchCoordinator()
 
 function refreshAssetPrices(assetId?: string) {
-  const service = assetPriceService
-  const fullRefresh = assetPriceRefreshes.get('*')
-  if (assetId && fullRefresh?.service === service) return fullRefresh.operation
-  const key = assetId ?? '*'
-  const pending = assetPriceRefreshes.get(key)
-  if (pending?.service === service) return pending.operation
-  const operation = assetPriceRefreshTail.then(
-    () => service.refresh(assetId),
-    () => service.refresh(assetId)
-  )
-  assetPriceRefreshes.set(key, { service, operation })
-  assetPriceRefreshTail = operation.then(
-    () => undefined,
-    () => undefined
-  )
-  void assetPriceRefreshTail.then(() => {
-    if (assetPriceRefreshes.get(key)?.operation === operation) assetPriceRefreshes.delete(key)
-  })
-  return operation
+  return assetPriceStore.then(store => store.refresh(assetId))
 }
 const networkSwitchBitcoinDerivation = new BitcoinMultichainDerivationClient({
   credentials: credentialSession
@@ -1651,10 +1661,14 @@ async function reloadMultichainRuntime(
         }),
     dispatch: dispatchDAppChainRequest
   })
-  assetPriceService = createBackgroundAssetPriceService(
-    userAssets.definitions,
-    intentsProtocolAssets,
-    intentsProtocolPriceMappings
+  const priceStore = await assetPriceStore
+  priceStore.replaceSources(isCurrent =>
+    createBackgroundAssetPriceService(
+      userAssets.definitions,
+      intentsProtocolAssets,
+      intentsProtocolPriceMappings,
+      isCurrent
+    )
   )
   assetMarketHistoryService = createBackgroundAssetMarketHistoryService(
     userAssets.definitions,
@@ -2633,6 +2647,25 @@ async function requestPeriodicBalanceSync(
 }
 
 chrome.runtime.onConnect.addListener(port => {
+  if (port.name === ASSET_PRICE_PORT) {
+    if (
+      !port.sender ||
+      getOwnExtensionSenderContext(port.sender, chrome.runtime.id) !== 'extension-page'
+    ) {
+      port.disconnect()
+      return
+    }
+    let disconnected = false
+    port.onDisconnect.addListener(() => {
+      disconnected = true
+    })
+    void assetPriceStore
+      .then(store => {
+        if (!disconnected) store.attach(port)
+      })
+      .catch(() => port.disconnect())
+    return
+  }
   if (port.name !== FOREGROUND_ZCASH_PROBE_PORT) return
   if (
     !port.sender ||
@@ -2677,6 +2710,10 @@ function refreshActiveZcashReceiveConfirmations(): void {
 void trustedStorageAccessReady.then(() => initializeAnalyticsReporting()).catch(() => {})
 
 chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === ASSET_PRICE_ALARM) {
+    void assetPriceStore.then(store => store.onAlarm()).catch(() => {})
+    return
+  }
   if (alarm.name === COMBINED_EVM_SWAP_ALARM) {
     void multichainStartupReady.then(() => combinedEvmSwap.poll()).catch(() => {})
     return
@@ -4386,8 +4423,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         }
       }
       if (message.action === 'refresh' && model) {
-        void assetPriceService
-          .readCached()
+        void readAssetPrices()
           .then(prices => observePortfolioBalances(model, prices))
           .catch(() => {})
       }
@@ -4461,10 +4497,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       })
       .then(result => {
         if (result && message.action !== 'read') {
-          void Promise.allSettled([
-            assetPriceService.readCached(),
-            portfolioCoordinator?.readCachedActive()
-          ])
+          void Promise.allSettled([readAssetPrices(), portfolioCoordinator?.readCachedActive()])
             .then(([prices, portfolio]) =>
               observeActivityReceipts(
                 result.scope,
@@ -4517,12 +4550,15 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     return true
   }
 
-  if (message.type === 'GET_ASSET_PRICES') {
-    const operation =
-      message.action === 'read'
-        ? assetPriceService.readCached()
-        : refreshAssetPrices(typeof message.assetId === 'string' ? message.assetId : undefined)
-    void operation
+  if (message.type === 'REFRESH_ASSET_PRICES') {
+    void runtimeNetworkReady
+      .then(network =>
+        message.network === network
+          ? refreshAssetPrices(
+              typeof message.assetId === 'string' ? parseAssetId(message.assetId).id : undefined
+            )
+          : null
+      )
       .then(result => sendResponse({ result }))
       .catch(() => sendResponse({ result: null }))
     return true

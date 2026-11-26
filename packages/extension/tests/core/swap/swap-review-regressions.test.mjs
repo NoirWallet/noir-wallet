@@ -1265,11 +1265,11 @@ it('ranks Shield Swap destinations by wallet balance value and distinguishes EVM
   const rows = buildShieldDestinationPickerRows({
     network: 'mainnet',
     options: [ethereum, base],
-    tokens: [
-      { assetId: 'nep141:zec.omft.near', price: 100 },
-      { assetId: ethereum.managed.protocolAssetId, price: 2000 },
-      { assetId: base.managed.protocolAssetId, price: 2000 }
-    ],
+    prices: { quotes: [
+      { assetId: 'bip122:00040fe8ec8471911baa1db1266ea15d/slip44:133', priceUsd: '100' },
+      { assetId: ethereum.managed.assetId, priceUsd: '2000' },
+      { assetId: base.managed.assetId, priceUsd: '2000' }
+    ] },
     balances: [
       { tokenId: ethereum.managed.protocolAssetId, available: '60000000000000000' },
       { tokenId: base.managed.protocolAssetId, available: '25000000000000000' }
@@ -1317,7 +1317,7 @@ it('only routes same-asset Confidential ZEC to the account Unified Address and b
     network: 'mainnet',
     source: zec,
     options: [zec],
-    tokens: [],
+    prices: null,
     balances,
     nativeZecDestinations: [
       { fundingSource: 'transparent', address: transparent, availableRaw: '0' },

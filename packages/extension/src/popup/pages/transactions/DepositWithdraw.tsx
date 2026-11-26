@@ -16,7 +16,7 @@ import {
 import { Icon } from '@iconify/react'
 import { NOIR_PUBLIC_CONFIDENTIAL_TRANSFER_APP_FEES } from '@/config/intents'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
-import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
+import { findAssetPrice } from '@/core/prices'
 import {
   formatBaseUnitAmount,
   formatBaseUnitDecimalAmount,
@@ -113,7 +113,7 @@ import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-act
 import { toWalletEvmQuoteToken } from '@/popup/services/token-address-discovery'
 import type { SwapToken } from '@/core/services/intents-api'
 import { resolvePortfolioTransferAvailability } from '@/popup/services/transfer-availability'
-import { assetPriceClient } from '@/popup/services/asset-price-client'
+import { useAssetPrices, useZcashUsdPrice } from '@/popup/hooks/useAssetPrices'
 import {
   listBalanceTransferAssetPickerRows,
   listPrivateTransferDestinationAssets
@@ -551,7 +551,7 @@ function DepositWithdrawForm({
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const currentWallet = useWalletStore(state => state.getCurrentWallet())
   const zcashBalance = useAccountDataStore(state => state.getCurrentBalance())
-  const zecPrice = useWalletStore(state => state.zecPrice)
+  const zecPrice = useZcashUsdPrice(currentNetwork)
   const balancesHidden = useSettingsStore(state => state.balancesHidden)
   const endpointRuntimeKey = useSettingsStore(state =>
     getChainEndpointRuntimeKey(state.chainEndpointSettings)
@@ -612,7 +612,7 @@ function DepositWithdrawForm({
   const [destinationAssetId, setDestinationAssetId] = useState<string | null>(
     initialDraft.destinationAssetId ?? null
   )
-  const [assetPrices, setAssetPrices] = useState<AssetPriceReadModel | null>(null)
+  const assetPrices = useAssetPrices(currentNetwork)
   const [domainPicker, setDomainPicker] = useState<'from' | 'to' | null>(null)
   const [providerPickerOpen, setProviderPickerOpen] = useState(false)
   const [receiveExternal, setReceiveExternal] = useState(
@@ -762,6 +762,7 @@ function DepositWithdrawForm({
   const [preparedShield, setPreparedShield] = useState<{
     key: string
     review: ConfidentialFundingReview
+    sourcePriceUsd: string | null
   } | null>(null)
 
   useEffect(() => {
@@ -812,25 +813,6 @@ function DepositWithdrawForm({
       cancelled = true
     }
   }, [preferenceKey])
-
-  useEffect(() => {
-    if (!assetPickerOpen) return
-    let cancelled = false
-    const apply = (prices: AssetPriceReadModel | null) => {
-      if (!cancelled && prices) setAssetPrices(prices)
-    }
-    void (async () => {
-      try {
-        apply(await assetPriceClient.getPrices('read'))
-      } catch {}
-      try {
-        apply(await assetPriceClient.getPrices('refresh'))
-      } catch {}
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [assetPickerOpen, currentNetwork])
 
   useEffect(() => {
     setShieldConnection('checking')
@@ -1285,10 +1267,7 @@ function DepositWithdrawForm({
     ),
     availableRaw: item.sourceRaw,
     decimals: item.asset.metadata.decimals,
-    priceUsd:
-      findAssetPrice(assetPrices, item.asset.asset.id)?.priceUsd ??
-      portfolio?.confidential?.assets.find(holding => holding.assetId === item.asset.asset.id)
-        ?.priceUsd,
+    priceUsd: findAssetPrice(assetPrices, item.asset.asset.id)?.priceUsd,
     disabledReason:
       withdrawalPicker && BigInt(item.sourceRaw) === 0n ? 'No available balance' : undefined
   }))
@@ -1473,19 +1452,6 @@ function DepositWithdrawForm({
   const fundingRoute = Boolean(shieldPair || clusterSelected)
   const fundingReady =
     !shieldPair || (from === 'shield' ? shieldConnection === 'connected' : canLoadShield)
-  useEffect(() => {
-    if (!supportedPair && !fundingRoute) return
-    let cancelled = false
-    void (async () => {
-      try {
-        const prices = await assetPriceClient.getPrices('read')
-        if (!cancelled && prices) setAssetPrices(prices)
-      } catch {}
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [scopeKey, supportedPair, fundingRoute])
   const managedAsset = useMemo(
     () =>
       fixedNearZecWithdraw
@@ -2322,7 +2288,11 @@ function DepositWithdrawForm({
       setConfirmUncertain(false)
       reviewAttempt.current = null
       if (replacingReview) setEvmMoveFee(feeSelection)
-      setPreparedShield({ key, review: result })
+      setPreparedShield({
+        key,
+        review: result,
+        sourcePriceUsd: findAssetPrice(assetPrices, selected.asset.asset.id)?.priceUsd ?? null
+      })
       return true
     } catch (error) {
       if (scopeStillCurrent() && latestShieldReviewKey.current === expectedKey) {
@@ -2489,8 +2459,8 @@ function DepositWithdrawForm({
   }
 
   const moveReviewFiatValue = useMemo(() => {
-    if (!selected || !assetPrices || !activeShieldReview) return null
-    const priceUsd = findAssetPrice(assetPrices, selected.asset.asset.id)?.priceUsd
+    if (!selected || !activeShieldReview) return null
+    const priceUsd = preparedShield?.sourcePriceUsd
     if (typeof priceUsd !== 'string' || !priceUsd) return null
     const usd = Number(priceUsd)
     if (!Number.isFinite(usd) || usd <= 0) return null
@@ -2503,7 +2473,7 @@ function DepositWithdrawForm({
     } catch {
       return null
     }
-  }, [selected, assetPrices, activeShieldReview])
+  }, [selected, preparedShield?.sourcePriceUsd, activeShieldReview])
 
   const changeShieldFee = async (next: EvmFeeSelection) => {
     const review = activeShieldReview

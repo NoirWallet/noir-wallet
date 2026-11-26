@@ -206,23 +206,6 @@ function parseConfidentialView(value: unknown): ConfidentialPortfolioView {
         ? undefined
         : readBoundedString(item.iconUrl, 'Confidential icon URL', 2048)
     if (iconUrl && !iconUrl.startsWith('https://')) throw new Error('Invalid Confidential icon URL')
-    const priceUsd =
-      item.priceUsd === undefined
-        ? undefined
-        : readBoundedString(item.priceUsd, 'Confidential USD price', 128)
-    if (priceUsd && (!/^(0|[1-9]\d*)(\.\d+)?$/.test(priceUsd) || Number(priceUsd) <= 0)) {
-      throw new Error('Invalid Confidential USD price')
-    }
-    const priceUpdatedAt =
-      item.priceUpdatedAt === undefined
-        ? undefined
-        : readBoundedString(item.priceUpdatedAt, 'Confidential price timestamp', 64)
-    if (
-      (priceUsd === undefined) !== (priceUpdatedAt === undefined) ||
-      (priceUpdatedAt && !Number.isFinite(Date.parse(priceUpdatedAt)))
-    ) {
-      throw new Error('Invalid Confidential price timestamp')
-    }
     return Object.freeze({
       tokenId,
       protocolAssetId,
@@ -243,9 +226,7 @@ function parseConfidentialView(value: unknown): ConfidentialPortfolioView {
       ...(iconUrl === undefined ? {} : { iconUrl }),
       ...(item.coingeckoId === undefined
         ? {}
-        : { coingeckoId: readBoundedString(item.coingeckoId, 'Confidential CoinGecko ID', 128) }),
-      ...(priceUsd === undefined ? {} : { priceUsd }),
-      ...(priceUpdatedAt === undefined ? {} : { priceUpdatedAt })
+        : { coingeckoId: readBoundedString(item.coingeckoId, 'Confidential CoinGecko ID', 128) })
     })
   })
   return Object.freeze({

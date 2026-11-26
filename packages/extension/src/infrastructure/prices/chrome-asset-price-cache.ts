@@ -1,3 +1,4 @@
+import type { ChromeAssetPriceCacheScope } from './chrome-asset-price-cache-scope'
 import {
   parseAssetPriceCacheSnapshot,
   type AssetPriceCacheRepository,
@@ -7,12 +8,13 @@ import {
 const STORAGE_KEY = 'asset_price_cache_v1'
 
 export class ChromeAssetPriceCacheRepository implements AssetPriceCacheRepository {
+  constructor(private readonly scope: ChromeAssetPriceCacheScope) {}
+
   async get(): Promise<AssetPriceCacheSnapshot | null> {
-    const result = await chrome.storage.local.get(STORAGE_KEY)
-    return parseAssetPriceCacheSnapshot(result[STORAGE_KEY] ?? null)
+    return parseAssetPriceCacheSnapshot((await this.scope.read(STORAGE_KEY)) ?? null)
   }
 
   async put(snapshot: AssetPriceCacheSnapshot): Promise<void> {
-    await chrome.storage.local.set({ [STORAGE_KEY]: snapshot })
+    await this.scope.write(STORAGE_KEY, snapshot)
   }
 }

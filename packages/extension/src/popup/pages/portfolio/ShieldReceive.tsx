@@ -21,7 +21,7 @@ import { TransactionNotice } from '@/popup/components/transaction/TransactionNot
 import { SearchInput } from '@/popup/components/ui/input'
 import { ListSkeleton, Skeleton } from '@/popup/components/ui/skeleton'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
-import { useCachedAssetPrices } from '@/popup/hooks/useCachedAssetPrices'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { usePortfolioSnapshot } from '@/popup/hooks/usePortfolioSnapshot'
 import { useShieldReceiveCatalog } from '@/popup/hooks/useShieldReceiveCatalog'
 import type {
@@ -259,7 +259,7 @@ function ShieldReceiveForm({
   const { model } = usePortfolioSnapshot(account.walletId, account.accountId, {
     autoRefresh: false
   })
-  const prices = useCachedAssetPrices(network)
+  const prices = useAssetPrices(network)
   const orderedTokens = useMemo(
     () => sortShieldReceiveTokens(tokens, model, prices),
     [tokens, model, prices]

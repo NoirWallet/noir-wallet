@@ -198,7 +198,7 @@ export function useHomeQuickShield({
                         : undefined,
                     availableRaw: item.availableRaw,
                     decimals: item.asset.metadata.decimals,
-                    valueUsd: item.valueUsd
+                    priceUsd: item.priceUsd
                   }))}
                   policy="funded"
                   balancesHidden={balancesHidden}

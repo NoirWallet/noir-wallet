@@ -1,3 +1,5 @@
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
+import { findCatalogPrice } from '@/core/prices/catalog-price-identity'
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import type { ChainDefinition } from '@/core/chains/registry'
@@ -104,6 +106,7 @@ export function ShieldReceiveAddress({
     provider === 'near-confidential' && account?.walletSource.kind === 'hardware'
   const walletId = account?.walletId ?? ''
   const accountId = account?.accountId ?? ''
+  const prices = useAssetPrices(network)
   const scope = `${network}:${walletId}:${accountId}:${provider}:${asset?.assetId ?? ''}`
   const scopeRef = useRef(scope)
   scopeRef.current = scope
@@ -390,7 +393,12 @@ export function ShieldReceiveAddress({
   const receiveWarning = `Only send ${symbol} on ${displayNetwork}. Using a different asset or network can result in loss of funds.`
   const networkMinimum =
     currentRecord?.amountMode === 'minimum'
-      ? formatShieldReceiveNetworkMinimum(currentRecord, asset?.token.price)
+      ? formatShieldReceiveNetworkMinimum(
+          currentRecord,
+          asset
+            ? Number(findCatalogPrice(prices, asset.token, network, 'confidential')?.priceUsd)
+            : undefined
+        )
       : null
   const paymentRequirement =
     currentRecord && canPay && !payment?.hasDeposit

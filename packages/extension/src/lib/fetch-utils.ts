@@ -43,6 +43,10 @@ interface FetchOptions extends RequestInit {
   acceptHttpErrors?: boolean | 'status-only'
 }
 
+export function getDefaultFetchTransportIdentity(): object {
+  return fetch
+}
+
 export function jsonRequestInit(
   init: RequestInit = {},
   payload?: unknown,

@@ -30,9 +30,7 @@ import {
 } from '../../../src/core/chains/registry/index.ts'
 import { hidePortfolioAssets } from '../../../src/core/portfolio/portfolio-visibility.ts'
 import { buildPortfolioReadModel, parsePortfolioReadModel } from '../../../src/core/portfolio/index.ts'
-import { findAssetPrice } from '../../../src/core/prices/asset-price.ts'
 import { listStandaloneNearConfidentialHoldings } from '../../../src/popup/services/near-confidential-holdings.ts'
-import { withConfidentialAssetPrices } from '../../../src/popup/services/portfolio-prices.ts'
 import { getAssetDetailCategories } from '../../../src/popup/services/asset-detail-balance.ts'
 
 test('projects Shield-only holdings independently of Public assets and preserves unknown tokens', () => {
@@ -104,8 +102,7 @@ test('projects Shield-only holdings independently of Public assets and preserves
       availableRaw: '42',
       assetId,
       chainId: 'eip155:1',
-      decimals: 6,
-      priceUsd: '1'
+      decimals: 6
     }),
     expect.objectContaining({
       tokenId: confidentialPrivateTokenId(zcashProtocolId),
@@ -309,9 +306,7 @@ test('projects a Confidential-only EVM token as its registered portfolio asset',
     chainId,
     decimals: 18,
     symbol: 'RHEA',
-    availableRaw: '16533370000000000000',
-    priceUsd: '0.032',
-    priceUpdatedAt: new Date().toISOString()
+    availableRaw: '16533370000000000000'
   }
   const definition = {
     chainId,
@@ -379,9 +374,6 @@ test('projects a Confidential-only EVM token as its registered portfolio asset',
   })
   expect(parsePortfolioReadModel(structuredClone(projected), chains, registry)).toEqual(projected)
   expect(listStandaloneNearConfidentialHoldings(projected, projected, null)).toEqual([])
-  expect(findAssetPrice(withConfidentialAssetPrices(projected, null), assetId)?.priceUsd).toBe(
-    '0.032'
-  )
   expect(getAssetDetailCategories(projectedAsset, projected, true, '0.032').raw).toEqual({
     all: holding.availableRaw,
     public: '0',

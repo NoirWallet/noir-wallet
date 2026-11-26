@@ -1,4 +1,5 @@
 import Big from 'big.js'
+import { ChromeAssetPriceCacheScope } from '@/infrastructure/prices/chrome-asset-price-cache-scope'
 import {
   getAssetMarketChangeSourceMappings,
   getAssetMarketHistorySourceMappings
@@ -227,7 +228,8 @@ export class BackgroundAssetPriceService {
 export function createBackgroundAssetPriceService(
   userEvmAssets: readonly AssetDefinitionInput[] = [],
   protocolAssets: readonly AssetDefinitionInput[] = [],
-  protocolPriceMappings: readonly IntentsProtocolAssetPriceMapping[] = []
+  protocolPriceMappings: readonly IntentsProtocolAssetPriceMapping[] = [],
+  isCurrent: () => boolean = () => true
 ): BackgroundAssetPriceService {
   const chains = createBuildFeatureGatedChainRegistry(
     createInitialProductChainRegistry(DEFAULT_NETWORK)
@@ -275,21 +277,22 @@ export function createBackgroundAssetPriceService(
           ]
     )
   )
-  const poolCache = new ChromeUserAssetDexPoolCacheRepository()
+  const scope = new ChromeAssetPriceCacheScope(DEFAULT_NETWORK, isCurrent)
+  const poolCache = new ChromeUserAssetDexPoolCacheRepository(scope)
   return new BackgroundAssetPriceService(
     new OneClickAssetPriceService({
       mappings: Object.freeze([...priceMappings.values()]),
-      cache: new ChromeAssetPriceCacheRepository()
+      cache: new ChromeAssetPriceCacheRepository(scope)
     }),
     new DexScreenerMarketChangeService({
       mappings: getAssetMarketChangeSourceMappings(DEFAULT_NETWORK, assets),
-      cache: new ChromeMarketChangeCacheRepository()
+      cache: new ChromeMarketChangeCacheRepository(scope)
     }),
     defiLlamaMarketMappings.length === 0
       ? undefined
       : new DefiLlamaMarketChangeService({
           mappings: defiLlamaMarketMappings,
-          cache: new ChromeDefiLlamaMarketCacheRepository()
+          cache: new ChromeDefiLlamaMarketCacheRepository(scope)
         }),
     userAssetIds.length === 0
       ? undefined
@@ -301,15 +304,15 @@ export function createBackgroundAssetPriceService(
             cache: poolCache
           }),
           poolCache,
-          marketCache: new ChromeUserAssetMarketCacheRepository(),
+          marketCache: new ChromeUserAssetMarketCacheRepository(scope),
           ...(DEFAULT_NETWORK !== 'mainnet' || bnbTokenIds.length === 0
             ? {}
             : {
                 fourMeme: new FourMemeAssetPriceService({
                   assetIds: bnbTokenIds,
                   client: new FourMemeMarketClient(),
-                  cache: new ChromeFourMemePriceCacheRepository(),
-                  quotePriceCache: new ChromeFourMemePriceCacheRepository('quotes')
+                  cache: new ChromeFourMemePriceCacheRepository(scope),
+                  quotePriceCache: new ChromeFourMemePriceCacheRepository(scope, 'quotes')
                 })
               }),
           ...(oneClickMappings.length === 0
@@ -317,7 +320,7 @@ export function createBackgroundAssetPriceService(
             : {
                 fallback: new OneClickAssetPriceService({
                   mappings: oneClickMappings,
-                  cache: new ChromeUserAssetOneClickPriceCacheRepository()
+                  cache: new ChromeUserAssetOneClickPriceCacheRepository(scope)
                 })
               })
         })

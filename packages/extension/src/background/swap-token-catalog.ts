@@ -19,12 +19,18 @@ const writes = new SerialTaskQueue()
 let hydration: Promise<void> | undefined
 let fetchedAt = 0
 let retryAt = 0
+let onPriceTokensChanged: (() => void) | undefined
+
+export function setIntentsCatalogPriceListener(listener: () => void): void {
+  onPriceTokensChanged = listener
+}
 
 function hydrate(): Promise<void> {
   return (hydration ??= cache.readFresh().then(snapshot => {
     if (!snapshot) return
     fetchedAt = snapshot.fetchedAt
     hydrateSwapTokenCatalog(snapshot.tokens, snapshot.fetchedAt, snapshot.iconRefreshState)
+    onPriceTokensChanged?.()
   }))
 }
 
@@ -74,6 +80,7 @@ export async function refreshBackgroundSwapCatalog(force = false): Promise<reado
   return requests.run(async () => {
     try {
       const tokens = await refreshSwapTokenCatalog()
+      onPriceTokensChanged?.()
       fetchedAt = Date.now()
       retryAt = 0
       await persist().catch(() => {})

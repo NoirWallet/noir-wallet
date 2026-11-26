@@ -1,3 +1,4 @@
+import { ChromeAssetPriceCacheScope } from '@/infrastructure/prices/chrome-asset-price-cache-scope'
 import type { EvmNetworkConfig } from '@/config/networks'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import {
@@ -61,7 +62,9 @@ export async function createBackgroundUserEvmAssetRuntime(
     chains,
     bundledAssets,
     repository,
-    poolCache: new ChromeUserAssetDexPoolCacheRepository(),
+    poolCache: new ChromeUserAssetDexPoolCacheRepository(
+      new ChromeAssetPriceCacheScope(DEFAULT_NETWORK, () => true)
+    ),
     resolveIconUrl: async assetId =>
       (await detectedRepository.list().catch(() => [])).find(asset => asset.assetId === assetId)
         ?.metadata.iconUrl ?? (await fourMeme.getToken(assetId))?.iconUrl,

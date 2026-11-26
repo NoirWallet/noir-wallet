@@ -1,3 +1,4 @@
+import { findCatalogPrice } from '@/core/prices/catalog-price-identity'
 import { ShieldSwap } from '../portfolio/ShieldSwap'
 import {
   ShieldTokenPicker,
@@ -227,7 +228,7 @@ import {
 } from '@/popup/services/receive-targets-client'
 import { usePortfolioSnapshot } from '@/popup/hooks/usePortfolioSnapshot'
 import { useRestoreSwapPair } from '@/popup/hooks/useRestoreSwapPair'
-import { useCachedAssetPrices } from '@/popup/hooks/useCachedAssetPrices'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { findAssetPrice } from '@/core/prices'
 import { resolveRheaSwapCanonicalAssetId } from '@/core/services/rhea-swap/rhea-swap-asset-identity'
 import {
@@ -832,7 +833,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         network => network.chain.family === 'evm' && network.privateExecutionAddress
       )?.chain.id)
     : undefined
-  const cachedAssetPrices = useCachedAssetPrices(currentNetwork)
+  const cachedAssetPrices = useAssetPrices(currentNetwork)
   const swap = useSwapState(
     lockedAssetFlowRequested ||
       crossChainSendRequested ||
@@ -1184,7 +1185,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
       shieldDestinationPickerReady
         ? buildShieldDestinationPickerRows({
             options: nativeConfidentialDestinations,
-            tokens: nativeIntentsCatalog,
+            prices: cachedAssetPrices,
             balances: shieldDisplayBalances,
             network: currentNetwork
           })
@@ -1192,7 +1193,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     [
       shieldDestinationPickerReady,
       nativeConfidentialDestinations,
-      nativeIntentsCatalog,
+      cachedAssetPrices,
       shieldDisplayBalances,
       currentNetwork
     ]
@@ -1245,12 +1246,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   const walletZecPrice = nativeZecAssetId
     ? findAssetPrice(cachedAssetPrices, nativeZecAssetId)?.priceUsd
     : undefined
-  const zecPickerPrice =
-    walletZecPrice && Number(walletZecPrice) > 0
-      ? walletZecPrice
-      : shieldCatalogTokens.find(token => token.assetId === ZEC_ZCASH_ASSET)?.price
   const shieldPickerRows = useMemo((): readonly ShieldTokenPickerItem[] => {
-    const pricesByAssetId = new Map(shieldCatalogTokens.map(token => [token.assetId, token.price]))
     return [
       ...(nativeZecShieldAvailable &&
       !getFundingSourceUnavailableReason(zcashKeySource, 'transparent')
@@ -1267,7 +1263,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
                 ZEC_DECIMALS
               ),
               decimals: ZEC_DECIMALS,
-              priceUsd: zecPickerPrice
+              priceUsd: walletZecPrice
             }
           ]
         : []),
@@ -1284,7 +1280,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         nativeIconChain: 'zcash',
         availableRaw: option.availableRaw,
         decimals: option.decimals,
-        priceUsd: zecPickerPrice,
+        priceUsd: walletZecPrice,
         disabledReason: option.disabledReason
       })),
       ...shieldSourceChoices
@@ -1305,7 +1301,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           ),
           availableRaw: shieldFundingAvailableRaw(asset, shieldDisplayBalances),
           decimals: asset.asset.metadata.decimals,
-          priceUsd: pricesByAssetId.get(asset.managed.protocolAssetId)
+          priceUsd: findAssetPrice(cachedAssetPrices, asset.asset.asset.id)?.priceUsd
         }))
     ]
   }, [
@@ -1316,8 +1312,8 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     shieldZecSourceOptions,
     shieldSourceChoices,
     shieldDisplayBalances,
-    shieldCatalogTokens,
-    zecPickerPrice
+    cachedAssetPrices,
+    walletZecPrice
   ])
   const nativeZecPickerRows = useMemo(
     () =>
@@ -1350,7 +1346,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
             ZEC_DECIMALS
           ),
           decimals: ZEC_DECIMALS,
-          priceUsd: zecPickerPrice
+          priceUsd: walletZecPrice
         }
       )
     })
@@ -1360,7 +1356,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     nativeZecShieldAvailable,
     nativeZecPickerRows,
     storeBalance,
-    zecPickerPrice
+    walletZecPrice
   ])
   const [walletSourcesTraceId] = useState(() => createDebugRequestId('swap-wallet-sources'))
   const selectedAssetRegistrationKey = useRef<string | null>(null)
@@ -2966,16 +2962,23 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
       source: {
         assetId: resolveRheaSwapDestinationIdentity(swap.tokenIn, portfolio).assetId,
         decimals: swap.tokenIn.decimals,
-        price: swap.tokenIn.price
+        price: Number(
+          findCatalogPrice(cachedAssetPrices, swap.tokenIn, currentNetwork)?.priceUsd ?? 0
+        )
       },
       destination: {
         assetId: resolveRheaSwapDestinationIdentity(privateFundingDestinationToken, portfolio)
           .assetId,
         decimals: privateFundingDestinationToken.decimals,
-        price: privateFundingDestinationToken.price
+        price: Number(
+          findCatalogPrice(cachedAssetPrices, privateFundingDestinationToken, currentNetwork)
+            ?.priceUsd ?? 0
+        )
       }
     })
   }, [
+    cachedAssetPrices,
+    currentNetwork,
     portfolio,
     privateFundingDestinationToken,
     privateFundingRequestId,
@@ -3384,6 +3387,9 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   ])
 
   const swapEventBase = useCallback((): TrackOptions => {
+    const sourcePrice = swap.tokenIn
+      ? findCatalogPrice(cachedAssetPrices, swap.tokenIn, currentNetwork)
+      : null
     const context = resolveSwapAnalyticsContext({
       sourceFamily: walletOwnedSource?.family,
       sourceBlockchain: swap.tokenIn?.blockchain,
@@ -3400,8 +3406,10 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
       outputSymbol: swap.tokenOut?.symbol,
       collector: projectSwapCollector({
         amountIn: swap.amountIn,
-        sourcePrice: swap.tokenIn?.price,
-        sourcePriceUpdatedAt: swap.tokenIn?.priceUpdatedAt,
+        sourcePrice: sourcePrice ? Number(sourcePrice.priceUsd) : undefined,
+        sourcePriceUpdatedAt: sourcePrice
+          ? new Date(sourcePrice.sourceUpdatedAt).toISOString()
+          : undefined,
         now: Date.now(),
         purpose: quotePurpose,
         confidentiality: liveQuoteRequest?.confidentiality,
@@ -3422,6 +3430,8 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     }
   }, [
     swap,
+    cachedAssetPrices,
+    currentNetwork,
     walletOwnedSource?.family,
     isTransferAnalyticsFlow,
     executionSourceMode,

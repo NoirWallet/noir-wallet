@@ -5,8 +5,7 @@ import Big from '@/lib/big'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import {
   getPortfolioAssetUsdValue,
-  LOW_VALUE_USD_THRESHOLD,
-  withConfidentialAssetPrices
+  LOW_VALUE_USD_THRESHOLD
 } from '@/popup/services/portfolio-prices'
 import {
   addNearConfidentialZecFiat,
@@ -400,7 +399,7 @@ export function buildPortfolioDisplay({
   readonly selectedChainIds: readonly string[] | null
   readonly enabledFlags: readonly ChainFeatureFlagValue[]
 }) {
-  const prices = withConfidentialAssetPrices(sourceModel, sourcePrices)
+  const prices = sourcePrices
   const standalone =
     domain === 'all' || domain === 'shield'
       ? listStandaloneNearConfidentialHoldings(model, sourceModel, prices)

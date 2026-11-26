@@ -9,8 +9,7 @@ import type { ActivityItem } from '@/core/activity'
 import {
   findAssetPrice,
   type AssetMarketHistoryRange,
-  type AssetMarketHistoryReadModel,
-  type AssetPriceReadModel
+  type AssetMarketHistoryReadModel
 } from '@/core/prices'
 import {
   formatPercentage,
@@ -47,7 +46,6 @@ import { TokenIcon } from '@/popup/components/tokens/TokenIcon'
 import zecLendingArtwork from '@/images/zec-lending.webp'
 import zcashChainIcon from '@/images/zcash-chain.svg'
 import { AssetDetailBalanceRow } from './AssetDetailBalanceRow'
-import { withConfidentialAssetPrices } from '@/popup/services/portfolio-prices'
 import { PrivateAddressWarningDialog } from '@/popup/components/account/PrivateAddressWarningDialog'
 import type { BalanceTransferIntent } from '@/popup/services/private-balance-transfer'
 import { getShieldTransferChainIds } from '@/popup/services/shield-transfer'
@@ -57,7 +55,7 @@ import {
 } from '@/popup/services/near-confidential-holdings'
 
 import { formatDisplayTokenAmount } from '@/popup/services/portfolio-format'
-import { assetPriceClient } from '@/popup/services/asset-price-client'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { assetMarketHistoryClient } from '@/popup/services/asset-market-history-client'
 import {
   formatChainAddressExplorerUrl,
@@ -175,8 +173,8 @@ export function AssetDetail() {
     detailAssetId: requestedAsset?.id
   })
   const [settledConfidentialScope, setSettledConfidentialScope] = useState<string | null>(null)
-  const [prices, setPrices] = useState<AssetPriceReadModel | null>(null)
-  const [priceStatus, setPriceStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const prices = useAssetPrices(currentNetwork)
+  const priceStatus = !prices ? 'loading' : prices.status === 'error' ? 'error' : 'ready'
   const [history, setHistory] = useState<AssetMarketHistoryReadModel | null>(null)
   const [historyRange, setHistoryRange] = useState<AssetMarketHistoryRange>('1d')
   const [historyRanges, setHistoryRanges] = useState<{
@@ -226,31 +224,6 @@ export function AssetDetail() {
       active = false
     }
   }, [effectiveWalletId, effectiveAccountId, requestedAssetId, model])
-
-  useEffect(() => {
-    let cancelled = false
-    let usablePrices = false
-    const apply = (value: AssetPriceReadModel | null) => {
-      if (!cancelled && value) {
-        usablePrices = true
-        setPrices(value)
-        setPriceStatus(value.status === 'error' ? 'error' : 'ready')
-      }
-    }
-    const loadPrices = async () => {
-      try {
-        apply(await assetPriceClient.getPrices('read'))
-      } catch {}
-      try {
-        apply(await assetPriceClient.getPrices('refresh', requestedAssetId ?? undefined))
-      } catch {}
-      if (!cancelled && !usablePrices) setPriceStatus('error')
-    }
-    void loadPrices()
-    return () => {
-      cancelled = true
-    }
-  }, [requestedAssetId])
 
   const visibleModel = model
   const requestedChainId = requestedAsset?.chainId ?? null
@@ -321,10 +294,7 @@ export function AssetDetail() {
       active = false
     }
   }, [assetRefreshKey, assetRetry, requestedChainId, refresh])
-  const displayPrices = useMemo(
-    () => withConfidentialAssetPrices(visibleModel, prices),
-    [visibleModel, prices]
-  )
+  const displayPrices = prices
   const lendingRate = useLendingMarketRate(
     currentNetwork === 'mainnet' &&
       requestedChainEnabled &&
@@ -616,7 +586,6 @@ export function AssetDetail() {
     navigate(`/send?${query.toString()}`, {
       state: {
         initialPortfolio: visibleModel,
-        initialPrices: prices,
         walletId: effectiveWalletId,
         accountId: effectiveAccountId,
         network: currentNetwork,
