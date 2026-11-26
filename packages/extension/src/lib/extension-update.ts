@@ -1,4 +1,4 @@
-import { fetchJsonWithTimeout } from '@/lib/fetch-utils'
+import { fetchJsonWithTimeout } from './fetch-utils.ts'
 
 export const EXTENSION_UPDATE_STORAGE_KEY = 'extension_update_notice'
 export const PRODUCT_RELEASE_NOTES_URL = 'https://www.zknoir.com/changelog.json'

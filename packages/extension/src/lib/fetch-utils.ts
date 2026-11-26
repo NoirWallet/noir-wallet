@@ -1,4 +1,4 @@
-import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../config/extension.ts'
 
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 const MAX_ERROR_BYTES = 16 * 1024
