@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
 import { WalletActionIcon, type WalletAction } from '@/popup/components/portfolio/WalletActionIcon'
 import { Tooltip } from '@/popup/components/ui/tooltip'
+import { useTranslation } from '@/popup/i18n'
+import { portfolioMessages } from '@/popup/i18n/portfolio-messages'
 
 interface AssetDetailBalanceRowProps {
   readonly label: string
@@ -28,12 +30,13 @@ export function AssetDetailBalanceRow({
   onSelect,
   actions = []
 }: AssetDetailBalanceRowProps) {
+  const { t } = useTranslation(portfolioMessages)
   return (
     <div className="group/balance relative flex min-h-[62px] items-center justify-between gap-3 py-2.5">
       {onSelect && (
         <button
           type="button"
-          aria-label={`View ${label} balance`}
+          aria-label={t('viewBalance', { name: label })}
           onClick={onSelect}
           className="wallet-interactive absolute inset-0 rounded-md text-left hover:bg-white/[0.04] focus-visible:outline-2 focus-visible:outline-primary"
         />

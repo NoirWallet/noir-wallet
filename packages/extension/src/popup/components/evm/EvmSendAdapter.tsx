@@ -1,3 +1,6 @@
+import { createSendCopy } from '@/popup/i18n/send-copy'
+import { createTranslator, EnglishCopy, useLocale, useTranslation } from '@/popup/i18n'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { QuoteFeeAmount } from '@/popup/components/transaction/QuoteFeeAmount'
 import { Icon } from '@iconify/react'
 import { useEffect, useRef, type ComponentProps } from 'react'
@@ -36,41 +39,48 @@ export function EvmSendAdapter(props: EvmSendAdapterProps) {
     state.selectShield('shield')
   }, [props.shieldModeRequest, state])
 
-  const fields = getEvmSendFields(state)
+  const locale = useLocale()
+  const englishCopy = state.sendPrivately || state.sourceMode === 'private'
+  const t = createTranslator(sendMessages, englishCopy ? 'en' : locale)
+  const fields = getEvmSendFields(state, t)
   const actions = getEvmSendActions(state)
   return (
-    <SendTransferScreen
-      form={{
-        inline: !state.active,
-        adapter: fields,
-        footer: <SendFormActions {...actions} />,
-        children: <EvmSendRouteDetails state={state} showNotice={!fields.recipient.invalid} />
-      }}
-      review={{
-        active: state.active,
-        approving: state.approving,
-        review: getEvmSendReview(state),
-        titleId: 'evm-send-review-title',
-        description: 'Review the asset, recipient, and maximum network fee before sending.',
-        onCancel: () => void state.handleCloseReview(),
-        onConfirm: state.handleApprove
-      }}
-      destinationPicker={
-        fields.recipient.network.onSelect
-          ? {
-              open: state.networkPickerOpen,
-              onOpenChange: state.setNetworkPickerOpen,
-              selectedId: state.chain.chain.id,
-              options: state.destinationNetworkOptions,
-              onSelect: state.selectDestinationNetwork
-            }
-          : undefined
-      }
-    />
+    <EnglishCopy active={englishCopy}>
+      <SendTransferScreen
+        form={{
+          inline: !state.active,
+          adapter: fields,
+          footer: <SendFormActions {...actions} />,
+          children: <EvmSendRouteDetails state={state} showNotice={!fields.recipient.invalid} />
+        }}
+        review={{
+          active: state.active,
+          approving: state.approving,
+          review: getEvmSendReview(state, t, createSendCopy(englishCopy ? 'en' : locale)),
+          titleId: 'evm-send-review-title',
+          description: t('reviewEvm'),
+          onCancel: () => void state.handleCloseReview(),
+          onConfirm: state.handleApprove
+        }}
+        destinationPicker={
+          fields.recipient.network.onSelect
+            ? {
+                open: state.networkPickerOpen,
+                onOpenChange: state.setNetworkPickerOpen,
+                selectedId: state.chain.chain.id,
+                options: state.destinationNetworkOptions,
+                onSelect: state.selectDestinationNetwork
+              }
+            : undefined
+        }
+      />
+    </EnglishCopy>
   )
 }
 
-function getEvmSendFields(state: EvmSendTransferState): SendFormAdapter {
+type TranslateSend = ReturnType<typeof createTranslator<typeof sendMessages>>
+
+function getEvmSendFields(state: EvmSendTransferState, t: TranslateSend): SendFormAdapter {
   const { asset, chain, maximum, route, sendPrivately } = state
   const symbol = asset.metadata.symbol
   const network = chain.chain.displayName
@@ -80,7 +90,7 @@ function getEvmSendFields(state: EvmSendTransferState): SendFormAdapter {
   const recipientInvalid = Boolean(state.recipient && !state.validRecipient)
   return {
     amount: {
-      ariaLabel: `${symbol} amount`,
+      ariaLabel: t('assetAmount', { symbol }),
       value: state.amount,
       onChange: state.setInputAmount
     },
@@ -113,7 +123,7 @@ function getEvmSendFields(state: EvmSendTransferState): SendFormAdapter {
       id: 'evm-send-recipient',
       value: state.recipient,
       onChange: state.setInputRecipient,
-      placeholder: 'Enter address',
+      placeholder: t('enterAddress'),
       invalid: recipientInvalid,
       network: {
         name: network,
@@ -165,7 +175,11 @@ function getEvmSendActions(state: EvmSendTransferState): ComponentProps<typeof S
   }
 }
 
-function getEvmSendReview(state: EvmSendTransferState): SendReview | null {
+function getEvmSendReview(
+  state: EvmSendTransferState,
+  t: TranslateSend,
+  copy: ReturnType<typeof createSendCopy>
+): SendReview | null {
   const {
     approving,
     review,
@@ -204,11 +218,11 @@ function getEvmSendReview(state: EvmSendTransferState): SendReview | null {
           tone="warning"
           message={
             <>
-              {review.privacyWarning}
+              {review.privacyWarning && copy(review.privacyWarning)}
               {summary.review.level === 'caution' && !bundledAsset && (
                 <>
-                  {review.privacyWarning ? ' ' : ''}This transfer calls a custom Token contract you
-                  added. Verify the network, Token, and recipient.
+                  {review.privacyWarning ? ' ' : ''}
+                  {t('customTokenCaution')}
                 </>
               )}
             </>
@@ -306,11 +320,7 @@ function getEvmSendReview(state: EvmSendTransferState): SendReview | null {
       },
       {
         label: 'Est. time',
-        content: (
-          <span title="Estimated first confirmation based on recent blocks.">
-            {confirmationTime}
-          </span>
-        )
+        content: <span title={t('estimateFirstConfirmation')}>{copy(confirmationTime)}</span>
       },
       ...(maximumTotal
         ? [
@@ -359,6 +369,8 @@ function EvmSendRouteDetails({
     handleMaximum,
     support
   } = state
+  const { locale, t } = useTranslation(sendMessages)
+  const copy = createSendCopy(locale)
   const privatePreviewNotice = getSwapQuoteNotice(privatePreviewError)
   const insufficient = amountRaw !== null && BigInt(amountRaw) > BigInt(availableRaw)
   return (
@@ -434,9 +446,7 @@ function EvmSendRouteDetails({
           }
           time={
             confirmationTime === '—' ? undefined : (
-              <span title="Approximate first confirmation; actual time depends on network conditions.">
-                {confirmationTime}
-              </span>
+              <span title={t('confirmationDependsOnNetwork')}>{copy(confirmationTime)}</span>
             )
           }
         />

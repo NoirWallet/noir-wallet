@@ -1,3 +1,6 @@
+import { useTranslation } from '@/popup/i18n'
+import { createSendCopy } from '@/popup/i18n/send-copy'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import type { ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 
@@ -49,20 +52,22 @@ export function TransactionReviewDialog({
   readonly fullHeight?: boolean
   readonly children: ReactNode
 }) {
+  const { locale } = useTranslation(sendMessages)
+  const copy = createSendCopy(locale)
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         position="bottom"
         showCloseButton={false}
-        aria-label={titleId ? undefined : title}
+        aria-label={titleId ? undefined : copy(title)}
         aria-labelledby={titleId}
         scroll="body"
         className={cn('gap-0 p-0', fullHeight && fullHeightTransactionDialogClassName)}
       >
         <DialogTitle className="sr-only" aria-hidden={titleId ? true : undefined}>
-          {title}
+          {copy(title)}
         </DialogTitle>
-        <DialogDescription className="sr-only">{description}</DialogDescription>
+        <DialogDescription className="sr-only">{copy(description)}</DialogDescription>
         {children}
       </DialogContent>
     </Dialog>
@@ -183,23 +188,25 @@ export function TransactionReviewView({
   onCancel,
   onConfirm
 }: TransactionReviewViewProps) {
+  const { locale, t } = useTranslation(sendMessages)
+  const copy = createSendCopy(locale)
   const figma = variant !== 'default'
   if (submitting) {
     return (
       <TransactionResult
         status="loading"
-        title="Transaction Submitting"
+        title={t('submitting')}
         titleId={titleId}
         layout={figma ? 'single-asset' : 'default'}
         onClose={figma && showTitle ? onCancel : undefined}
         closeDisabled={cancelDisabled || confirming}
       >
         <div>
-          <TransactionResultDetailRow label="Amount">
+          <TransactionResultDetailRow label={t('amount')}>
             <AmountDisplay value={amount} symbol={asset?.symbol} prefix={amountPrefix} />
           </TransactionResultDetailRow>
           {submissionDestination && (
-            <TransactionResultDetailRow label={submissionDestination.label}>
+            <TransactionResultDetailRow label={copy(submissionDestination.label)}>
               {submissionDestination.content}
             </TransactionResultDetailRow>
           )}
@@ -218,12 +225,12 @@ export function TransactionReviewView({
               ].includes(row.label)
             )
             .map((row, index) => (
-              <TransactionResultDetailRow key={`${row.label}-${index}`} label={row.label}>
+              <TransactionResultDetailRow key={`${row.label}-${index}`} label={copy(row.label)}>
                 {row.content}
               </TransactionResultDetailRow>
             ))}
           {network && !rows.some(row => row.label === 'Network') && (
-            <TransactionResultDetailRow label="Network">{network}</TransactionResultDetailRow>
+            <TransactionResultDetailRow label={t('network')}>{network}</TransactionResultDetailRow>
           )}
         </div>
       </TransactionResult>
@@ -234,11 +241,11 @@ export function TransactionReviewView({
       {showTitle && figma && (
         <div className="flex h-14 shrink-0 items-center justify-between bg-background px-5">
           <h2 id={titleId} className="min-w-0 truncate text-lg font-medium leading-[23px]">
-            {title}
+            {copy(title)}
           </h2>
           <button
             type="button"
-            aria-label="Close"
+            aria-label={t('close')}
             onClick={onCancel}
             disabled={cancelDisabled || confirming}
             className="flex size-8 shrink-0 items-center justify-center rounded-md bg-background hover:bg-accent disabled:opacity-50"
@@ -325,7 +332,7 @@ export function TransactionReviewView({
                     : 'shrink-0 text-xs text-muted'
                 }
               >
-                {row.label}
+                {copy(row.label)}
               </span>
               <div
                 className={
@@ -357,7 +364,7 @@ export function TransactionReviewView({
             disabled={cancelDisabled || confirming}
             onClick={onCancel}
           >
-            Cancel
+            {t('cancel')}
           </Button>
           <Button
             size={figma ? 'wallet' : 'default'}
@@ -369,7 +376,7 @@ export function TransactionReviewView({
             isLoading={preparing || confirming}
             onClick={onConfirm}
           >
-            {confirmLabel}
+            {copy(confirmLabel)}
           </Button>
         </DialogFooter>
       </div>

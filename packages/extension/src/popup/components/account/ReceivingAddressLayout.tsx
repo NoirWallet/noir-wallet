@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils'
 
 interface ReceivingAddressLayoutProps {
   readonly onClose?: () => void
+  readonly closeLabel?: string
   readonly title?: string
   readonly identity?: ReactNode
   readonly headerAction?: ReactNode
@@ -20,6 +21,7 @@ interface ReceivingAddressLayoutProps {
 
 export function ReceivingAddressLayout({
   onClose,
+  closeLabel = 'Close receiving address',
   title = 'Receiving Address',
   identity,
   headerAction,
@@ -43,7 +45,7 @@ export function ReceivingAddressLayout({
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close receiving address"
+            aria-label={closeLabel}
             className="wallet-interactive absolute left-3 flex size-8 items-center justify-center rounded-lg text-foreground hover:bg-accent active:brightness-90 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
           >
             <Icon icon="lucide:x" width={20} height={20} />

@@ -1,3 +1,6 @@
+import { useTranslation } from '@/popup/i18n'
+import { sendMessages } from '@/popup/i18n/send-messages'
+import { createSendCopy } from '@/popup/i18n/send-copy'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
@@ -28,6 +31,8 @@ export function TransactionNotice({
   id,
   className
 }: TransactionNoticeProps) {
+  const { locale } = useTranslation(sendMessages)
+  const copy = createSendCopy(locale)
   if (!message) return null
 
   return (
@@ -41,7 +46,7 @@ export function TransactionNotice({
         styles[tone]
       )}
     >
-      {message}
+      {typeof message === 'string' ? copy(message) : message}
       {onRetry && (
         <>
           {' '}
@@ -52,7 +57,7 @@ export function TransactionNotice({
             aria-busy={retrying || undefined}
             className="inline cursor-pointer whitespace-nowrap rounded-sm text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-default disabled:opacity-50"
           >
-            {retryLabel}
+            {copy(retryLabel)}
           </button>
         </>
       )}

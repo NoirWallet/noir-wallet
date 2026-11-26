@@ -1,3 +1,5 @@
+import { useTranslation } from '@/popup/i18n'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import {
@@ -68,6 +70,7 @@ export function useBitcoinSendTransfer({
   readonly selection: BitcoinSendAsset
   readonly onSubmitted: (submission: BitcoinTransferSubmission) => void
 }) {
+  const { t } = useTranslation(sendMessages)
   const [amount, setAmount] = useState('')
   const [recipient, setRecipient] = useState('')
   const [selectedRecipient, setSelectedRecipient] = useState<{
@@ -248,7 +251,7 @@ export function useBitcoinSendTransfer({
 
   const handleSelectRecipient = async () => {
     await openModal<string | undefined>({
-      title: 'Select Recipient',
+      title: t('selectRecipient'),
       showCloseButton: true,
       scroll: 'body',
       fixedHeight: true,

@@ -7,8 +7,9 @@
   "scripts": {
     "dev": "EXTENSION_DEV_SERVER=1 vite --config vite.config.ts",
     "dev:extension": "pnpm run dev",
-    "build": "pnpm run type-check && vite build && node scripts/verify-build-surface.mjs",
-    "build:testnet": "pnpm run type-check && NETWORK_MODE=testnet vite build && NETWORK_MODE=testnet node scripts/verify-build-surface.mjs",
+    "build": "pnpm run type-check && pnpm run check:i18n && vite build && node scripts/verify-build-surface.mjs",
+    "build:testnet": "pnpm run type-check && pnpm run check:i18n && NETWORK_MODE=testnet vite build && NETWORK_MODE=testnet node scripts/verify-build-surface.mjs",
+    "check:i18n": "node scripts/verify-ui-catalogs.mjs",
     "preview": "vite preview",
     "type-check": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "test": "node scripts/run-tests.mjs",

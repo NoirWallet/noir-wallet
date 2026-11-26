@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Input } from '../ui/input'
 import { Button } from '../ui/button'
 import { Icon } from '@iconify/react'
 import { cn } from '@/lib/utils'
+import { useTranslation } from '@/popup/i18n'
+import { onboardingMessages } from '@/popup/i18n/onboarding-messages'
 
 interface PasswordInputProps {
   value: string
@@ -25,6 +27,9 @@ export function PasswordInput({
   onEnter,
   disabled
 }: PasswordInputProps) {
+  const { t } = useTranslation(onboardingMessages)
+  const inputId = useId()
+  const errorId = useId()
   const [showPassword, setShowPassword] = useState(false)
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -35,13 +40,21 @@ export function PasswordInput({
 
   return (
     <div className={cn('w-full', className)}>
-      {label && <label className="block text-muted-foreground text-sm mb-2">{label}</label>}
+      {label && (
+        <label htmlFor={inputId} className="block text-muted-foreground text-sm mb-2">
+          {label}
+        </label>
+      )}
       <Input
+        id={inputId}
         type={showPassword ? 'text' : 'password'}
         value={value}
         onChange={e => onChange(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
+        aria-label={label ? undefined : placeholder}
+        aria-invalid={Boolean(error)}
+        aria-describedby={error ? errorId : undefined}
         disabled={disabled}
         className={cn(
           'h-[46px] rounded-xl pr-12',
@@ -56,12 +69,22 @@ export function PasswordInput({
             onClick={() => setShowPassword(!showPassword)}
             className="h-8 w-8 text-muted hover:text-foreground"
             disabled={disabled}
+            aria-label={t(showPassword ? 'hidePassword' : 'showPassword')}
           >
-            <Icon icon={showPassword ? 'lucide:eye-off' : 'lucide:eye'} width={18} height={18} />
+            <Icon
+              icon={showPassword ? 'lucide:eye-off' : 'lucide:eye'}
+              width={18}
+              height={18}
+              aria-hidden="true"
+            />
           </Button>
         }
       />
-      {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
+      {error && (
+        <p id={errorId} className="mt-1 text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   )
 }

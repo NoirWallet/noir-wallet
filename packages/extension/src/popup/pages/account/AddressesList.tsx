@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
+import { createTranslator, EnglishCopy, useTranslation } from '@/popup/i18n'
+import { portfolioMessages } from '@/popup/i18n/portfolio-messages'
 import { useNavigate } from '../../provider/Router'
 import { PageHeader } from '../../components/common/PageHeader'
 import { InlineError } from '../../components/common/InlineError'
@@ -50,6 +52,25 @@ interface AddressQrTarget {
   readonly confidential?: boolean
 }
 
+const addressTypeCopy: Partial<Record<string, keyof typeof portfolioMessages>> = {
+  shielded: 'addressTypeShielded',
+  transparent: 'addressTypeTransparent',
+  mixed: 'addressTypeMixed',
+  Legacy: 'addressTypeLegacy'
+}
+
+const english = createTranslator(portfolioMessages, 'en')
+
+function addressTypeLabel(
+  network: AccountNetworkView,
+  address: AccountNetworkAddressView,
+  translate: typeof english
+) {
+  const type = accountNetworkAddressLabel(network, address)
+  const key = addressTypeCopy[type]
+  return key ? translate(key) : type
+}
+
 function PrivateAddressRisk() {
   return (
     <Tooltip content={PRIVATE_ADDRESS_WARNING} side="bottom">
@@ -79,6 +100,7 @@ function AddressValue({
 }
 
 function ZcashAddressLabel({ type }: { readonly type: AccountNetworkAddressView['privacy'] }) {
+  const { t } = useTranslation(portfolioMessages)
   return (
     <span
       className={cn(
@@ -86,7 +108,7 @@ function ZcashAddressLabel({ type }: { readonly type: AccountNetworkAddressView[
         type === 'shielded' ? 'bg-primary/15 text-primary' : 'border border-white/10 text-muted'
       )}
     >
-      {type === 'shielded' ? 'Shield' : 'Transparent'}
+      {t(type === 'shielded' ? 'shield' : 'transparent')}
     </span>
   )
 }
@@ -129,15 +151,17 @@ function AddressActions({
   readonly isCopied: (key: string) => boolean
   readonly onShowQr: (target: AddressQrTarget) => void
 }) {
-  const type = accountNetworkAddressLabel(network, address)
+  const { t } = useTranslation(portfolioMessages)
+  const type = addressTypeLabel(network, address, t)
   const networkName = displayName ?? network.chain.displayName
   const copyKey = `${network.chain.id}-${address.scheme}`
+  const copyLabel = t('copyTypedAddress', { network: networkName, type })
   return (
     <div className="ml-auto flex shrink-0 items-center">
       <button
         type="button"
-        aria-label={`Copy ${networkName} ${type} address`}
-        title={`Copy ${networkName} ${type} address`}
+        aria-label={copyLabel}
+        title={copyLabel}
         className="wallet-interactive flex size-[26px] items-center justify-center rounded-lg text-foreground hover:bg-foreground/10 active:bg-foreground/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
         onClick={() => onCopy(address.value, copyKey)}
       >
@@ -145,8 +169,8 @@ function AddressActions({
       </button>
       <button
         type="button"
-        aria-label={`Show ${networkName} ${type} address QR code`}
-        title="Show QR code"
+        aria-label={t('showTypedAddressQr', { network: networkName, type })}
+        title={t('showQr')}
         className="wallet-interactive flex size-[26px] items-center justify-center rounded-lg text-foreground hover:bg-foreground/10 active:bg-foreground/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
         onClick={() => onShowQr({ network, address, displayName })}
       >
@@ -171,16 +195,17 @@ function AddressRow({
   readonly isCopied: (key: string) => boolean
   readonly onShowQr: (target: AddressQrTarget) => void
 }) {
+  const { t } = useTranslation(portfolioMessages)
   const zcashType: AddressType | null =
     network.chain.family === 'zcash' && address.privacy !== 'mixed' ? address.privacy : null
   const bitcoinType =
-    network.chain.family === 'bitcoin' ? accountNetworkAddressLabel(network, address) : null
+    network.chain.family === 'bitcoin' ? addressTypeLabel(network, address, t) : null
 
   return (
     <div className="flex min-h-10 min-w-0 items-center gap-2">
       {network.chain.family === 'evm' && (
         <span className="shrink-0 rounded bg-white/7 px-1.5 py-0.5 text-[10px] font-medium text-muted">
-          Public
+          {t('public')}
         </span>
       )}
       {bitcoinType && (
@@ -222,6 +247,7 @@ function AddressNetworkGroup({
   readonly onShowQr: (target: AddressQrTarget) => void
   readonly onOpenSettings?: () => void
 }) {
+  const { t } = useTranslation(portfolioMessages)
   const addresses =
     network.chain.family === 'zcash'
       ? [...network.addresses].sort(
@@ -235,7 +261,7 @@ function AddressNetworkGroup({
   const singleAddress = addresses.length === 1 ? addresses[0] : null
   const singleBitcoinType =
     singleAddress && network.chain.family === 'bitcoin'
-      ? accountNetworkAddressLabel(network, singleAddress)
+      ? addressTypeLabel(network, singleAddress, t)
       : null
 
   const icon = (
@@ -346,8 +372,8 @@ function AddressNetworkGroup({
         {onOpenSettings && (
           <button
             type="button"
-            aria-label="Open Zcash settings"
-            title="Zcash settings"
+            aria-label={t('openZcashSettings')}
+            title={t('zcashSettings')}
             className="wallet-interactive ml-auto flex size-8 shrink-0 items-center justify-center rounded-md text-muted hover:bg-white/5 hover:text-foreground active:bg-white/10 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
             onClick={onOpenSettings}
           >
@@ -379,6 +405,7 @@ export function AddressesList({
   readonly receive?: boolean
   readonly receiveAccount?: ActiveAccountIdentity
 }) {
+  const { t } = useTranslation(portfolioMessages)
   const location = useLocation()
   const [searchParams] = useSearchParams()
   const activeWalletId = useWalletStore(state => state.currentWalletId)
@@ -393,9 +420,9 @@ export function AddressesList({
   if (!walletId || !accountId) {
     return (
       <div className="page-container">
-        <PageHeader title="Address" showBack />
+        <PageHeader title={t('address')} showBack />
         <div className="flex flex-1 items-center justify-center px-5">
-          <p className="text-center text-muted">No account available</p>
+          <p className="text-center text-muted">{t('noAccount')}</p>
         </div>
       </div>
     )
@@ -426,6 +453,7 @@ function AccountAddressesList({
   readonly active: boolean
   readonly receive: boolean
 }) {
+  const { t } = useTranslation(portfolioMessages)
   const { navigate } = useNavigate()
   const { copyToClipboard, showToast, isCopied, copyFailed } = useCopyToClipboard()
   const currentShieldedAddress = useWalletStore(
@@ -463,7 +491,9 @@ function AccountAddressesList({
   const [networks, setNetworks] = useState<readonly AccountNetworkView[]>([])
   const [accountIdentity, setAccountIdentity] = useState<{ name: string } | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<
+    'noEnabledNetworkAddresses' | 'loadAccountAddressesFailed' | null
+  >(null)
   const [canRetry, setCanRetry] = useState(false)
   const [loadAttempt, setLoadAttempt] = useState(0)
   const [qrTarget, setQrTarget] = useState<AddressQrTarget | null>(null)
@@ -492,7 +522,7 @@ function AccountAddressesList({
           candidate => candidate.walletId === walletId && candidate.accountId === accountId
         )
         if (!entry || entry.networks.length === 0) {
-          setError('No enabled network addresses are available for this account.')
+          setError('noEnabledNetworkAddresses')
           return
         }
         const canUsePrivate = supportsEvmPrivateExecution(entry.walletSource)
@@ -508,7 +538,7 @@ function AccountAddressesList({
         setAccountIdentity({ name: entry.accountDisplayName })
       } catch {
         if (!cancelled) {
-          setError('Unable to load addresses for this account.')
+          setError('loadAccountAddressesFailed')
           setCanRetry(true)
         }
       } finally {
@@ -598,7 +628,7 @@ function AccountAddressesList({
         type="button"
         variant="secondary"
         size="sm"
-        aria-label={`Add ${family === 'evm' ? 'EVM' : 'Zcash'} network`}
+        aria-label={t('addNetworkNamed', { name: family === 'evm' ? 'EVM' : 'Zcash' })}
         className="shrink-0"
         onClick={() =>
           navigate(
@@ -609,50 +639,57 @@ function AccountAddressesList({
         }
       >
         <Icon icon="lucide:plus" width={16} height={16} />
-        Add {family === 'evm' ? 'EVM' : 'Zcash'}
+        {t('addNamed', { name: family === 'evm' ? 'EVM' : 'Zcash' })}
       </Button>
     </div>
   )
 
   const AddressLoadError = receive ? TransactionNotice : InlineError
+  const qrTranslate = qrTarget?.confidential ? english : t
+  const qrTitle = qrTarget?.confidential ? 'Incognito Address' : qrTranslate('receivingAddress')
+  const evmAddressLabelValues = {
+    network: 'EVM',
+    type: t(mode === 'public' ? 'addressModePublic' : 'addressModePrivate')
+  }
 
   return (
     <div className="page-container">
-      <CopyToast show={showToast} error={copyFailed} message="Address copied" />
-      <PageHeader title="Address" showBack />
+      <CopyToast show={showToast} error={copyFailed} message={t('addressCopied')} />
+      <PageHeader title={t('address')} showBack />
 
       <div className="page-content min-h-0 !px-4 !pt-2">
         <SearchInput
           value={networkQuery}
           onChange={event => setNetworkQuery(event.target.value)}
-          placeholder="Search Network"
-          aria-label="Search Network"
+          placeholder={t('searchNetwork')}
+          aria-label={t('searchNetwork')}
           className="h-[46px] rounded-lg text-sm font-normal leading-[18px]"
           iconSize={18}
         />
 
         {loading ? (
-          <ListSkeleton rows={4} label="Loading addresses" className="mt-5" card />
+          <ListSkeleton rows={4} label={t('loadingAddresses')} className="mt-5" card />
         ) : error ? (
           <AddressLoadError
-            message={error}
+            message={t(error)}
+            retryLabel={t(receive ? 'tryAgain' : 'retry')}
             onRetry={canRetry ? () => setLoadAttempt(value => value + 1) : undefined}
             className="mt-5"
           />
         ) : filteredNetworks.length === 0 && missingFamilies.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted">No matching networks</p>
+          <p className="py-10 text-center text-sm text-muted">{t('noMatchingNetworks')}</p>
         ) : (
-          <div role="region" className="mt-3 pb-4" aria-label="Account network addresses">
+          <div role="region" className="mt-3 pb-4" aria-label={t('accountNetworkAddresses')}>
             {missingFamilies.includes('zcash') && renderMissingFamily('zcash')}
             {otherNetworks.filter(network => network.chain.family === 'zcash').map(renderNetwork)}
             {missingFamilies.includes('evm') && renderMissingFamily('evm')}
             {showOtherChains && (
               <div className="mt-3 flex min-h-10 min-w-0 items-center justify-between gap-2 border-t border-border/40 pt-2">
-                <h2 className="min-w-0 text-sm text-wallet-secondary">Other chains</h2>
+                <h2 className="min-w-0 text-sm text-wallet-secondary">{t('otherChains')}</h2>
                 <div className="flex shrink-0 items-center gap-1">
                   <div
                     role="group"
-                    aria-label="Other chains address mode"
+                    aria-label={t('otherChainsAddressMode')}
                     className="flex h-8 shrink-0 gap-0.5 rounded-md bg-card p-0.5"
                   >
                     <button
@@ -664,7 +701,7 @@ function AccountAddressesList({
                         mode === 'public' ? 'bg-foreground/15 text-foreground' : 'text-muted'
                       )}
                     >
-                      Public
+                      {t('public')}
                     </button>
                     <button
                       type="button"
@@ -676,7 +713,7 @@ function AccountAddressesList({
                         mode === 'private' ? 'bg-wallet-mode text-white' : 'text-muted'
                       )}
                     >
-                      Incognito
+                      {t('incognito')}
                     </button>
                   </div>
                   {mode === 'private' && !privateEvmClosed && <PrivateAddressRisk />}
@@ -758,8 +795,8 @@ function AccountAddressesList({
                       <div className="flex shrink-0">
                         <button
                           type="button"
-                          title="Copy address"
-                          aria-label={`Copy EVM ${mode} address`}
+                          title={t('copyAddress')}
+                          aria-label={t('copyTypedAddress', evmAddressLabelValues)}
                           onClick={() =>
                             mode === 'private'
                               ? setPrivateAddressAction({ address: evmAddress })
@@ -775,8 +812,8 @@ function AccountAddressesList({
                         </button>
                         <button
                           type="button"
-                          title="Show QR code"
-                          aria-label={`Show EVM ${mode} address QR code`}
+                          title={t('showQr')}
+                          aria-label={t('showTypedAddressQr', evmAddressLabelValues)}
                           onClick={() => {
                             const target = firstEvm.addresses[0]
                             if (!target) return
@@ -821,14 +858,15 @@ function AccountAddressesList({
         >
           {qrTarget && (
             <>
-              <DialogTitle className="sr-only">
-                {qrTarget.confidential ? 'Incognito Address' : 'Receiving Address'}
-              </DialogTitle>
+              <DialogTitle className="sr-only">{qrTitle}</DialogTitle>
               <ReceivingAddressLayout
-                title={qrTarget.confidential ? 'Incognito Address' : 'Receiving Address'}
+                title={qrTitle}
                 onClose={() => setQrTarget(null)}
+                closeLabel={qrTranslate('closeReceivingAddress')}
                 qrValue={qrTarget.address.value}
-                qrLabel={`${qrTarget.displayName ?? qrTarget.network.chain.displayName} address QR code`}
+                qrLabel={qrTranslate('namedAddressQr', {
+                  name: qrTarget.displayName ?? qrTarget.network.chain.displayName
+                })}
                 identity={
                   <div className="flex min-w-0 items-center gap-3">
                     <AccountAvatar
@@ -844,7 +882,7 @@ function AccountAddressesList({
                               accountIdentity.name,
                               accountDisplayNames
                             )
-                          : 'Account'}
+                          : qrTranslate('account')}
                       </p>
                       <p className="flex items-center gap-1.5 text-sm text-muted">
                         <ChainIcon
@@ -869,23 +907,24 @@ function AccountAddressesList({
                         message={
                           qrTarget.confidential
                             ? PRIVATE_ADDRESS_WARNING
-                            : 'This address and its activity are publicly visible on-chain.'
+                            : qrTranslate('publicAddressWarning')
                         }
                       />
                     </DialogDescription>
                   ) : (
                     <DialogDescription className="sr-only">
-                      Scan this code to receive funds.
+                      {qrTranslate('scanToReceive')}
                     </DialogDescription>
                   )
                 }
               >
                 <h2 className="mt-5 text-center text-xl font-medium leading-7">
-                  {qrTarget.displayName ?? accountNetworkLabel(qrTarget.network)}{' '}
-                  {qrTarget.confidential
-                    ? 'Incognito'
-                    : accountNetworkAddressLabel(qrTarget.network, qrTarget.address)}{' '}
-                  address
+                  {qrTranslate('typedAddress', {
+                    network: qrTarget.displayName ?? accountNetworkLabel(qrTarget.network),
+                    type: qrTarget.confidential
+                      ? 'Incognito'
+                      : addressTypeLabel(qrTarget.network, qrTarget.address, qrTranslate)
+                  })}
                 </h2>
                 <div className="mt-4 flex w-full min-w-0 items-center gap-3 rounded-lg border border-white/10 bg-wallet-surface p-3">
                   <p
@@ -910,7 +949,7 @@ function AccountAddressesList({
                     }
                   >
                     <CopyFeedbackIcon copied={isCopied('qr-address')} width={17} height={17} />
-                    {isCopied('qr-address') ? 'Copied' : 'Copy'}
+                    {qrTranslate(isCopied('qr-address') ? 'copied' : 'copy')}
                   </Button>
                 </div>
               </ReceivingAddressLayout>
@@ -919,26 +958,28 @@ function AccountAddressesList({
         </DialogContent>
       </Dialog>
 
-      <PrivateAddressWarningDialog
-        address={privateAddressAction?.address ?? null}
-        showQr={Boolean(privateAddressAction?.qrTarget)}
-        onClose={() => setPrivateAddressAction(null)}
-        onConfirm={() => {
-          if (!privateAddressAction) return
-          if (privateAddressAction.qrTarget) {
-            setQrTarget(privateAddressAction.qrTarget)
-            setPrivateAddressAction(null)
-          } else {
-            void copyToClipboard(
-              privateAddressAction.address,
-              privateAddressAction.copyKey ?? 'private-confirm',
-              { toastOnSuccess: true }
-            ).then(copied => {
-              if (copied) setPrivateAddressAction(null)
-            })
-          }
-        }}
-      />
+      <EnglishCopy>
+        <PrivateAddressWarningDialog
+          address={privateAddressAction?.address ?? null}
+          showQr={Boolean(privateAddressAction?.qrTarget)}
+          onClose={() => setPrivateAddressAction(null)}
+          onConfirm={() => {
+            if (!privateAddressAction) return
+            if (privateAddressAction.qrTarget) {
+              setQrTarget(privateAddressAction.qrTarget)
+              setPrivateAddressAction(null)
+            } else {
+              void copyToClipboard(
+                privateAddressAction.address,
+                privateAddressAction.copyKey ?? 'private-confirm',
+                { toastOnSuccess: true }
+              ).then(copied => {
+                if (copied) setPrivateAddressAction(null)
+              })
+            }
+          }}
+        />
+      </EnglishCopy>
     </div>
   )
 }

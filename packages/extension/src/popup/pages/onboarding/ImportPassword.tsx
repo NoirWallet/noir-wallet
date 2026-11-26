@@ -1,4 +1,4 @@
-import { PasswordForm } from '../../components/auth/PasswordForm'
+import { OnboardingPasswordForm } from '../../components/onboarding/OnboardingPasswordForm'
 import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
 
@@ -21,15 +21,5 @@ export function ImportPassword() {
     goBack()
   }
 
-  return (
-    <PasswordForm
-      mode="import"
-      title="Create Password"
-      description="Create a password to unlock your wallet. We cannot recover this password."
-      submitText="Import Wallet"
-      showTerms={true}
-      onSubmit={handleSubmit}
-      onBack={handleBack}
-    />
-  )
+  return <OnboardingPasswordForm mode="import" onSubmit={handleSubmit} onBack={handleBack} />
 }

@@ -5,8 +5,13 @@ import { WordTag } from '../../components/seed-phrase/WordTag'
 import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
 import { shuffleVerificationWordOptions } from '@/core/wallet/recovery-phrase-confirmation'
+import { useOnboardingTranslation } from '@/popup/components/onboarding/useOnboardingTranslation'
+
+const englishOrdinal = new Intl.PluralRules('en', { type: 'ordinal' })
+const ordinalSuffix = { one: 'st', two: 'nd', few: 'rd', other: 'th', zero: 'th', many: 'th' }
 
 export function ConfirmPhrase() {
+  const { t, locale, errorText } = useOnboardingTranslation()
   const { navigate } = useNavigate()
   const {
     flowMode,
@@ -26,11 +31,8 @@ export function ConfirmPhrase() {
     return shuffleVerificationWordOptions(seedPhrase, verificationIndices)
   }, [seedPhrase, verificationIndices])
 
-  const ordinalSuffix = (n: number) => {
-    const s = ['th', 'st', 'nd', 'rd']
-    const v = n % 100
-    return n + (s[(v - 20) % 10] || s[v] || s[0])
-  }
+  const formatPosition = (number: number) =>
+    locale === 'en' ? `${number}${ordinalSuffix[englishOrdinal.select(number)]}` : number
 
   const handleNext = async () => {
     if (verifySeedPhrase()) {
@@ -50,19 +52,14 @@ export function ConfirmPhrase() {
 
   return (
     <div className="page-container">
-      <PageHeader title="Confirm Recovery Phrase" showBack />
+      <PageHeader title={t('confirmPhrase')} showBack />
 
       <div className="flex-1 px-5 pt-3 overflow-y-auto">
         <p className="text-sm text-muted mb-4">
-          Select the{' '}
-          <span className="text-primary font-medium">
-            {ordinalSuffix(verificationIndices[0] + 1)}
-          </span>{' '}
-          and{' '}
-          <span className="text-primary font-medium">
-            {ordinalSuffix(verificationIndices[1] + 1)}
-          </span>{' '}
-          words.
+          {t('selectPhraseWords', {
+            first: formatPosition(verificationIndices[0] + 1),
+            second: formatPosition(verificationIndices[1] + 1)
+          })}
         </p>
 
         <div className="flex flex-wrap gap-2">
@@ -80,23 +77,30 @@ export function ConfirmPhrase() {
 
         {selectedVerificationWords.length > 0 && (
           <div className="mt-4 p-3 bg-card rounded-lg">
-            <p className="text-sm text-muted mb-2">Selected words:</p>
+            <p className="text-sm text-muted mb-2">{t('selectedWords')}</p>
             <div className="flex gap-2">
               {selectedVerificationWords.map((option, index) => (
                 <span key={option.optionId} className="text-foreground font-mono">
-                  {ordinalSuffix(verificationIndices[index] + 1)}: {option.word}
+                  {t('ordinal', { number: formatPosition(verificationIndices[index] + 1) })}:{' '}
+                  {option.word}
                 </span>
               ))}
             </div>
           </div>
         )}
 
-        {error && <p className="mt-4 text-sm text-danger">{error}</p>}
+        {error && (
+          <p role="alert" className="mt-4 text-sm text-danger">
+            {errorText(error, 'createFailed')}
+          </p>
+        )}
 
         {isLoading && (
           <div className="mt-4 flex items-center gap-2 text-muted">
             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-            <span className="text-sm">Creating wallet...</span>
+            <span className="text-sm" role="status">
+              {t('creatingWallet')}
+            </span>
           </div>
         )}
       </div>
@@ -107,7 +111,7 @@ export function ConfirmPhrase() {
           disabled={selectedVerificationWords.length !== 2 || isLoading}
           className="w-full h-[45px]"
         >
-          {isLoading ? 'Creating...' : 'Confirm'}
+          {t(isLoading ? 'creating' : 'confirm')}
         </Button>
       </div>
     </div>

@@ -1,3 +1,6 @@
+import { useTranslation } from '@/popup/i18n'
+import { createSendCopy } from '@/popup/i18n/send-copy'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { Button } from '../ui/button'
 import { TransactionResult, TransactionResultDetailRow } from './TransactionResult'
 import { formatSortAddress } from '@/lib/format'
@@ -66,13 +69,15 @@ export function StandardTransactionResult({
   onDone,
   onCancel
 }: StandardTransactionResultProps) {
+  const { locale, t } = useTranslation(sendMessages)
+  const copy = createSendCopy(locale)
   const zcashChainId = getZcashChainId(DEFAULT_NETWORK)
   const toContact = useAddressBookStore(state =>
     toAddress ? state.getContact(zcashChainId, toAddress) : undefined
   )
   const baseConfig = getStandardTransactionResultCopy(step, { error, shield })
-  const title = customTitle || baseConfig.title
-  const description = customDescription || baseConfig.description
+  const title = copy(customTitle || baseConfig.title)
+  const description = copy(customDescription || baseConfig.description)
   const showStatusDetail =
     phaseLayout && (step === 'submitted' || step === 'confirming' || step === 'success')
 
@@ -82,18 +87,18 @@ export function StandardTransactionResult({
     step === 'confirming' ||
     (step === 'pending' && error) ? (
       <Button onClick={onDone} className="w-full h-[45px]">
-        Done
+        {t('done')}
       </Button>
     ) : step === 'failed' ? (
       <div className="space-y-3">
         {failureAction && !failureAction.retry && (
           <Button onClick={failureAction.onClick} className="w-full h-[45px]">
-            {failureAction.label}
+            {copy(failureAction.label)}
           </Button>
         )}
         {onCancel && (
           <Button variant="outline" onClick={onCancel} className="w-full h-[45px]">
-            Cancel
+            {t('cancel')}
           </Button>
         )}
       </div>
@@ -121,12 +126,12 @@ export function StandardTransactionResult({
       ) : (
         step !== 'failed' && (
           <div className="w-full">
-            <TransactionResultDetailRow label="Amount">
+            <TransactionResultDetailRow label={t('amount')}>
               <AmountDisplay value={amount} symbol="ZEC" />
             </TransactionResultDetailRow>
 
             {showFrom && fromAddress && (
-              <TransactionResultDetailRow label={operation === 'send' ? 'Send from' : 'From'}>
+              <TransactionResultDetailRow label={t(operation === 'send' ? 'sendFrom' : 'from')}>
                 <span className="font-mono" title={fromAddress}>
                   {formatSortAddress(fromAddress)}
                 </span>
@@ -134,7 +139,7 @@ export function StandardTransactionResult({
             )}
 
             {showTo && toAddress && (
-              <TransactionResultDetailRow label={operation === 'send' ? 'Recipient' : 'To'}>
+              <TransactionResultDetailRow label={t(operation === 'send' ? 'recipient' : 'to')}>
                 <span className="flex flex-col items-end">
                   {toContact?.znsName && (
                     <span className="text-xs text-primary">{toContact.znsName}</span>
@@ -146,22 +151,24 @@ export function StandardTransactionResult({
               </TransactionResultDetailRow>
             )}
 
-            <TransactionResultDetailRow label="Network">
+            <TransactionResultDetailRow label={t('network')}>
               {DEFAULT_NETWORK === 'testnet' ? 'Zcash Testnet' : 'Zcash'}
             </TransactionResultDetailRow>
 
             {showStatusDetail && (
-              <TransactionResultDetailRow label="Status">
-                {step === 'success'
-                  ? 'Confirmed'
-                  : step === 'confirming'
-                    ? 'Confirming'
-                    : 'Submitted'}
+              <TransactionResultDetailRow label={t('status')}>
+                {t(
+                  step === 'success'
+                    ? 'confirmedStatus'
+                    : step === 'confirming'
+                      ? 'confirmingStatus'
+                      : 'submittedStatus'
+                )}
               </TransactionResultDetailRow>
             )}
 
             {extraDetails?.map(detail => (
-              <TransactionResultDetailRow key={detail.label} label={detail.label}>
+              <TransactionResultDetailRow key={detail.label} label={copy(detail.label)}>
                 {detail.value}
               </TransactionResultDetailRow>
             ))}
@@ -169,13 +176,15 @@ export function StandardTransactionResult({
             {(step === 'success' || step === 'submitted' || step === 'confirming') &&
               showTime &&
               timestamp && (
-                <TransactionResultDetailRow label="Time">
-                  <span className="text-muted">{new Date(timestamp).toLocaleString()}</span>
+                <TransactionResultDetailRow label={t('time')}>
+                  <span className="text-muted">
+                    {new Date(timestamp).toLocaleString(locale === 'en' ? undefined : locale)}
+                  </span>
                 </TransactionResultDetailRow>
               )}
 
             {showTxHash && txHash && (
-              <TransactionResultDetailRow label="Transaction Hash">
+              <TransactionResultDetailRow label={t('txHash')}>
                 <a
                   href={formatChainTransactionExplorerUrl(
                     getZcashChainId(DEFAULT_NETWORK),

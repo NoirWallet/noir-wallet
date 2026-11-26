@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
+import { EnglishCopy, useTranslation } from '@/popup/i18n'
+import { portfolioMessages } from '@/popup/i18n/portfolio-messages'
 import { Tabs, TabsContent } from '../components/ui/tabs'
 import { PageTabsList, PageTabsTrigger } from '../components/common/PageTabs'
 import { DAppConnectPrompt } from '../components/dapp/DAppConnectPrompt'
@@ -92,7 +94,15 @@ const evmOperationsEnabled = resolveEvmFeatureRuntimePolicy(
 ).newOperationsEnabled
 const canUseSharedPortfolioTotalCache = __ENABLED_CHAIN_FEATURE_FLAGS__.length > 1
 
+const syncIssueLabels = {
+  sync_stall: 'syncPaused',
+  network_error: 'syncNetworkError',
+  fallback_timeout: 'syncInterrupted',
+  wallet_state_error: 'syncWalletError'
+} as const
+
 export function Home() {
+  const { t } = useTranslation(portfolioMessages)
   const openResyncZcash = useResyncZcash()
   const { confirm } = useDialog()
   const navigate = useNavigate()
@@ -638,7 +648,7 @@ export function Home() {
     const current = dappExecutionMode.state
     if (!current) return
     if (mode === 'private' && !current.privateAvailable) {
-      toast.error('Incognito mode is unavailable for this account')
+      toast.error(t('incognitoUnavailable'))
       return
     }
     requestedMode.current = mode
@@ -766,7 +776,7 @@ export function Home() {
       const response = await chrome.runtime.sendMessage({ type: 'BACKGROUND_SYNC' })
       if (response?.success !== true) throw new Error('Unable to retry Zcash sync')
     } catch {
-      toast.error('Unable to retry Zcash sync')
+      toast.error(t('syncRetryFailed'))
     } finally {
       setSyncActionPending(false)
     }
@@ -788,7 +798,7 @@ export function Home() {
           }
         )
       } catch {
-        toast.error('Unable to open Zcash recovery')
+        toast.error(t('openRecoveryFailed'))
       } finally {
         setSyncActionPending(false)
       }
@@ -797,27 +807,31 @@ export function Home() {
 
   return (
     <div className="page-container min-h-0 overflow-hidden" data-home-domain={assetDomain}>
-      <LegacyPoolPrivacyNotice
-        open={legacyPoolPrivacyNotice.isOpen}
-        onDismiss={legacyPoolPrivacyNotice.dismiss}
-      />
-      <header className="home-wallet-header flex h-14 shrink-0 items-center justify-between gap-3 px-4">
-        <AccountSwitcher
-          accountName={accountDisplayName}
-          accountIdentity={effectiveAccount}
-          accountCatalog={accountCatalog}
-          publicAccountCatalog={publicAccountCatalog}
-          accountCatalogError={accountNetworksError}
-          defaultEvmMode={walletMode}
-          className="min-w-0"
+      <EnglishCopy>
+        <LegacyPoolPrivacyNotice
+          open={legacyPoolPrivacyNotice.isOpen}
+          onDismiss={legacyPoolPrivacyNotice.dismiss}
         />
+      </EnglishCopy>
+      <header className="home-wallet-header flex h-14 shrink-0 items-center justify-between gap-3 px-4">
+        <EnglishCopy>
+          <AccountSwitcher
+            accountName={accountDisplayName}
+            accountIdentity={effectiveAccount}
+            accountCatalog={accountCatalog}
+            publicAccountCatalog={publicAccountCatalog}
+            accountCatalogError={accountNetworksError}
+            defaultEvmMode={walletMode}
+            className="min-w-0"
+          />
+        </EnglishCopy>
         <div data-testid="home-header-actions" className="flex items-center justify-end">
           <Popover>
             <PopoverTrigger asChild>
               <button
                 type="button"
-                aria-label="Open menu"
-                title="Menu"
+                aria-label={t('openMenu')}
+                title={t('menu')}
                 className="wallet-interactive flex size-7 items-center justify-center rounded-md hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
               >
                 <Icon icon="lucide:menu" width={21} height={21} />
@@ -827,9 +841,9 @@ export function Home() {
               <SidebarModeToggle compact />
               {(
                 [
-                  ['Accounts', 'lucide:wallet', '/account-list'],
-                  ['DApp connections', 'lucide:plug', '/dapp-connections'],
-                  ['Settings', 'lucide:settings', '/settings']
+                  ['accounts', 'lucide:wallet', '/account-list'],
+                  ['dappConnections', 'lucide:plug', '/dapp-connections'],
+                  ['settings', 'lucide:settings', '/settings']
                 ] as const
               ).map(([label, icon, path]) => (
                 <button
@@ -844,7 +858,7 @@ export function Home() {
                   className="wallet-interactive flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm hover:bg-white/5 active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Icon icon={icon} width={16} height={16} />
-                  {label}
+                  {t(label)}
                 </button>
               ))}
             </PopoverContent>
@@ -885,7 +899,7 @@ export function Home() {
             }
             quickShieldLabel={
               !shieldPortfolioEmpty && quickShield.eligible
-                ? (quickShield.label ?? 'Assets')
+                ? (quickShield.label ?? t('assets'))
                 : undefined
             }
             onQuickShield={quickShield.onOpen}
@@ -908,7 +922,8 @@ export function Home() {
           {accountNetworksError && !storageV2Account && (
             <InlineError
               className="mb-4 px-5"
-              message="Unable to load account addresses"
+              message={t('loadAddressesFailed')}
+              retryLabel={t('retry')}
               retrying={accountNetworksLoading}
               onRetry={() => void refreshAccountNetworks()}
             />
@@ -923,7 +938,7 @@ export function Home() {
               <>
                 <WalletActionButton
                   icon={<WalletActionIcon action="deposit" />}
-                  label="Deposit"
+                  label={t('deposit')}
                   disabled={!canMoveEvm}
                   onClick={() =>
                     navigate.navigate(
@@ -933,7 +948,7 @@ export function Home() {
                 />
                 <WalletActionButton
                   icon={<WalletActionIcon action="withdraw" />}
-                  label="Withdraw"
+                  label={t('withdraw')}
                   disabled={!canMoveEvm}
                   onClick={() =>
                     navigate.navigate(
@@ -946,13 +961,13 @@ export function Home() {
               <>
                 <WalletActionButton
                   icon={<WalletActionIcon action="send" shielded={isShieldView} />}
-                  label="Send"
+                  label={t('send')}
                   disabled={isShieldView && shieldActions.providersFor('send').length === 0}
                   onClick={openSend}
                 />
                 <WalletActionButton
                   icon={<WalletActionIcon action="receive" shielded={isShieldView} />}
-                  label="Receive"
+                  label={t('receive')}
                   disabled={isShieldView && shieldActions.providersFor('receive').length === 0}
                   onClick={() =>
                     navigate.navigate(isShieldView ? buildShieldActionPath('receive') : '/receive')
@@ -963,7 +978,7 @@ export function Home() {
             {assetDomain !== 'private' && (
               <WalletActionButton
                 icon={<WalletActionIcon action="shield" />}
-                label="Shield"
+                label={t('shieldAction')}
                 disabled={!shieldActions.hasZcash && !shieldActions.canManageNear}
                 onClick={() => navigate.navigate('/shield')}
               />
@@ -971,14 +986,14 @@ export function Home() {
             {isShieldView && (
               <WalletActionButton
                 icon={<WalletActionIcon action="unshield" />}
-                label="Unshield"
+                label={t('unshield')}
                 disabled={!shieldActions.hasZcash && !shieldActions.canManageNear}
                 onClick={() => navigate.navigate('/unshield')}
               />
             )}
             <WalletActionButton
               icon={<WalletActionIcon action="swap" />}
-              label="Swap"
+              label={t('swap')}
               disabled={
                 isTestnet ||
                 !supportsSwap ||
@@ -1020,11 +1035,11 @@ export function Home() {
           >
             <div className="home-portfolio-tabs sticky top-0 z-10 flex h-10 shrink-0 items-center gap-3 bg-background px-[17px]">
               <PageTabsList className="h-full flex-1 gap-9">
-                <PageTabsTrigger value="assets">Tokens</PageTabsTrigger>
+                <PageTabsTrigger value="assets">{t('tokens')}</PageTabsTrigger>
                 <PageTabsTrigger value={showProviders ? 'providers' : 'dapp'}>
-                  {showProviders ? 'Providers' : 'DApps'}
+                  {t(showProviders ? 'providers' : 'dapps')}
                 </PageTabsTrigger>
-                <PageTabsTrigger value="activity">Activity</PageTabsTrigger>
+                <PageTabsTrigger value="activity">{t('activity')}</PageTabsTrigger>
               </PageTabsList>
               {showInlineSyncProgress && (
                 <ZcashSyncProgress
@@ -1037,7 +1052,7 @@ export function Home() {
               )}
             </div>
             <div className="flex flex-1 flex-col">
-              {syncIssue && activeTab !== 'dapp' && (
+              {syncIssue && syncReason && activeTab !== 'dapp' && (
                 <div
                   className={
                     syncIssue.description
@@ -1051,7 +1066,7 @@ export function Home() {
                       className={`flex min-w-0 items-center gap-1 text-xs ${syncIssue.description ? 'mr-auto' : ''} ${syncIssue.tone === 'warning' ? 'text-warning' : 'text-danger'}`}
                     >
                       <Icon icon={syncIssue.icon} width={13} height={13} className="shrink-0" />
-                      {syncIssue.label}
+                      {t(syncIssueLabels[syncReason])}
                     </span>
                     {(syncIssue.action === 'retry' ||
                       Boolean(currentWalletId && currentAccountId)) && (
@@ -1062,37 +1077,43 @@ export function Home() {
                         className="wallet-interactive shrink-0 rounded-sm px-2 py-1 text-xs font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
                       >
                         {syncIssue.action === 'restore'
-                          ? 'Restore'
+                          ? t('restore')
                           : syncActionPending
-                            ? 'Retrying...'
-                            : 'Retry'}
+                            ? t('retrying')
+                            : t('retry')}
                       </button>
                     )}
                   </div>
                   {syncIssue.description && (
-                    <p className="mt-1 text-xs leading-4 text-muted">{syncIssue.description}</p>
+                    <p className="mt-1 text-xs leading-4 text-muted">
+                      {t('syncRestoreDescription')}
+                    </p>
                   )}
                 </div>
               )}
               {showProviders ? (
                 <TabsContent value="providers" className="mt-0">
                   {activeTab === 'providers' && (
-                    <HomeShieldProviders
-                      network={currentNetwork}
-                      account={storageV2Account}
-                      model={multichainPortfolio}
-                      status={portfolioLoadStatus}
-                      refresh={refreshPortfolio}
-                      prices={assetPrices}
-                      pricesLoading={assetPriceStatus === 'loading'}
-                      balancesHidden={balancesHidden}
-                      actions={shieldActions}
-                    />
+                    <EnglishCopy>
+                      <HomeShieldProviders
+                        network={currentNetwork}
+                        account={storageV2Account}
+                        model={multichainPortfolio}
+                        status={portfolioLoadStatus}
+                        refresh={refreshPortfolio}
+                        prices={assetPrices}
+                        pricesLoading={assetPriceStatus === 'loading'}
+                        balancesHidden={balancesHidden}
+                        actions={shieldActions}
+                      />
+                    </EnglishCopy>
                   )}
                 </TabsContent>
               ) : (
                 <TabsContent value="dapp" className="mt-0">
-                  <HomeDAppList account={effectiveAccount} connections={connectedDApps} />
+                  <EnglishCopy>
+                    <HomeDAppList account={effectiveAccount} connections={connectedDApps} />
+                  </EnglishCopy>
                 </TabsContent>
               )}
               <TabsContent
@@ -1102,12 +1123,10 @@ export function Home() {
                 {showShieldEmpty ? (
                   <section className="mx-4 mt-12 rounded-lg bg-wallet-surface px-4 py-6 text-center">
                     <p className="text-base font-medium">
-                      {quickShield.label
-                        ? `${quickShield.label} available to shield`
-                        : 'Assets available to shield'}
+                      {t('availableToShield', { name: quickShield.label ?? t('assets') })}
                     </p>
                     <p className="mt-1 text-sm text-wallet-secondary">
-                      Move eligible tokens from Public to Shield.
+                      {t('moveEligibleToShield')}
                     </p>
                     <Button
                       size="wallet"
@@ -1115,7 +1134,7 @@ export function Home() {
                       aria-haspopup="dialog"
                       onClick={event => quickShield.onOpen(event.currentTarget)}
                     >
-                      Shield tokens now{' '}
+                      {t('shieldTokensNow')}{' '}
                       <Icon icon="lucide:arrow-right" width={14} aria-hidden="true" />
                     </Button>
                   </section>
@@ -1166,88 +1185,90 @@ export function Home() {
                       className="wallet-interactive mx-4 mb-6 flex min-h-[73px] w-[calc(100%-2rem)] flex-col justify-center rounded-lg border border-border bg-wallet-surface px-3 text-left hover:bg-accent active:bg-wallet-selected focus-visible:outline-2 focus-visible:outline-primary"
                     >
                       <span className="flex w-full items-center justify-between gap-2">
-                        <span className="text-base font-medium">Add More Networks</span>
+                        <span className="text-base font-medium">{t('addNetworks')}</span>
                         <span className="flex shrink-0 items-center gap-1 text-sm font-medium text-primary">
-                          Add now <Icon icon="lucide:chevron-right" width={14} height={14} />
+                          {t('addNow')} <Icon icon="lucide:chevron-right" width={14} height={14} />
                         </span>
                       </span>
-                      <span className="mt-1 text-xs text-muted">
-                        Ethereum, BNB Chain, Base and more…
-                      </span>
+                      <span className="mt-1 text-xs text-muted">{t('moreNetworks')}</span>
                     </button>
                   </div>
                 )}
               </TabsContent>
 
               <TabsContent value="activity" className="mt-0">
-                {activityFilterAssetId && (
-                  <div className="flex min-h-10 items-center justify-between gap-2 border-b border-border px-5 py-2">
-                    <span className="min-w-0 truncate text-sm text-wallet-secondary">
-                      {activityFilterLabel}
-                    </span>
-                    <button
-                      type="button"
-                      aria-label="Clear activity asset filter"
-                      title="Clear filter"
-                      onClick={() =>
-                        navigate.replace(clearHomeActivityAssetFilter(location.search))
-                      }
-                      className="wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"
-                    >
-                      <Icon icon="lucide:x" width={15} height={15} />
-                    </button>
-                  </div>
-                )}
-                <MultichainActivityPanel
-                  walletId={effectiveWalletId}
-                  accountId={effectiveAccountId}
-                  network={network}
-                  portfolio={multichainPortfolio}
-                  accountNetworks={storageV2Account?.networks}
-                  accountMode={activityDomain === 'private' ? 'private' : 'main'}
-                  allExecutionModes={activityDomain === 'shield'}
-                  filterAssetId={activityFilterAssetId ?? undefined}
-                  filterDomain={activityDomain}
-                  showToolbar={!activityFilterAssetId}
-                  showStatusFilter={isShieldView}
-                  focusTransactionId={focusTransactionId}
-                  onItemClick={handleMultichainActivityClick}
-                />
+                <EnglishCopy>
+                  {activityFilterAssetId && (
+                    <div className="flex min-h-10 items-center justify-between gap-2 border-b border-border px-5 py-2">
+                      <span className="min-w-0 truncate text-sm text-wallet-secondary">
+                        {activityFilterLabel}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Clear activity asset filter"
+                        title="Clear filter"
+                        onClick={() =>
+                          navigate.replace(clearHomeActivityAssetFilter(location.search))
+                        }
+                        className="wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-sm text-muted hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary"
+                      >
+                        <Icon icon="lucide:x" width={15} height={15} />
+                      </button>
+                    </div>
+                  )}
+                  <MultichainActivityPanel
+                    walletId={effectiveWalletId}
+                    accountId={effectiveAccountId}
+                    network={network}
+                    portfolio={multichainPortfolio}
+                    accountNetworks={storageV2Account?.networks}
+                    accountMode={activityDomain === 'private' ? 'private' : 'main'}
+                    allExecutionModes={activityDomain === 'shield'}
+                    filterAssetId={activityFilterAssetId ?? undefined}
+                    filterDomain={activityDomain}
+                    showToolbar={!activityFilterAssetId}
+                    showStatusFilter={isShieldView}
+                    focusTransactionId={focusTransactionId}
+                    onItemClick={handleMultichainActivityClick}
+                  />
+                </EnglishCopy>
               </TabsContent>
             </div>
           </Tabs>
         </div>
       </div>
 
-      {connectedDApp && currentAccountAuthorized && (
-        <ConnectedDAppBar
-          dapp={connectedDApp}
-          account={effectiveAccount}
-          executionMode={hardwareWallet ? 'main' : (dappExecutionMode.state?.mode ?? null)}
-          darkPalette={darkDAppBar}
-          modeControl={dappModeControl}
-          onManage={handleDAppClick}
-          onDisconnect={disconnectDApp}
-        />
-      )}
-      {connectedDApp && !currentAccountAuthorized && canConnectCurrentAccount && (
-        <DAppConnectPrompt
-          host={connectedDApp.host}
-          favicon={connectedDApp.favicon}
-          accountName={accountDisplayName}
-          executionMode={
-            hardwareWallet || !currentDAppUsesEvm || !supportsEvmDAppExecutionMode
-              ? 'main'
-              : (dappExecutionMode.state?.mode ?? null)
-          }
-          darkPalette={darkDAppBar}
-          modeControl={currentDAppUsesEvm ? dappModeControl : undefined}
-          onConnect={() => connectCurrentAccount(connectedDApp.origin)}
-        />
-      )}
+      <EnglishCopy>
+        {connectedDApp && currentAccountAuthorized && (
+          <ConnectedDAppBar
+            dapp={connectedDApp}
+            account={effectiveAccount}
+            executionMode={hardwareWallet ? 'main' : (dappExecutionMode.state?.mode ?? null)}
+            darkPalette={darkDAppBar}
+            modeControl={dappModeControl}
+            onManage={handleDAppClick}
+            onDisconnect={disconnectDApp}
+          />
+        )}
+        {connectedDApp && !currentAccountAuthorized && canConnectCurrentAccount && (
+          <DAppConnectPrompt
+            host={connectedDApp.host}
+            favicon={connectedDApp.favicon}
+            accountName={accountDisplayName}
+            executionMode={
+              hardwareWallet || !currentDAppUsesEvm || !supportsEvmDAppExecutionMode
+                ? 'main'
+                : (dappExecutionMode.state?.mode ?? null)
+            }
+            darkPalette={darkDAppBar}
+            modeControl={currentDAppUsesEvm ? dappModeControl : undefined}
+            onConnect={() => connectCurrentAccount(connectedDApp.origin)}
+          />
+        )}
 
-      {speedUpSheet}
-      {quickShield.dialog}
+        {speedUpSheet}
+        {quickShield.dialog}
+      </EnglishCopy>
     </div>
   )
 }

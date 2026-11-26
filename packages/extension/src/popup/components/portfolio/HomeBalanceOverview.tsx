@@ -1,15 +1,17 @@
 import { useState } from 'react'
 import { Icon } from '@iconify/react'
 import { formatFiatAmount } from '@/lib/number-format'
+import { EnglishCopy, useTranslation } from '@/popup/i18n'
+import { portfolioMessages } from '@/popup/i18n/portfolio-messages'
 import type { HomeAssetDomainDisplay } from '@/popup/services/home-asset-breakdown'
 import type { HomeAssetDomain } from '@/popup/services/home-navigation'
 import { BalanceSkeleton } from '../ui/skeleton'
 import { IncognitoSetupButton } from '../account/IncognitoSetupButton'
 
 const balanceCards = [
-  { domain: 'shield', label: 'Shield', icon: 'lucide:shield-check' },
-  { domain: 'public', label: 'Public', icon: 'lucide:eye' },
-  { domain: 'private', label: 'Incognito', icon: 'noir:private-assets' }
+  { domain: 'shield', label: 'shield', icon: 'lucide:shield-check' },
+  { domain: 'public', label: 'public', icon: 'lucide:eye' },
+  { domain: 'private', label: 'incognito', icon: 'noir:private-assets' }
 ] as const
 
 export interface HomeBalanceOverviewProps {
@@ -45,6 +47,7 @@ export function HomeBalanceOverview({
   onToggleHidden,
   onSelect
 }: HomeBalanceOverviewProps) {
+  const { t } = useTranslation(portfolioMessages)
   const [collapsedDomain, setCollapsedDomain] = useState<HomeAssetDomain | null>(null)
   const expandedDomain = collapsedDomain === domain ? null : domain
   const selectCard = (cardDomain: HomeAssetDomain) => {
@@ -57,7 +60,7 @@ export function HomeBalanceOverview({
   )
 
   function balance(cardDomain: HomeAssetDomain | 'all', skeleton: string) {
-    if (hidden) return <span aria-label="Balance hidden">••••</span>
+    if (hidden) return <span aria-label={t('balanceHidden')}>••••</span>
     if (display.loading[cardDomain]) return <BalanceSkeleton className={skeleton} />
     if (cardDomain === 'shield' && shieldEmpty) return <span className="tabular-nums">$0.00</span>
     return (
@@ -65,7 +68,7 @@ export function HomeBalanceOverview({
         className="tabular-nums wrap-anywhere"
         title={
           display.partial[cardDomain] && display.totals[cardDomain] !== null
-            ? 'Partial balance'
+            ? t('partialBalance')
             : undefined
         }
       >
@@ -75,15 +78,15 @@ export function HomeBalanceOverview({
   }
 
   return (
-    <section aria-label="Wallet balances" className="shrink-0 px-4">
+    <section aria-label={t('walletBalances')} className="shrink-0 px-4">
       <div className="mb-1.5 flex h-[27px] items-center gap-1">
         <div data-testid="home-total-assets" className="flex min-w-0 items-baseline gap-1.5">
-          <span className="text-sm text-[#bcbcc8]">Total</span>
+          <span className="text-sm text-[#bcbcc8]">{t('total')}</span>
           <div className="min-w-0 text-sm leading-5">{balance('all', 'h-4 w-20')}</div>
         </div>
         <button
           type="button"
-          aria-label={hidden ? 'Show balances' : 'Hide balances'}
+          aria-label={t(hidden ? 'showBalances' : 'hideBalances')}
           aria-pressed={hidden}
           onClick={onToggleHidden}
           className="wallet-interactive flex size-7 shrink-0 items-center justify-center rounded-md text-muted hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
@@ -94,7 +97,7 @@ export function HomeBalanceOverview({
 
       <div
         role="group"
-        aria-label="Wallet balance mode"
+        aria-label={t('walletBalanceMode')}
         className="home-balance-stack relative isolate"
         data-active-domain={expandedDomain ?? undefined}
       >
@@ -111,7 +114,7 @@ export function HomeBalanceOverview({
               <div className="h-full overflow-hidden rounded-t-[inherit]">
                 <button
                   type="button"
-                  aria-label={`${label} balance`}
+                  aria-label={t('namedBalance', { name: t(label) })}
                   aria-pressed={selected}
                   aria-expanded={expanded}
                   disabled={modeSelectionDisabled}
@@ -120,7 +123,7 @@ export function HomeBalanceOverview({
                 >
                   <span className="home-balance-card-label flex shrink-0 items-center gap-2">
                     <span className="home-balance-indicator size-2 shrink-0 rounded-full" />
-                    {label}
+                    {t(label)}
                   </span>
                   <span className="home-balance-card-amount min-w-0 text-right">
                     {balance(
@@ -154,27 +157,24 @@ export function HomeBalanceOverview({
                           {shieldEmpty ? (
                             <>
                               <p className="home-balance-description">
-                                Your combined balance across privacy providers. Shielding keeps this
-                                balance hidden from public view onchain.
+                                {t('shieldCombinedBalance')}
                               </p>
                               <button
                                 type="button"
                                 className="wallet-interactive mt-1 inline-flex items-center gap-1 rounded text-[#28f4af] hover:underline focus-visible:outline-2 focus-visible:outline-ring"
                                 onClick={onExploreShieldProviders}
                               >
-                                Explore privacy providers
+                                {t('exploreProviders')}
                                 <Icon icon="lucide:arrow-right" width={13} aria-hidden="true" />
                               </button>
                             </>
                           ) : (
-                            <p className="home-balance-description">
-                              Total across privacy providers
-                            </p>
+                            <p className="home-balance-description">{t('shieldTotal')}</p>
                           )}
                           {quickShieldLabel && onQuickShield && (
                             <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2">
                               <span className="min-w-0 wrap-anywhere">
-                                {quickShieldLabel} remains unshielded.
+                                {t('remainsUnshielded', { name: quickShieldLabel })}
                               </span>
                               <button
                                 type="button"
@@ -182,7 +182,7 @@ export function HomeBalanceOverview({
                                 className="wallet-interactive inline-flex min-h-8 shrink-0 items-center gap-1 rounded text-[#28f4af] hover:underline focus-visible:outline-2 focus-visible:outline-ring"
                                 onClick={event => onQuickShield(event.currentTarget)}
                               >
-                                Shield{' '}
+                                {t('shieldAction')}{' '}
                                 <Icon icon="lucide:arrow-right" width={13} aria-hidden="true" />
                               </button>
                             </div>
@@ -192,13 +192,15 @@ export function HomeBalanceOverview({
                       {cardDomain === 'public' &&
                         canSetUpIncognito &&
                         (onEnableIncognito || onAddIncognitoNetwork) && (
-                          <IncognitoSetupButton
-                            disabled={modeSelectionDisabled}
-                            complete={onEnableIncognito}
-                            onAddEvmNetwork={onAddIncognitoNetwork}
-                            onCompleted={() => selectCard('private')}
-                            className="mt-auto ml-auto"
-                          />
+                          <EnglishCopy>
+                            <IncognitoSetupButton
+                              disabled={modeSelectionDisabled}
+                              complete={onEnableIncognito}
+                              onAddEvmNetwork={onAddIncognitoNetwork}
+                              onCompleted={() => selectCard('private')}
+                              className="mt-auto ml-auto"
+                            />
+                          </EnglishCopy>
                         )}
                     </div>
                   </div>

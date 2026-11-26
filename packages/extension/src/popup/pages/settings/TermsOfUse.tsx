@@ -175,7 +175,7 @@ export function TermsOfUse({ embedded }: TermsOfUseProps = {}) {
 
   if (embedded) {
     return (
-      <div className="max-h-[460px] overflow-y-auto px-1 py-2">
+      <div lang="en" className="max-h-[460px] overflow-y-auto px-1 py-2">
         <h2 className="text-base font-semibold mb-3">Terms of Use</h2>
         {content}
       </div>

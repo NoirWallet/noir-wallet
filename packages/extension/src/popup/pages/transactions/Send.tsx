@@ -1,3 +1,5 @@
+import { createTranslator, EnglishCopy, useLocale, useTranslation } from '@/popup/i18n'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { MARKET_ASSETS } from '@/config/asset-market-assets'
 import { Icon } from '@iconify/react'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
@@ -158,6 +160,7 @@ function AssetSelection({
   onSelect: (asset: SendAsset) => void
   onRetry: (chainId?: string) => Promise<void>
 }) {
+  const { t } = useTranslation(sendMessages)
   const [query, setQuery] = useState('')
   const deferredQuery = useDeferredValue(query)
   const [selectedNetwork, setSelectedNetwork] = useState('all')
@@ -191,7 +194,7 @@ function AssetSelection({
     return (
       <div className="flex h-full min-h-0 flex-col pt-2">
         {loadingAdditional ? (
-          <ListSkeleton label="Loading tokens" className="py-2" />
+          <ListSkeleton label={t('loadingTokens')} className="py-2" />
         ) : (
           <TransactionNotice
             message="Unable to load tokens."
@@ -209,7 +212,7 @@ function AssetSelection({
           id: option.id,
           label: option.label,
           iconChain: option.iconAlias,
-          disabledReason: option.disabled ? 'Coming soon' : undefined
+          disabledReason: option.disabled ? t('comingSoon') : undefined
         }))}
         filter={{
           search: query,
@@ -236,7 +239,7 @@ function AssetSelection({
                 chainId: selectedNetwork.startsWith('eip155:') ? selectedNetwork : null,
                 onAdded: async () => {
                   await onRetry()
-                  return 'Added to wallet'
+                  return t('addedToWallet')
                 }
               }
             : undefined
@@ -249,7 +252,10 @@ function AssetSelection({
               key: row.key,
               symbol: 'ZEC',
               symbolSuffix: <ZcashFundingBadge source={row.source} />,
-              ariaLabel: `Send ${row.source === 'shielded' ? 'Shield' : 'Transparent'} ZEC on ${networkName}`,
+              ariaLabel: t('sendZec', {
+                source: t(row.source === 'shielded' ? 'shield' : 'transparent'),
+                network: networkName
+              }),
               subtitle: networkName,
               icon: (
                 <TokenIcon
@@ -274,10 +280,13 @@ function AssetSelection({
             symbol: metadata.symbol,
             symbolSuffix: customToken ? (
               <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[9px] text-muted">
-                Custom
+                {t('customToken')}
               </span>
             ) : undefined,
-            ariaLabel: `Send ${metadata.symbol}${customToken ? ' custom Token' : ''} on ${networkName}`,
+            ariaLabel: t(customToken ? 'sendCustomAsset' : 'sendAsset', {
+              symbol: metadata.symbol,
+              network: networkName
+            }),
             subtitle: `${networkName}${customToken ? ` · ${formatSortAddress(asset.reference)}` : ''}`,
             icon: (
               <TokenIcon
@@ -306,13 +315,13 @@ function AssetSelection({
           if (row.kind === 'zcash') onSelectZcash(row.source)
           else onSelect(row.entry)
         }}
-        emptyMessage={loadingAdditional ? 'Loading tokens' : 'No assets found'}
+        emptyMessage={t(loadingAdditional ? 'loadingTokens' : 'noAssets')}
         afterRows={
           <>
             {loadingAdditional && (
               <div
                 role="status"
-                aria-label="Loading additional networks"
+                aria-label={t('loadNetworks')}
                 className="flex animate-pulse items-center gap-3 py-3"
               >
                 <div className="size-10 rounded-full bg-card" />
@@ -359,6 +368,12 @@ function ZcashSendForm({
 }) {
   const transfer = useZcashTransfer({ ...options, active })
   const { funding, recipient, memoField, route, action } = transfer
+  const locale = useLocale()
+  const isHardware = useWalletStore(state =>
+    isZcashHardwareKeySource(state.getCurrentWallet()?.keySource)
+  )
+  const englishCopy = isHardware || route.confidential || transfer.review.selfTransfer
+  const t = createTranslator(sendMessages, englishCopy ? 'en' : locale)
   const { isShielding, handleShieldFunds, shieldSheet } = useShieldFunds(PAGE_IDS.SEND)
   const [destinationPickerOpen, setDestinationPickerOpen] = useState(false)
   const canSelectDestination =
@@ -376,26 +391,28 @@ function ZcashSendForm({
 
   const selectRecipient = async () => {
     await openModal<string>({
-      title: 'Select Recipient',
+      title: t('selectRecipient'),
       showCloseButton: true,
       scroll: 'body',
       fixedHeight: true,
       body: (resolve, close) => (
-        <RecipientSelector
-          chainId={recipient.chainId}
-          excludeAddresses={recipient.fromAddress ? [recipient.fromAddress] : []}
-          onSelect={(address, name) => {
-            recipient.setRecipient(address, name)
-            close()
-            resolve(address)
-          }}
-        />
+        <EnglishCopy active={englishCopy}>
+          <RecipientSelector
+            chainId={recipient.chainId}
+            excludeAddresses={recipient.fromAddress ? [recipient.fromAddress] : []}
+            onSelect={(address, name) => {
+              recipient.setRecipient(address, name)
+              close()
+              resolve(address)
+            }}
+          />
+        </EnglishCopy>
       )
     })
   }
 
   return (
-    <>
+    <EnglishCopy active={englishCopy}>
       {standalone && (
         <PageHeader
           title={
@@ -416,7 +433,7 @@ function ZcashSendForm({
                 disabled={funding.disabled}
               />
             ) : (
-              'Send'
+              t('send')
             )
           }
           showBack
@@ -431,7 +448,7 @@ function ZcashSendForm({
               id: 'zcash-send-recipient',
               value: recipient.address,
               onChange: recipient.setRecipient,
-              placeholder: 'Recipient address',
+              placeholder: t('recipientAddress'),
               invalid: Boolean(recipientError),
               onSelectRecipient: selectRecipient,
               network: {
@@ -460,7 +477,7 @@ function ZcashSendForm({
                         height={12}
                         className="animate-spin"
                       />
-                      Resolving name...
+                      {t('resolvingName')}
                     </p>
                   )}
                   {recipient.zns.address && (
@@ -474,7 +491,7 @@ function ZcashSendForm({
             },
             amount: {
               testId: 'zcash-amount-card',
-              ariaLabel: 'ZEC amount',
+              ariaLabel: t('assetAmount', { symbol: 'ZEC' }),
               ...transfer.amountField,
               describedBy: showAmountError ? 'zcash-amount-card-error' : undefined
             },
@@ -500,7 +517,7 @@ function ZcashSendForm({
               <div className="order-4">
                 <div className="mb-1.5 flex items-center justify-between px-1">
                   <label htmlFor="zcash-send-memo" className="text-xs text-muted">
-                    Memo (optional)
+                    {t('addMemoOptional')}
                   </label>
                   {memoField.invalid && (
                     <button
@@ -508,7 +525,7 @@ function ZcashSendForm({
                       onClick={() => memoField.onChange('')}
                       className="text-xs text-primary"
                     >
-                      Clear
+                      {t('clear')}
                     </button>
                   )}
                 </div>
@@ -519,13 +536,13 @@ function ZcashSendForm({
                   aria-invalid={memoField.invalid || undefined}
                   aria-describedby={showMemoError ? 'zcash-send-memo-error' : undefined}
                   onChange={event => memoField.onChange(event.target.value)}
-                  placeholder="Add a private memo"
+                  placeholder={t('addMemo')}
                   rows={2}
                   className="w-full resize-none rounded-xl border border-border/60 bg-card/50 px-4 py-3 text-sm placeholder:text-muted/50 focus:border-primary/50 focus:outline-none disabled:opacity-40"
                 />
                 {memoField.value && (
                   <p className="mt-1 px-1 text-right text-xs text-muted">
-                    {memoField.byteLength}/512 bytes
+                    {t('memoBytes', { count: memoField.byteLength })}
                   </p>
                 )}
               </div>
@@ -571,6 +588,7 @@ function ZcashSendForm({
       {transfer.available && <ZcashTransferReview transfer={transfer} />}
       {transfer.available && canSelectDestination && (
         <ChainSelector
+          title={t('selectNetworkTitle')}
           open={destinationPickerOpen}
           onOpenChange={setDestinationPickerOpen}
           options={destinationNetworks}
@@ -579,11 +597,12 @@ function ZcashSendForm({
         />
       )}
       {shieldSheet}
-    </>
+    </EnglishCopy>
   )
 }
 
 function SendAssetFlow() {
+  const { t } = useTranslation(sendMessages)
   const [searchParams] = useSearchParams()
   const location = useLocation()
   const requestedAssetId = searchParams.get('assetId')
@@ -1524,36 +1543,38 @@ function SendAssetFlow() {
   }
   if (activeCrossChainSend) {
     return (
-      <CrossChainSendAdapter
-        draft={activeCrossChainSend.draft}
-        originPath={originPath}
-        localDestination={
-          zcashNetworkOption
-            ? {
-                option: { ...zcashNetworkOption, id: zcashNetworkOption.chainId },
-                onSelect: openPublicZcash
-              }
-            : undefined
-        }
-        onBack={returnToEntry}
-        onReturn={(draft, action) => {
-          setCrossChainSession(null)
-          applyReturnedDraft(draft)
-          if (action === 'asset') {
-            setAssetPickerState({ key: sendEntryKey, open: true, draft, resumeCrossChain: draft })
-          } else if (action === 'shield') {
-            const asset = assets.find(item => item.asset.asset.id === draft.sourceAssetId)
-            switchSource(
-              'shield',
-              draft.sourceAssetId,
-              draft.recipient,
-              draft.destinationChainId,
-              draft.amount,
-              asset
-            )
+      <EnglishCopy>
+        <CrossChainSendAdapter
+          draft={activeCrossChainSend.draft}
+          originPath={originPath}
+          localDestination={
+            zcashNetworkOption
+              ? {
+                  option: { ...zcashNetworkOption, id: zcashNetworkOption.chainId },
+                  onSelect: openPublicZcash
+                }
+              : undefined
           }
-        }}
-      />
+          onBack={returnToEntry}
+          onReturn={(draft, action) => {
+            setCrossChainSession(null)
+            applyReturnedDraft(draft)
+            if (action === 'asset') {
+              setAssetPickerState({ key: sendEntryKey, open: true, draft, resumeCrossChain: draft })
+            } else if (action === 'shield') {
+              const asset = assets.find(item => item.asset.asset.id === draft.sourceAssetId)
+              switchSource(
+                'shield',
+                draft.sourceAssetId,
+                draft.recipient,
+                draft.destinationChainId,
+                draft.amount,
+                asset
+              )
+            }
+          }}
+        />
+      </EnglishCopy>
     )
   }
   return (
@@ -1576,7 +1597,11 @@ function SendAssetFlow() {
         />
       )}
       {sourcePicker && (
-        <TokenSelectorDialog open onOpenChange={open => !open && dismissSourcePicker()}>
+        <TokenSelectorDialog
+          open
+          title={sourcePicker.mode === 'zcash-public' ? t('chooseToken') : undefined}
+          onOpenChange={open => !open && dismissSourcePicker()}
+        >
           {sourcePicker.mode === 'zcash-public' && (
             <AssetSelection
               key={`${sendEntryKey}:${sourcePicker.mode}:zcash`}
@@ -1635,39 +1660,41 @@ function SendAssetFlow() {
           hidden={!nearActive}
           className={nearActive ? 'flex min-h-0 flex-1 flex-col' : undefined}
         >
-          <ConfidentialSendForm
-            key={sendEntryKey}
-            active={nearActive}
-            entry={currentSession.shieldEntry}
-            model={visibleModel ?? null}
-            initialAsset={
-              assets.find(item => item.asset.asset.id === currentSession.shieldEntry?.assetId)
-                ?.asset ?? null
-            }
-            onStateChange={handleShieldStateChange}
-            publicModeRequest={publicModeRequest}
-            onSelectPublic={(assetId, recipient, amount, destinationAssetId) => {
-              if (
-                assetId &&
-                destinationAssetId &&
-                assetId !== destinationAssetId &&
-                effectiveWalletId &&
-                effectiveAccountId
-              ) {
-                switchSource('main', assetId, recipient, undefined, amount)
-                startCrossChainSend({
-                  sourceAssetId: assetId,
-                  destinationAssetId,
-                  destinationChainId: destinationAssetId.split('/')[0],
-                  recipient,
-                  amount
-                })
-              } else switchSource('main', assetId, recipient, undefined, amount)
-            }}
-            onOpenSourcePicker={() => openSourcePicker('shield')}
-            onSourcePickerState={handleNearSourceOptions}
-            sourceSelectorActive={sourcePicker?.mode === 'shield' && confidentialEnabled}
-          />
+          <EnglishCopy>
+            <ConfidentialSendForm
+              key={sendEntryKey}
+              active={nearActive}
+              entry={currentSession.shieldEntry}
+              model={visibleModel ?? null}
+              initialAsset={
+                assets.find(item => item.asset.asset.id === currentSession.shieldEntry?.assetId)
+                  ?.asset ?? null
+              }
+              onStateChange={handleShieldStateChange}
+              publicModeRequest={publicModeRequest}
+              onSelectPublic={(assetId, recipient, amount, destinationAssetId) => {
+                if (
+                  assetId &&
+                  destinationAssetId &&
+                  assetId !== destinationAssetId &&
+                  effectiveWalletId &&
+                  effectiveAccountId
+                ) {
+                  switchSource('main', assetId, recipient, undefined, amount)
+                  startCrossChainSend({
+                    sourceAssetId: assetId,
+                    destinationAssetId,
+                    destinationChainId: destinationAssetId.split('/')[0],
+                    recipient,
+                    amount
+                  })
+                } else switchSource('main', assetId, recipient, undefined, amount)
+              }}
+              onOpenSourcePicker={() => openSourcePicker('shield')}
+              onSourcePickerState={handleNearSourceOptions}
+              sourceSelectorActive={sourcePicker?.mode === 'shield' && confidentialEnabled}
+            />
+          </EnglishCopy>
         </div>
       )}
       {currentSession.zcashVisited && (
@@ -1824,7 +1851,11 @@ function SendAssetFlow() {
         </div>
       )}
       {showPublicAssetPicker && (
-        <TokenSelectorDialog open onOpenChange={open => !open && dismissAssetPicker()}>
+        <TokenSelectorDialog
+          open
+          title={t('chooseToken')}
+          onOpenChange={open => !open && dismissAssetPicker()}
+        >
           <AssetSelection
             key={sendEntryKey}
             accountScope={effectiveAccount}
@@ -1844,7 +1875,7 @@ function SendAssetFlow() {
       )}
       {!shieldActive && preparingRequestedAsset && (
         <div className="page-content !px-4 pt-4">
-          <ListSkeleton label="Loading asset" />
+          <ListSkeleton label={t('loadingAsset')} />
         </div>
       )}
     </>

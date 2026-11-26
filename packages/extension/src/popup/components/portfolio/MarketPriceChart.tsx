@@ -5,6 +5,8 @@ import { formatTokenPrice } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import { Skeleton } from '@/popup/components/ui/skeleton'
 import { InlineError } from '@/popup/components/common/InlineError'
+import { useTranslation } from '@/popup/i18n'
+import { portfolioMessages } from '@/popup/i18n/portfolio-messages'
 import {
   buildMarketPriceChartModel,
   MARKET_PRICE_CHART_HEIGHT,
@@ -13,14 +15,14 @@ import {
   normalizeMarketPriceTimestamp
 } from '@/popup/services/market-price-chart-model'
 
-const RANGE_LABELS: Readonly<Record<AssetMarketHistoryRange, string>> = Object.freeze({
-  '1d': '1D',
-  '1w': '1W',
-  '1m': '1M',
-  '3m': '3M',
-  '1y': '1Y',
-  all: 'All'
-})
+const RANGE_LABELS = {
+  '1d': 'range1d',
+  '1w': 'range1w',
+  '1m': 'range1m',
+  '3m': 'range3m',
+  '1y': 'range1y',
+  all: 'rangeAll'
+} as const satisfies Readonly<Record<AssetMarketHistoryRange, keyof typeof portfolioMessages>>
 
 // Ranges that span less than a few days show the time of day in the hover label.
 const INTRADAY_RANGES: ReadonlySet<AssetMarketHistoryRange> = new Set(['1d', '1w'])
@@ -56,6 +58,7 @@ export function MarketPriceChart({
   error,
   onRetry
 }: MarketPriceChartProps) {
+  const { t, locale } = useTranslation(portfolioMessages)
   const gradientId = useId().replace(/:/g, '')
   const surfaceRef = useRef<HTMLDivElement>(null)
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
@@ -81,13 +84,41 @@ export function MarketPriceChart({
     [chart]
   )
 
+  const dateFormat = useMemo(
+    () => new Intl.DateTimeFormat(locale, { year: 'numeric', month: 'short', day: 'numeric' }),
+    [locale]
+  )
+  const timeFormat = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      }),
+    [locale]
+  )
+  const fullTimeFormat = useMemo(
+    () => new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' }),
+    [locale]
+  )
+  const formatChartDate = (timestamp: number, intraday: boolean) => {
+    if (locale === 'en') {
+      return formatTimestamp(timestamp, intraday ? 'MMM D · HH:mm' : 'MMM D, YYYY')
+    }
+    const date = new Date(timestamp)
+    return Number.isNaN(date.getTime()) ? '' : (intraday ? timeFormat : dateFormat).format(date)
+  }
   const hoverDateLabel = active
-    ? formatTimestamp(
-        normalizeMarketPriceTimestamp(active.timestamp),
-        INTRADAY_RANGES.has(range) ? 'MMM D · HH:mm' : 'MMM D, YYYY'
-      )
+    ? formatChartDate(normalizeMarketPriceTimestamp(active.timestamp), INTRADAY_RANGES.has(range))
     : null
-  const priceAsOfLabel = priceAsOf ? formatTimestamp(priceAsOf, 'MMM D · HH:mm') : null
+  const priceAsOfLabel = priceAsOf ? formatChartDate(priceAsOf, true) : null
+  const priceAsOfTitle =
+    priceAsOf && priceAsOfLabel
+      ? t('priceAsOf', {
+          date: locale === 'en' ? formatTimestamp(priceAsOf) : fullTimeFormat.format(priceAsOf)
+        })
+      : undefined
 
   return (
     <div>
@@ -135,15 +166,12 @@ export function MarketPriceChart({
                         >
                           {changeLabel}
                         </span>
-                        <span className="text-muted">24h</span>
+                        <span className="text-muted">{t('period24h')}</span>
                       </span>
                     )}
                     {priceAsOfLabel && (
-                      <span
-                        className="text-muted"
-                        title={priceAsOf ? `Price as of ${formatTimestamp(priceAsOf)}` : undefined}
-                      >
-                        Price as of {priceAsOfLabel}
+                      <span className="text-muted" title={priceAsOfTitle}>
+                        {t('priceAsOf', { date: priceAsOfLabel })}
                       </span>
                     )}
                   </>
@@ -158,7 +186,7 @@ export function MarketPriceChart({
           <>
             <svg
               role="img"
-              aria-label={`${RANGE_LABELS[range]} price history`}
+              aria-label={t('priceHistory', { range: t(RANGE_LABELS[range]) })}
               viewBox={`0 0 ${MARKET_PRICE_CHART_WIDTH} ${MARKET_PRICE_CHART_HEIGHT}`}
               preserveAspectRatio="none"
               className={cn('h-full w-full transition-opacity', loading && 'opacity-55')}
@@ -210,9 +238,17 @@ export function MarketPriceChart({
         ) : null}
       </div>
 
-      {error && <InlineError message={error} tone="muted" onRetry={onRetry} className="mt-2" />}
+      {error && (
+        <InlineError
+          message={error}
+          tone="muted"
+          onRetry={onRetry}
+          retryLabel={t('retry')}
+          className="mt-2"
+        />
+      )}
       {showRanges && (availableRanges.length > 0 || loading) && (
-        <div className="mt-2 flex h-7 items-center gap-1" aria-label="Price history range">
+        <div className="mt-2 flex h-7 items-center gap-1" aria-label={t('priceHistoryRange')}>
           {availableRanges.length > 0 ? (
             availableRanges.map(item => (
               <button
@@ -227,7 +263,7 @@ export function MarketPriceChart({
                     : 'text-muted hover:bg-white/5 hover:text-foreground'
                 )}
               >
-                {RANGE_LABELS[item]}
+                {t(RANGE_LABELS[item])}
               </button>
             ))
           ) : loading ? (

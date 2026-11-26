@@ -4,6 +4,8 @@ import { PageHeader } from '@/popup/components/common/PageHeader'
 import { TransactionNotice } from '@/popup/components/transaction/TransactionNotice'
 import { ListSkeleton } from '@/popup/components/ui/skeleton'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
+import { EnglishCopy, useTranslation } from '@/popup/i18n'
+import { portfolioMessages } from '@/popup/i18n/portfolio-messages'
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { ShieldReceive } from './ShieldReceive'
 import { useWalletStore } from '@/store/wallet-store'
@@ -19,10 +21,15 @@ export function Receive() {
       <AddressesList receive />
     )
   }
-  return <ShieldReceive />
+  return (
+    <EnglishCopy>
+      <ShieldReceive />
+    </EnglishCopy>
+  )
 }
 
 function ActivePublicReceive() {
+  const { t } = useTranslation(portfolioMessages)
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
   const { activeAccount, loading, error, contextChanging, refresh } = useActiveAccountNetworks()
@@ -43,17 +50,18 @@ function ActivePublicReceive() {
 
   return (
     <div className="page-container">
-      <PageHeader title="Address" showBack />
+      <PageHeader title={t('address')} showBack />
       <div className="px-4 py-6 text-center text-sm text-muted">
         {error ? (
           <TransactionNotice
-            message="Unable to load account addresses."
+            message={t('receiveLoadAddressesFailed')}
+            retryLabel={t('tryAgain')}
             onRetry={() => void refresh()}
           />
         ) : loading || contextChanging ? (
-          <ListSkeleton rows={4} label="Loading addresses" card />
+          <ListSkeleton rows={4} label={t('loadingAddresses')} card />
         ) : (
-          <p role="status">No account available</p>
+          <p role="status">{t('noAccount')}</p>
         )}
       </div>
     </div>

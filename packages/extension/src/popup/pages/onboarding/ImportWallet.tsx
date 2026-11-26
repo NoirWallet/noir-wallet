@@ -5,8 +5,12 @@ import { PageHeader } from '../../components/common/PageHeader'
 import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
 import { validateEnglishMnemonicWords } from '@/core/wallet/mnemonic-validation'
+import { useOnboardingTranslation } from '@/popup/components/onboarding/useOnboardingTranslation'
+
+type ValidationError = 'exactWordCount' | 'invalidEnglishWords' | 'invalidChecksum'
 
 export function ImportWallet() {
+  const { t, errorText } = useOnboardingTranslation()
   const { navigate } = useNavigate()
   const {
     mnemonicWordCount,
@@ -25,7 +29,7 @@ export function ImportWallet() {
       : Array(mnemonicWordCount).fill('')
   })
   const inputRefs = useRef<(HTMLInputElement | null)[]>([])
-  const [validationError, setValidationError] = useState<string | null>(null)
+  const [validationError, setValidationError] = useState<ValidationError | null>(null)
   const mnemonicValidation = useMemo(
     () => validateEnglishMnemonicWords(words, mnemonicWordCount),
     [mnemonicWordCount, words]
@@ -41,7 +45,7 @@ export function ImportWallet() {
     if (value.includes(' ')) {
       const pastedWords = value.trim() ? value.trim().split(/\s+/) : []
       if (index + pastedWords.length > mnemonicWordCount) {
-        setValidationError(`Recovery phrase must contain exactly ${mnemonicWordCount} words.`)
+        setValidationError('exactWordCount')
         return
       }
       const newWordsFromPaste = [...words]
@@ -72,12 +76,12 @@ export function ImportWallet() {
 
   const handleContinue = async () => {
     if (mnemonicValidation.invalidWordIndexes.length > 0) {
-      setValidationError('Highlighted words are not in the BIP-39 English word list.')
+      setValidationError('invalidEnglishWords')
       return
     }
 
     if (!mnemonicValidation.isValid) {
-      setValidationError('Recovery phrase checksum is invalid. Check the words and their order.')
+      setValidationError('invalidChecksum')
       return
     }
 
@@ -92,14 +96,17 @@ export function ImportWallet() {
   }
 
   const isAllFilled = words.every(word => word.trim() !== '')
+  const message = validationError
+    ? t(validationError, { count: mnemonicWordCount })
+    : error && errorText(error, 'importFailed')
 
   return (
     <div className="page-container">
-      <PageHeader title="Import Secret Recovery Phrase" showBack />
+      <PageHeader title={t('importPhrase')} showBack />
       <div className="page-content px-5 py-6">
         <div className="mb-6">
           <div className="flex items-center gap-1.5 text-sm text-muted">
-            <span>Enter your {mnemonicWordCount}-word Secret Recovery Phrase</span>
+            <span>{t('enterPhrase', { count: mnemonicWordCount })}</span>
           </div>
         </div>
 
@@ -114,6 +121,7 @@ export function ImportWallet() {
                 value={word}
                 onChange={e => handleWordChange(index, e.target.value)}
                 onKeyDown={e => handleKeyDown(index, e)}
+                aria-label={t('wordNumber', { number: index + 1 })}
                 aria-invalid={invalidWordIndexes.has(index)}
                 placeholder=""
                 className="w-full h-[52px] text-sm rounded-xl px-3 pl-8"
@@ -125,13 +133,15 @@ export function ImportWallet() {
             </div>
           ))}
         </div>
-        {(validationError || error) && (
-          <p className="text-sm text-destructive mb-4">{validationError || error}</p>
+        {message && (
+          <p role="alert" className="text-sm text-destructive mb-4">
+            {message}
+          </p>
         )}
       </div>
       <div className="page-footer">
         <Button onClick={handleContinue} disabled={!isAllFilled} className="w-full h-[45px]">
-          Continue
+          {t('continue')}
         </Button>
       </div>
     </div>

@@ -1,6 +1,9 @@
 import { Icon } from '@iconify/react'
 import { Button } from '../ui/button'
 import { CopyFeedbackIcon } from '../common/CopyToast'
+import { useTranslation } from '@/popup/i18n'
+import { recoveryMessages } from '@/popup/i18n/recovery-messages'
+import { shellMessages } from '@/popup/i18n/shell-messages'
 
 interface SeedPhraseDisplayProps {
   words: string[]
@@ -17,6 +20,8 @@ export function SeedPhraseDisplay({
   onCopy,
   copied = false
 }: SeedPhraseDisplayProps) {
+  const { t } = useTranslation(recoveryMessages)
+  const { t: common } = useTranslation(shellMessages)
   return (
     <div className="relative group">
       <div
@@ -46,7 +51,7 @@ export function SeedPhraseDisplay({
               <div className="flex-shrink-0 w-12 h-12 rounded-full bg-white/5 flex items-center justify-center backdrop-blur-sm">
                 <Icon icon="lucide:eye-off" width={20} height={20} className="text-muted" />
               </div>
-              Click to reveal seed phrase
+              {t('reveal')}
             </Button>
           </div>
         </div>
@@ -61,7 +66,7 @@ export function SeedPhraseDisplay({
             className="flex items-center gap-2 h-8 bg-background border-border hover:bg-card text-xs"
           >
             <CopyFeedbackIcon copied={copied} width={12} height={12} />
-            {copied ? 'Copied' : 'Copy'}
+            {common(copied ? 'copied' : 'copy')}
           </Button>
         </div>
       )}

@@ -1,3 +1,5 @@
+import { useTranslation } from '@/popup/i18n'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { cn } from '@/lib/utils'
 import { Icon } from '@iconify/react'
 
@@ -99,6 +101,7 @@ export function TransactionResult({
   className,
   bodyClassName
 }: TransactionResultProps) {
+  const { t } = useTranslation(sendMessages)
   const config = statusConfig[status]
   const singleAsset = layout === 'single-asset'
 
@@ -113,7 +116,7 @@ export function TransactionResult({
       {onClose && (
         <button
           type="button"
-          aria-label="Close"
+          aria-label={t('close')}
           onClick={onClose}
           disabled={closeDisabled}
           className="absolute right-5 top-3 z-10 flex size-8 items-center justify-center rounded-md bg-background hover:bg-accent disabled:opacity-50"

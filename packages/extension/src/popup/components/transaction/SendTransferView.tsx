@@ -1,3 +1,6 @@
+import { useTranslation } from '@/popup/i18n'
+import { createSendCopy } from '@/popup/i18n/send-copy'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { Icon } from '@iconify/react'
 import { TransactionNotice } from './TransactionNotice'
 import type { ComponentProps, ReactNode } from 'react'
@@ -27,14 +30,16 @@ export function SendTransferScreen({
   readonly review: ComponentProps<typeof SendReviewDialog>
   readonly destinationPicker?: DestinationPicker
 }) {
+  const { t } = useTranslation(sendMessages)
   return (
     <>
       <SendFormSlot {...form} />
       {destinationPicker && (
         <ChainSelector
           {...destinationPicker}
+          title={t('selectNetworkTitle')}
           enabledFirst
-          label={`Networks for ${form.adapter.asset.symbol}`}
+          label={t('networksFor', { symbol: form.adapter.asset.symbol })}
         />
       )}
       <SendReviewDialog {...review} />
@@ -106,6 +111,8 @@ export function SendTransferView({
     readonly picker: DestinationPicker
   }
 }) {
+  const { locale, t } = useTranslation(sendMessages)
+  const copy = createSendCopy(locale)
   const { asset, family, networkName, feeSymbol, review, selectedRecipient, approving } = state
   const titleId = `${family}-send-review-title`
   const balanceKnown = state.balanceKnown ?? true
@@ -117,7 +124,7 @@ export function SendTransferView({
         inline: !shareForm,
         adapter: {
           amount: {
-            ariaLabel: `${asset.symbol} amount`,
+            ariaLabel: t('assetAmount', { symbol: asset.symbol }),
             value: state.amount,
             onChange: state.setInputAmount
           },
@@ -132,7 +139,7 @@ export function SendTransferView({
             id: `${family}-send-recipient`,
             value: state.recipient,
             onChange: state.setInputRecipient,
-            placeholder: state.recipientPlaceholder,
+            placeholder: copy(state.recipientPlaceholder),
             invalid: state.recipientInvalid,
             network: { name: networkName, ...networkSelection?.trigger },
             onSelectRecipient: () => void state.selectRecipient(),
@@ -238,6 +245,7 @@ export function SendTransferView({
               : []),
             ...(review.afterTotalRows ?? [])
           ],
+          error: state.error ? <TransactionNotice message={state.error} /> : undefined,
           confirmLabel: 'Confirm',
           preparing: review.preparing
         }

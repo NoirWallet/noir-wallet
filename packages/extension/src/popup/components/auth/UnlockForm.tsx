@@ -12,6 +12,13 @@ import { SecureStorage } from '@/core/wallet/secure-storage'
 import { BlockingWalletFailure } from '../shell/BlockingWalletFailure'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { getUnlockFailureMessage } from '@/popup/services/unlock-failure-message'
+import { useOnboardingTranslation } from '../onboarding/useOnboardingTranslation'
+
+type UnlockError =
+  | { key: 'emptyPassword' | 'tooManyAttempts' | 'resetFailed' }
+  | { key: 'waitForUnlock'; seconds: number }
+  | { key: 'remainingAttempts'; count: number }
+  | { message: string }
 
 interface UnlockFormProps {
   onUnlockSuccess?: () => void | Promise<void>
@@ -30,13 +37,14 @@ export function UnlockForm({
   showCancelButton = false,
   showForgotPassword = true,
   showWalletIcon = true,
-  title = 'Enter your password',
+  title,
   description,
   headerContent
 }: UnlockFormProps) {
+  const { t, errorText } = useOnboardingTranslation()
   const { replace } = useNavigate()
   const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
+  const [error, setError] = useState<UnlockError | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [lockRemainingSeconds, setLockRemainingSeconds] = useState(0)
   const [isAccountLocked, setIsAccountLocked] = useState(false)
@@ -79,17 +87,17 @@ export function UnlockForm({
   const handleUnlock = async () => {
     if (isLoading) return
     if (!password) {
-      setError('Please enter your password')
+      setError({ key: 'emptyPassword' })
       return
     }
 
     if (isAccountLocked) {
-      setError(`Account locked. Please wait ${lockRemainingSeconds} seconds.`)
+      setError({ key: 'waitForUnlock', seconds: lockRemainingSeconds })
       return
     }
 
     setIsLoading(true)
-    setError('')
+    setError(null)
 
     try {
       const result = await zcashWalletRuntimeClient.unlock(password)
@@ -113,12 +121,18 @@ export function UnlockForm({
       } else if (result.isLocked) {
         setIsAccountLocked(true)
         setLockRemainingSeconds(Math.ceil((result.lockRemainingMs || 0) / 1000))
-        setError('Too many failed attempts. Account temporarily locked.')
+        setError({ key: 'tooManyAttempts' })
       } else {
-        setError(getUnlockFailureMessage(result))
+        const message = getUnlockFailureMessage(result)
+        const count = result.remainingAttempts
+        setError(
+          count !== undefined && message === `Incorrect password. ${count} attempts remaining.`
+            ? { key: 'remainingAttempts', count }
+            : { message }
+        )
       }
     } catch (err) {
-      setError(classifyError(err).userMessage)
+      setError({ message: classifyError(err).userMessage })
     } finally {
       setIsLoading(false)
     }
@@ -126,20 +140,15 @@ export function UnlockForm({
 
   const handleForgotPassword = async () => {
     const confirmed = await openModal<boolean>({
-      title: 'Reset Wallet',
+      title: t('resetWallet'),
       body: resolve => (
         <div className="space-y-4">
           <div className="space-y-2">
-            <p className="text-sm text-muted">
-              If you forgot your password, you'll need to reset your wallet using your Secret
-              Recovery Phrase.
-            </p>
-            <p className="text-sm text-muted">
-              This will remove your current wallet from this device.
-            </p>
+            <p className="text-sm text-muted">{t('resetRestore')}</p>
+            <p className="text-sm text-muted">{t('resetRemovesWallet')}</p>
           </div>
 
-          <WarningBox>Make sure you have your Secret Recovery Phrase before proceeding.</WarningBox>
+          <WarningBox>{t('resetWarning')}</WarningBox>
 
           <DialogFooter className="pt-2">
             <Button
@@ -148,7 +157,7 @@ export function UnlockForm({
                 resolve(false)
               }}
             >
-              Cancel
+              {t('cancel')}
             </Button>
             <Button
               variant="destructive"
@@ -156,7 +165,7 @@ export function UnlockForm({
                 resolve(true)
               }}
             >
-              Reset Wallet
+              {t('resetWallet')}
             </Button>
           </DialogFooter>
         </div>
@@ -165,12 +174,12 @@ export function UnlockForm({
 
     if (confirmed) {
       setIsLoading(true)
-      setError('')
+      setError(null)
       try {
         await zcashWalletRuntimeClient.reset()
         replace('/onboarding')
       } catch {
-        setError('Unable to reset wallet. Please try again.')
+        setError({ key: 'resetFailed' })
       } finally {
         setIsLoading(false)
       }
@@ -180,14 +189,24 @@ export function UnlockForm({
   if (walletUpgradeFailed) {
     return (
       <BlockingWalletFailure
-        title="Wallet upgrade failed"
-        description="Noir Wallet could not finish upgrading this wallet. It will stay locked until the upgrade completes."
-        assurance="Your existing wallet data is still stored on this device. Noir Wallet will not open a partially upgraded wallet."
+        title={t('upgradeFailed')}
+        description={t('upgradeLocked')}
+        assurance={t('upgradeAssurance')}
         isRetrying={isLoading}
         onRetry={handleUnlock}
       />
     )
   }
+
+  const passwordError =
+    error &&
+    ('message' in error
+      ? errorText(error.message, 'unlockFailed')
+      : error.key === 'waitForUnlock'
+        ? t(error.key, { seconds: error.seconds })
+        : error.key === 'remainingAttempts'
+          ? t(error.key, { count: error.count })
+          : t(error.key))
 
   return (
     <div className="flex flex-col h-full">
@@ -196,11 +215,13 @@ export function UnlockForm({
 
         {showWalletIcon && !headerContent && (
           <div className="mb-6">
-            <img src={WalletIcon} alt="Wallet" />
+            <img src={WalletIcon} alt={t('wallet')} />
           </div>
         )}
 
-        <h1 className="text-lg font-semibold text-center mb-2">{title}</h1>
+        <h1 className="text-lg font-semibold text-center mb-2">
+          {title ?? t('enterPasswordTitle')}
+        </h1>
         {description && (
           <p className="text-sm text-muted-foreground text-center mb-6">{description}</p>
         )}
@@ -209,8 +230,8 @@ export function UnlockForm({
           <PasswordInput
             value={password}
             onChange={setPassword}
-            placeholder="Enter Password"
-            error={error}
+            placeholder={t('enterPassword')}
+            error={passwordError ?? undefined}
             onEnter={handleUnlock}
             disabled={isAccountLocked || isLoading}
           />
@@ -218,7 +239,8 @@ export function UnlockForm({
           {isAccountLocked && lockRemainingSeconds > 0 && (
             <div className="p-3 bg-destructive/10 rounded-lg border border-destructive/20">
               <p className="text-sm text-destructive text-center">
-                🔒 Account locked. Try again in {lockRemainingSeconds}s
+                <span aria-hidden="true">🔒 </span>
+                {t('lockCountdown', { seconds: lockRemainingSeconds })}
               </p>
             </div>
           )}
@@ -234,7 +256,7 @@ export function UnlockForm({
               disabled={isLoading}
               className="flex-1 h-[45px]"
             >
-              Cancel
+              {t('cancel')}
             </Button>
           )}
           <Button
@@ -243,7 +265,7 @@ export function UnlockForm({
             isLoading={isLoading}
             className={`h-[45px] ${showCancelButton ? 'flex-1' : 'w-full'}`}
           >
-            {isAccountLocked ? `Locked (${lockRemainingSeconds}s)` : 'Unlock'}
+            {isAccountLocked ? t('lockedButton', { seconds: lockRemainingSeconds }) : t('unlock')}
           </Button>
         </div>
 
@@ -252,7 +274,7 @@ export function UnlockForm({
             onClick={handleForgotPassword}
             className="w-full text-center text-sm text-primary hover:text-primary/80 transition-colors py-2 disabled:pointer-events-none disabled:opacity-50"
           >
-            Forgot password?
+            {t('forgotPassword')}
           </button>
         )}
       </div>

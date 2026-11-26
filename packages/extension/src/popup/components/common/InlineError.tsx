@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import { cn } from '@/lib/utils'
+import { useTranslation } from '@/popup/i18n'
+import { shellMessages } from '@/popup/i18n/shell-messages'
 
 interface InlineErrorProps {
   readonly message: ReactNode
@@ -18,11 +20,12 @@ export function InlineError({
   message,
   onRetry,
   retrying = false,
-  retryLabel = 'Retry',
+  retryLabel,
   tone = 'error',
   role,
   className
 }: InlineErrorProps) {
+  const { t } = useTranslation(shellMessages)
   const textRef = useRef<HTMLSpanElement>(null)
   const [expanded, setExpanded] = useState(false)
   const [overflows, setOverflows] = useState(false)
@@ -43,7 +46,15 @@ export function InlineError({
   }, [message, isText, expanded])
 
   if (!message) return null
-  const toggleLabel = `${expanded ? 'Collapse' : 'Expand'} ${tone === 'error' ? 'error' : 'message'}`
+  const toggleLabel = t(
+    tone === 'error'
+      ? expanded
+        ? 'collapseError'
+        : 'expandError'
+      : expanded
+        ? 'collapseMessage'
+        : 'expandMessage'
+  )
 
   return (
     <div
@@ -87,7 +98,7 @@ export function InlineError({
           aria-busy={retrying || undefined}
           className="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:pointer-events-none disabled:opacity-50"
         >
-          {retryLabel}
+          {retryLabel ?? t('retry')}
         </button>
       )}
     </div>

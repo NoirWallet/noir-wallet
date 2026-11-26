@@ -1,3 +1,5 @@
+import { useTranslation } from '@/popup/i18n'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { Icon } from '@iconify/react'
 import type { ComponentProps, ReactNode } from 'react'
 import { formatSortAddress } from '@/lib/format'
@@ -27,10 +29,11 @@ export function TransferMaximumButton({
   title,
   appearance = 'neutral'
 }: TransferMaximumControl & { readonly appearance?: 'neutral' | 'compact' }) {
+  const { t } = useTranslation(sendMessages)
   return (
     <button
       type="button"
-      aria-label="Max"
+      aria-label={t('max')}
       aria-pressed={selected}
       aria-busy={loading || undefined}
       disabled={disabled}
@@ -43,7 +46,7 @@ export function TransferMaximumButton({
       )}
     >
       {loading && <Icon icon="lucide:loader-circle" className="size-3 animate-spin" aria-hidden />}
-      Max
+      {t('max')}
     </button>
   )
 }
@@ -107,6 +110,7 @@ export function SendFormActions({
   readonly loading?: boolean
   readonly privacy?: { readonly checked: boolean; readonly onChange: () => void }
 }) {
+  const { t } = useTranslation(sendMessages)
   return (
     <>
       {privacy && (
@@ -133,7 +137,7 @@ export function SendFormActions({
         isLoading={loading}
         onClick={onContinue}
       >
-        Continue
+        {t('continue')}
       </Button>
     </>
   )
@@ -155,6 +159,7 @@ function SendRecipientSection({
   describedBy,
   ...field
 }: SendFormAdapter['recipient']) {
+  const { t } = useTranslation(sendMessages)
   const networkLabel = (
     <>
       {network.icon && (
@@ -172,11 +177,11 @@ function SendRecipientSection({
   return (
     <div className="space-y-2">
       <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
-        <SendFieldLabel>Send to</SendFieldLabel>
+        <SendFieldLabel>{t('sendTo')}</SendFieldLabel>
         {network.onSelect ? (
           <button
             type="button"
-            aria-label={network.selectorLabel ?? `Select destination network, ${network.name}`}
+            aria-label={network.selectorLabel ?? t('selectNetwork', { network: network.name })}
             onClick={network.onSelect}
             disabled={network.disabled}
             className="wallet-interactive inline-flex min-w-0 items-center gap-1.5 hover:text-primary disabled:opacity-50"
@@ -205,13 +210,14 @@ function SendAmountRow({
   balance,
   maximum
 }: Pick<SendFormAdapter, 'amount' | 'asset' | 'balance' | 'maximum'>) {
+  const { t } = useTranslation(sendMessages)
   return (
     <div className="space-y-2">
       <div className="flex min-w-0 items-center justify-between gap-2 text-sm">
-        <SendFieldLabel>Amount</SendFieldLabel>
+        <SendFieldLabel>{t('amount')}</SendFieldLabel>
         <div className="flex max-w-[70%] min-w-0 items-center gap-2 text-xs text-muted">
           <span className="min-w-0 truncate">
-            Bal.{' '}
+            {t('balance')}{' '}
             <span
               data-testid={balance.testId}
               title={balance.hidden ? undefined : (balance.value ?? undefined)}
@@ -257,29 +263,30 @@ export function SendRouteInfoCard({
   readonly extra?: ReactNode
   readonly estimatedReceive?: { readonly value: string; readonly symbol: string }
 }) {
+  const { t } = useTranslation(sendMessages)
   return (
     <div className="space-y-3 rounded-lg border border-white/15 px-4 py-4 text-xs">
       {provider !== undefined && (
         <div className="flex min-h-5 items-center justify-between gap-3">
-          <span className="text-muted">Provider</span>
+          <span className="text-muted">{t('provider')}</span>
           <div className="min-w-0 text-right">{provider}</div>
         </div>
       )}
       {fee !== undefined && (
         <div className="flex min-h-5 items-center justify-between gap-3">
-          <span className="text-muted">Fee</span>
+          <span className="text-muted">{t('fee')}</span>
           <div className="min-w-0 text-right">{fee}</div>
         </div>
       )}
       {networkFee !== undefined && (
         <div className="flex min-h-5 items-center justify-between gap-3">
-          <span className="text-muted">Network fee</span>
+          <span className="text-muted">{t('networkFee')}</span>
           <div className="min-w-0 text-right">{networkFee}</div>
         </div>
       )}
       {time !== undefined && (
         <div className="flex min-h-5 items-center justify-between gap-3">
-          <span className="text-muted">Est. time</span>
+          <span className="text-muted">{t('estimatedTime')}</span>
           <div className="min-w-0 text-right">{time}</div>
         </div>
       )}
@@ -299,7 +306,7 @@ export function SendRecipientInputCard({
   value,
   onChange,
   placeholder,
-  label = 'Send to',
+  label,
   hideLabel = false,
   variant = 'outline',
   invalid = false,
@@ -325,6 +332,7 @@ export function SendRecipientInputCard({
   readonly selectedName?: string
   readonly onSelectRecipient?: () => void
 }) {
+  const { t } = useTranslation(sendMessages)
   return (
     <div className={cn('space-y-1.5', variant === 'filled' && 'space-y-3')}>
       <div
@@ -341,7 +349,7 @@ export function SendRecipientInputCard({
             hideLabel && 'sr-only'
           )}
         >
-          {label}
+          {label ?? t('sendTo')}
         </label>
         {selectedName && (
           <span className="min-w-0 truncate text-xs text-muted" title={selectedName}>
@@ -371,8 +379,8 @@ export function SendRecipientInputCard({
           onSelectRecipient ? (
             <button
               type="button"
-              aria-label="Select Recipient"
-              title="Select Recipient"
+              aria-label={t('selectRecipient')}
+              title={t('selectRecipient')}
               onClick={onSelectRecipient}
               className={cn(
                 'flex size-10 items-center justify-center rounded-xl text-foreground transition-colors',
@@ -469,6 +477,7 @@ function SendAssetHeader({
   readonly disabled?: boolean
   readonly ariaLabel?: string
 }) {
+  const { t } = useTranslation(sendMessages)
   const content = (
     <>
       <TokenIcon
@@ -489,7 +498,7 @@ function SendAssetHeader({
         <button
           type="button"
           onClick={onSelectAsset}
-          aria-label={ariaLabel ?? `Select send asset, ${symbol} on ${networkName}`}
+          aria-label={ariaLabel ?? t('selectAsset', { symbol, network: networkName })}
           disabled={disabled}
           className="wallet-interactive inline-flex h-9 max-w-full min-w-0 items-center gap-2 rounded-full bg-wallet-surface px-2.5 text-sm font-medium enabled:hover:bg-wallet-selected focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-50"
         >

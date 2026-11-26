@@ -1,3 +1,4 @@
+import { createSendCopy } from '@/popup/i18n/send-copy'
 import { QuoteReviewChanges } from '@/popup/components/transaction/QuoteReviewChanges'
 import { TransactionNotice } from '@/popup/components/transaction/TransactionNotice'
 import { ZcashSyncProgress } from '@/popup/components/zcash/ZcashSyncProgress'
@@ -15,6 +16,8 @@ import zcashShieldLogo from '@/images/figma-zcash-shield.svg'
 import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeTierPicker'
 import { QuoteFeeAmount } from '@/popup/components/transaction/QuoteFeeAmount'
 import { ZEC_DECIMALS } from '@/config/wallet'
+import { useTranslation } from '@/popup/i18n'
+import { sendMessages } from '@/popup/i18n/send-messages'
 
 import type { ZcashTransferState } from '@/popup/hooks/useZcashTransfer'
 
@@ -25,6 +28,8 @@ export function ZcashTransferRoute({
   readonly route: ZcashTransferState['route']
   readonly showNotice?: boolean
 }) {
+  const { locale } = useTranslation(sendMessages)
+  const copy = createSendCopy(locale)
   const notice = showNotice ? (route.maximumError ?? route.error) : null
   return (
     <>
@@ -62,7 +67,7 @@ export function ZcashTransferRoute({
               <AmountDisplay value={route.routeCost} symbol="ZEC" profile="fee" />
             ) : undefined
           }
-          time={route.time}
+          time={route.time === undefined ? undefined : copy(route.time)}
           estimatedReceive={route.estimatedReceive}
         />
       </div>
@@ -76,27 +81,29 @@ export function ZcashTransferSyncStatus({
 }: {
   readonly sync: Pick<ZcashTransferState['sync'], 'progress' | 'loading'>
 }) {
+  const { t } = useTranslation(sendMessages)
   if (sync.progress)
     return <ZcashSyncProgress className="mb-2 w-fit" showLabel {...sync.progress} />
   if (sync.loading)
     return (
       <p role="status" className="mb-2 text-xs text-muted">
-        Checking sync status
+        {t('checkingSync')}
       </p>
     )
   return null
 }
 
 export function ZcashTransferReview({ transfer }: { readonly transfer: ZcashTransferState }) {
+  const { t } = useTranslation(sendMessages)
   const { review, networkName, action } = transfer
   const { quote } = review
   const chain = { name: networkName, icon: 'zcash' }
-  const title = `Confirm ${action.label}`
+  const title = action.label === 'Send' ? t('confirmSend') : `Confirm ${action.label}`
   return (
     <TransactionReviewDialog
       open={review.open}
       title={title}
-      description="Review the amount, destination, and fee."
+      description={t('reviewTransfer')}
       fullHeight={review.submitting}
       onOpenChange={review.onOpenChange}
     >

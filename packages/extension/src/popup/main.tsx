@@ -7,6 +7,9 @@ import walletPrivateIcon from './lib/wallet-private-icon.json'
 import walletDesignIcons from './lib/wallet-design-icons.json'
 import './index.css'
 import { initializeRuntimeNetwork } from '@/lib/runtime-network'
+import { LocaleProvider, createTranslator } from './i18n'
+import { getBrowserWalletLocale, readLocalePreference } from './i18n/locale'
+import { shellMessages } from './i18n/shell-messages'
 
 // Navigation and action icons must remain available without the Iconify API.
 addCollection(walletUiIcons)
@@ -17,25 +20,37 @@ if (new URLSearchParams(window.location.search).get('surface') === 'side-panel')
   document.documentElement.dataset.surface = 'side-panel'
 }
 
+const browserLocale = getBrowserWalletLocale()
+const initialPreferenceReady = readLocalePreference().catch(() => 'browser' as const)
+
 async function bootstrap(): Promise<void> {
-  await initializeRuntimeNetwork()
+  const [initialPreference] = await Promise.all([
+    initialPreferenceReady,
+    initializeRuntimeNetwork()
+  ])
+  document.documentElement.lang =
+    initialPreference === 'browser' ? browserLocale : initialPreference
   const { default: App } = await import('./App')
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
-      <App />
+      <LocaleProvider initialPreference={initialPreference} browserLocale={browserLocale}>
+        <App />
+      </LocaleProvider>
     </React.StrictMode>
   )
 }
 
-void bootstrap().catch(error => {
+void bootstrap().catch(async error => {
   console.error('[Popup] Network initialization failed:', error)
+  const preference = await initialPreferenceReady
+  const locale = preference === 'browser' ? browserLocale : preference
+  const t = createTranslator(shellMessages, locale)
+  document.documentElement.lang = locale
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <main className="flex min-h-screen items-center justify-center bg-background p-6 text-center text-foreground">
       <div>
-        <h1 className="text-lg font-semibold">Wallet unavailable</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Noir Wallet could not load its network settings. Close and reopen the wallet to try again.
-        </p>
+        <h1 className="text-lg font-semibold">{t('walletUnavailable')}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{t('networkStartupFailed')}</p>
       </div>
     </main>
   )
