@@ -4372,7 +4372,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             .then(([prices, portfolio]) =>
               observeActivityReceipts(
                 result.scope,
-                result.items.filter(item => item.source !== 'confidential-history'),
+                result.items,
                 prices.status === 'fulfilled' ? prices.value : undefined,
                 portfolio.status === 'fulfilled' ? (portfolio.value?.assets ?? []) : []
               )

@@ -14,10 +14,7 @@ import {
 } from '../../../src/core/transactions/domain/index.ts'
 import { ActivityCoordinator } from '../../../src/infrastructure/activity/index.ts'
 import { parseActivityReadModel } from '../../../src/core/activity/index.ts'
-import {
-  confidentialHistoryOrderKey,
-  parseConfidentialHistoryPage
-} from '../../../src/core/services/near-intents/confidential-history.ts'
+import { parseConfidentialHistoryPage } from '../../../src/core/services/near-intents/confidential-history.ts'
 import { filterActivityItems } from '../../../src/popup/services/activity-list-model.ts'
 import { createEvmTransferGraph } from '../../../src/infrastructure/chains/evm/index.ts'
 import { InMemoryTransactionRepository } from '../../../src/infrastructure/persistence/repositories/index.ts'
@@ -177,7 +174,7 @@ function historyCoordinator({
   canRead = async () => true,
   repository = new InMemoryTransactionRepository(),
   readStorage = storage(),
-  loadOrderKeys = async () => new Set()
+  fundingPlans = new Map()
 }) {
   return new ActivityCoordinator({
     storageRepository: readStorage,
@@ -186,9 +183,14 @@ function historyCoordinator({
       throw new Error('Confidential view must not load Zcash history')
     },
     confidentialHistory: {
+      network: 'mainnet',
       canRead,
       readPage,
-      loadOrderKeys,
+      fundingStore: {
+        getPlansForTransactions: async ids =>
+          new Map([...fundingPlans].filter(([id]) => ids.includes(id))),
+        listExternalDeposits: async () => []
+      },
       getAssets: () =>
         new Map([
           [
@@ -248,8 +250,19 @@ test.describe('Confidential activity history', () => {
           : parseConfidentialHistoryPage({
               items: [historyRow(), historyRow({ depositMemo: 'second' })]
             }),
-      loadOrderKeys: async () =>
-        new Set([confidentialHistoryOrderKey('shared-deposit.near', 'first')])
+      fundingPlans: new Map([
+        [
+          localGraphs[0].root.id,
+          {
+            ...scope,
+            network: 'mainnet',
+            depositQuote: {
+              quote: { depositAddress: 'shared-deposit.near', depositMemo: 'first' }
+            },
+            withdraws: []
+          }
+        ]
+      ])
     })
     const model = await coordinator.readActive(confidentialOptions)
     expect(model.items.map(item => item.source)).toEqual(['confidential-history', 'wallet-v2'])

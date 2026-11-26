@@ -9,11 +9,9 @@ import type { Transaction } from '@/types'
 import type { StorageV2ReadRepository, TransactionRepository } from '@/ports/repositories'
 import { normalizeTxHash } from '@/lib/tx-history-dedup'
 import {
-  collectConfidentialHistoryOrderKeys,
-  projectConfidentialHistoryEntry,
-  type ConfidentialHistoryPage
-} from '@/core/services/near-intents/confidential-history'
-import { ConfidentialHistoryCache } from './confidential-history-cache'
+  ConfidentialActivityService,
+  type ConfidentialActivitySource
+} from './confidential-activity-service'
 import {
   mapZcashSelfTransferReceipt,
   mapZcashV1TransactionToActivityItem
@@ -52,19 +50,7 @@ export interface ActivityCoordinatorOptions {
     graphs: readonly TransactionGraph[],
     privateExecutionAddresses: readonly string[]
   ) => Promise<readonly TransactionGraph[]>
-  readonly confidentialHistory?: {
-    readonly canRead: () => Promise<boolean>
-    readonly readPage: (
-      scope: ActivityScope,
-      prevCursor: string | undefined,
-      isCurrent: () => Promise<boolean>
-    ) => Promise<ConfidentialHistoryPage | null>
-    readonly loadOrderKeys: (
-      scope: ActivityScope,
-      graphs: readonly TransactionGraph[]
-    ) => Promise<ReadonlySet<string>>
-    readonly getAssets: () => Parameters<typeof projectConfidentialHistoryEntry>[2]
-  }
+  readonly confidentialHistory?: ConfidentialActivitySource
 }
 
 export interface ActivityReadOptions {
@@ -76,95 +62,39 @@ export interface ActivityReadOptions {
 }
 
 export class ActivityCoordinator {
-  private readonly confidentialHistory?: ConfidentialHistoryCache
-  private confidentialHistoryGeneration = 0
+  private readonly confidentialActivity: ConfidentialActivityService
 
   constructor(private readonly options: ActivityCoordinatorOptions) {
-    if (options.confidentialHistory) {
-      this.confidentialHistory = new ConfidentialHistoryCache(options.confidentialHistory.readPage)
-    }
+    this.confidentialActivity = new ConfidentialActivityService(
+      {
+        readScope: () => this.loadActiveScope(),
+        readGraphs: async query =>
+          this.projectLocalGraphs(query.scope, await options.transactionRepository.list(query))
+      },
+      options.confidentialHistory
+    )
   }
 
   clearConfidentialHistory(): void {
-    this.confidentialHistoryGeneration += 1
-    this.confidentialHistory?.clear()
+    this.confidentialActivity.clear()
   }
 
   async readActive(options: ActivityReadOptions = {}): Promise<ActivityReadModel | null> {
-    const generation = this.confidentialHistoryGeneration
+    if (options.protocolProvider === 'Confidential Intents') {
+      return this.confidentialActivity.readActive(options)
+    }
     const scope = await this.loadActiveScope()
     if (!scope) return null
     const accountMode = options.accountMode ?? 'main'
-    const confidentialPageCount = options.historyPageCount ?? 1
-    if (
-      options.protocolProvider &&
-      (!Number.isSafeInteger(confidentialPageCount) ||
-        confidentialPageCount < 1 ||
-        confidentialPageCount > 10)
-    ) {
-      throw new Error('Confidential Activity page count is invalid')
-    }
-    const confidentialLimit = confidentialPageCount * 200
     const [storedLocalGraphs, zcashTransactions, supplementalItems] = await Promise.all([
-      this.options.transactionRepository.list({
-        scope,
-        limit: options.protocolProvider ? 10_000 : 200,
-        ...(options.protocolProvider ? { protocolProvider: options.protocolProvider } : {})
-      }),
-      options.protocolProvider
-        ? Promise.resolve([])
-        : this.options.loadZcashTransactions(scope, options),
-      options.protocolProvider
-        ? Promise.resolve([])
-        : this.loadSupplementalItems(scope, accountMode, options)
+      this.options.transactionRepository.list({ scope, limit: 200 }),
+      this.options.loadZcashTransactions(scope, options),
+      this.loadSupplementalItems(scope, accountMode, options)
     ])
-    const privateExecutionAddresses = await this.loadPrivateExecutionAddresses(
+    const { localGraphs, privateExecutionAddresses } = await this.projectLocalGraphs(
       scope,
       storedLocalGraphs
     )
-    const localGraphs = this.options.filterLocalGraphs
-      ? await this.options.filterLocalGraphs(scope, storedLocalGraphs, privateExecutionAddresses)
-      : storedLocalGraphs
-    const provider = options.protocolProvider ? this.options.confidentialHistory : undefined
-    const isCurrent = async () => {
-      if (generation !== this.confidentialHistoryGeneration) return false
-      const active = await this.loadActiveScope()
-      return (
-        active?.keyDomainId === scope.keyDomainId &&
-        active.accountId === scope.accountId &&
-        (await provider?.canRead()) === true &&
-        generation === this.confidentialHistoryGeneration
-      )
-    }
-    let remoteItems: readonly ActivityItem[] = []
-    let remoteHasMore = false
-    let remoteUnavailable = false
-    if (provider && (await isCurrent())) {
-      const history = await this.confidentialHistory?.read(
-        scope,
-        isCurrent,
-        options.includeSupplemental !== false,
-        options.historyPageCount
-      )
-      if (!(await isCurrent())) return null
-      if (history) {
-        if (history.pages.some(page => page.entries.length > 0)) {
-          const keys = collectConfidentialHistoryOrderKeys(storedLocalGraphs)
-          for (const key of await provider.loadOrderKeys(scope, storedLocalGraphs)) keys.add(key)
-          const assets = provider.getAssets()
-          remoteItems = history.pages.flatMap(page =>
-            page.entries.flatMap(entry => {
-              if (keys.has(entry.key)) return []
-              keys.add(entry.key)
-              return [projectConfidentialHistoryEntry(entry, scope, assets)]
-            })
-          )
-          if (!(await isCurrent())) return null
-        }
-        remoteHasMore = !!history.pages.at(-1)?.prevCursor && history.pages.length < 10
-        remoteUnavailable = history.unavailable === true
-      }
-    }
     const destinationReceipts = new Map<string, Transaction[]>()
     for (const transaction of zcashTransactions) {
       if (transaction.type !== 'receive') continue
@@ -172,14 +102,12 @@ export class ActivityCoordinator {
       if (!hash) continue
       destinationReceipts.set(hash, [...(destinationReceipts.get(hash) ?? []), transaction])
     }
-    const hasMore = options.protocolProvider
-      ? remoteHasMore || (confidentialPageCount < 10 && localGraphs.length > confidentialLimit)
-      : await this.options
-          .loadSupplementalHasMore?.(scope, accountMode, options.chainIds)
-          .catch(() => false)
-    const model = buildActivityReadModel({
+    const hasMore = await this.options
+      .loadSupplementalHasMore?.(scope, accountMode, options.chainIds)
+      .catch(() => false)
+    return buildActivityReadModel({
       scope,
-      localGraphs: options.protocolProvider ? localGraphs.slice(0, confidentialLimit) : localGraphs,
+      localGraphs,
       supplementalItems: Object.freeze([
         ...zcashTransactions.flatMap(transaction => {
           const matchingReceipts = destinationReceipts
@@ -209,16 +137,26 @@ export class ActivityCoordinator {
             )
           return observedReceipt ? [item] : [item, receipt]
         }),
-        ...supplementalItems,
-        ...remoteItems
+        ...supplementalItems
       ]),
       privateExecutionAddresses,
-      limit: options.protocolProvider
-        ? Math.min(2_000, confidentialLimit + remoteItems.length)
-        : 2_000,
+      limit: 2_000,
       hasMore
     })
-    return remoteUnavailable ? { ...model, confidentialHistoryUnavailable: true } : model
+  }
+
+  private async projectLocalGraphs(
+    scope: ActivityScope,
+    storedLocalGraphs: readonly TransactionGraph[]
+  ) {
+    const privateExecutionAddresses = await this.loadPrivateExecutionAddresses(
+      scope,
+      storedLocalGraphs
+    )
+    const localGraphs = this.options.filterLocalGraphs
+      ? await this.options.filterLocalGraphs(scope, storedLocalGraphs, privateExecutionAddresses)
+      : storedLocalGraphs
+    return { storedLocalGraphs, localGraphs, privateExecutionAddresses }
   }
 
   private async loadSupplementalItems(

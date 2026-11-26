@@ -277,7 +277,7 @@ export async function observeActivityReceipts(
   await observeReceipts(
     scope,
     items.flatMap(item => {
-      if (item.source === 'zcash-v1') return []
+      if (item.source === 'zcash-v1' || item.source === 'confidential-history') return []
       const receipt = activityReceipt(item, assets)
       return receipt ? [receipt] : []
     }),
