@@ -943,6 +943,49 @@ async function estimatePreparedCallFee(
   if (gasLimit < estimatedGas) {
     throw new EvmTransactionError('invalid-intent', 'Gas limit is below the estimated gas required')
   }
+  const { blockNumber, transactionType, quoteFee } = await readEvmCallFeeQuotes(input, blockFee)
+  const feeQuote = quoteFee({ selection: input.feeSelection, tier: input.feeTier })
+  const maximumFee = feeQuote.maxFeePerGas
+  if (maximumFee > MAXIMUM_UINT64) {
+    throw new EvmTransactionError('fee-overflow', 'EVM maximum fee exceeds signer limits')
+  }
+  const maximumGasCost = gasLimit * maximumFee
+  const requiredNativeBalance = transactionValue + maximumGasCost
+  if (nativeBalance < requiredNativeBalance) {
+    const shortfall = requiredNativeBalance - nativeBalance
+    throw new EvmTransactionError(
+      'insufficient-funds',
+      `${input.executionAccount ? 'Private Execution Address' : 'EVM account'} needs ${shortfall} more wei for transaction value and maximum Gas`,
+      Object.freeze({
+        requiredNativeBalanceRaw: requiredNativeBalance.toString(),
+        availableNativeBalanceRaw: nativeBalance.toString(),
+        shortfallRaw: shortfall.toString(),
+        maximumGasCostRaw: maximumGasCost.toString(),
+        transactionValueRaw: transactionCall.transactionValue
+      })
+    )
+  }
+  const tierMaximumFeeWei: Partial<Record<NetworkFeeTier, string>> = {}
+  if (includeTiers) {
+    for (const tier of NETWORK_FEE_TIERS) {
+      const { maxFeePerGas } = quoteFee({ tier })
+      const fee = defaultGasLimit * maxFeePerGas
+      if (
+        maxFeePerGas > 0n &&
+        maxFeePerGas <= MAXIMUM_UINT64 &&
+        transactionValue + fee <= nativeBalance
+      ) {
+        tierMaximumFeeWei[tier] = fee.toString()
+      }
+    }
+  }
+  return { gasLimit, feeQuote, blockNumber, transactionType, tierMaximumFeeWei }
+}
+
+async function readEvmCallFeeQuotes(
+  input: Pick<BuildEvmContractCallInput, 'chainId' | 'rpc' | 'signal' | 'reviewedMaxFeePerGas'>,
+  blockFee: Awaited<ReturnType<EvmTransactionRpc['getLatestBlockFee']>>
+) {
   const blockNumber = parseRpcUint64(blockFee.blockNumber, 'EVM block number')
   const transactionType: 'legacy' | 'eip1559' =
     blockFee.baseFeePerGas === null ? 'legacy' : 'eip1559'
@@ -997,42 +1040,36 @@ async function estimatePreparedCallFee(
       return { ...quote, maxFeePerGas: reviewedCap }
     }
   }
-  const feeQuote = quoteFee({ selection: input.feeSelection, tier: input.feeTier })
-  const maximumFee = feeQuote.maxFeePerGas
-  if (maximumFee > MAXIMUM_UINT64) {
+  return { blockNumber, transactionType, quoteFee }
+}
+
+export async function readEvmTransferFeeFloor(
+  input: Pick<BuildEvmTransferInput, 'chainId' | 'rpc' | 'feeSelection' | 'feeTier' | 'signal'> & {
+    readonly sender: string
+  }
+) {
+  await input.rpc.assertExpectedChain(input.signal)
+  const [nativeBalanceRaw, blockFee] = await Promise.all([
+    input.rpc.getNativeBalance(input.sender, input.signal),
+    input.rpc.getLatestBlockFee(input.signal)
+  ])
+  const nativeBalance = parseRpcUint256(nativeBalanceRaw, 'EVM native balance')
+  const { quoteFee } = await readEvmCallFeeQuotes(input, blockFee)
+  const { maxFeePerGas } = quoteFee({ selection: input.feeSelection, tier: input.feeTier })
+  if (maxFeePerGas > MAXIMUM_UINT64) {
     throw new EvmTransactionError('fee-overflow', 'EVM maximum fee exceeds signer limits')
   }
-  const maximumGasCost = gasLimit * maximumFee
-  const requiredNativeBalance = transactionValue + maximumGasCost
-  if (nativeBalance < requiredNativeBalance) {
-    const shortfall = requiredNativeBalance - nativeBalance
-    throw new EvmTransactionError(
-      'insufficient-funds',
-      `${input.executionAccount ? 'Private Execution Address' : 'EVM account'} needs ${shortfall} more wei for transaction value and maximum Gas`,
-      Object.freeze({
-        requiredNativeBalanceRaw: requiredNativeBalance.toString(),
-        availableNativeBalanceRaw: nativeBalance.toString(),
-        shortfallRaw: shortfall.toString(),
-        maximumGasCostRaw: maximumGasCost.toString(),
-        transactionValueRaw: transactionCall.transactionValue
-      })
-    )
+  const gasLimit =
+    input.feeSelection?.kind === 'custom' || input.feeSelection?.kind === 'legacy'
+      ? input.feeSelection.gasLimit
+      : undefined
+  const gasFloor = gasLimit
+    ? parseRpcUint64(gasLimit, 'EVM custom gas limit')
+    : EVM_SIMPLE_TRANSFER_GAS
+  if (gasFloor < EVM_SIMPLE_TRANSFER_GAS) {
+    throw new EvmTransactionError('invalid-intent', 'Gas limit is below intrinsic gas')
   }
-  const tierMaximumFeeWei: Partial<Record<NetworkFeeTier, string>> = {}
-  if (includeTiers) {
-    for (const tier of NETWORK_FEE_TIERS) {
-      const { maxFeePerGas } = quoteFee({ tier })
-      const fee = defaultGasLimit * maxFeePerGas
-      if (
-        maxFeePerGas > 0n &&
-        maxFeePerGas <= MAXIMUM_UINT64 &&
-        transactionValue + fee <= nativeBalance
-      ) {
-        tierMaximumFeeWei[tier] = fee.toString()
-      }
-    }
-  }
-  return { gasLimit, feeQuote, blockNumber, transactionType, tierMaximumFeeWei }
+  return { nativeBalance, minimumFee: gasFloor * maxFeePerGas }
 }
 
 async function estimateEvmCall(

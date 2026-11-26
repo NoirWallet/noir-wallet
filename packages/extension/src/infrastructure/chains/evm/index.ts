@@ -250,6 +250,7 @@ export {
   estimateBuiltEvmTransactionFee,
   estimateEvmContractCallFee,
   estimateEvmTransferFee,
+  readEvmTransferFeeFloor,
   computeEvmSigningPayloadFingerprint,
   createEvmSigningSummary,
   createEvmSigningPreparePayload,

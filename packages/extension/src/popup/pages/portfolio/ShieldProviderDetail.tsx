@@ -172,9 +172,19 @@ function ShieldProviderContent() {
   const openAssetDetail = useCallback(
     (assetId: string, replace = false) => {
       const query = new URLSearchParams({ assetId, domain: 'shield', mode })
-      navigate(`/asset-detail?${query}`, { replace })
+      const providerQuery = new URLSearchParams({ provider: provider ?? '', mode })
+      const shieldFundsOrigin =
+        replace && provider && account
+          ? {
+              path: `/shield-provider?${providerQuery}`,
+              network: currentNetwork,
+              walletId: account.walletId,
+              accountId: account.accountId
+            }
+          : undefined
+      navigate(`/asset-detail?${query}`, { replace, state: { shieldFundsOrigin } })
     },
-    [mode, navigate]
+    [account?.walletId, account?.accountId, currentNetwork, mode, navigate, provider]
   )
   useEffect(() => {
     if (provider !== 'near-confidential' || !requestedAssetId) return

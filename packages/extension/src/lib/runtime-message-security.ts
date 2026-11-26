@@ -734,7 +734,10 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   PREPARE_CONFIDENTIAL_FUNDING: { required: { request: isRecord } },
   PREVIEW_CONFIDENTIAL_FUNDING: {
     required: { request: isRecord },
-    optional: { clusterFeeOnly: isBoolean }
+    optional: {
+      clusterFeeOnly: isBoolean,
+      depositMaximum: value => typeof value === 'string' && /^(0|[1-9]\d{0,77})$/.test(value)
+    }
   },
   CREATE_EXTERNAL_SHIELD_DEPOSIT: { required: { request: isRecord } },
   GET_EXTERNAL_SHIELD_DEPOSIT: { required: { depositId: isShortString } },

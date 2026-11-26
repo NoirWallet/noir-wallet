@@ -3,9 +3,13 @@ import { expect } from '@playwright/test'
 import { privateKeyToAccount } from 'viem/accounts'
 import {
   ConfidentialFundingApi,
+  ConfidentialFundingApiError,
   parseConfidentialOneClickStatus
 } from '../../../src/background/confidential-funding-api.ts'
-import { ConfidentialFundingCoordinator } from '../../../src/background/confidential-funding-coordinator.ts'
+import {
+  ConfidentialFundingCoordinator,
+  previewPrivateShieldDepositMaximum
+} from '../../../src/background/confidential-funding-coordinator.ts'
 import { ConfidentialFundingSigner } from '../../../src/background/confidential-funding-signer.ts'
 import { createBackgroundConfidentialFundingCoordinator } from '../../../src/background/confidential-funding.ts'
 import { userEvmAssetToDefinition } from '../../../src/core/chains/user-assets/user-evm-asset.ts'
@@ -54,6 +58,84 @@ import {
   formatMinimumDepositPaymentAmount,
   listDepositTokenChoices
 } from '../../../src/popup/services/shield-deposit-options.ts'
+
+test('Incognito Shield Max stays pending until the fee estimate confirms a shortfall', async () => {
+  let finishEstimate
+  const estimate = new Promise(resolve => {
+    finishEstimate = resolve
+  })
+  const validateAmount = () => Promise.reject(new Error('Unexpected quote request'))
+  const shortfall = previewPrivateShieldDepositMaximum(
+    '100',
+    '80',
+    true,
+    () => estimate,
+    validateAmount
+  )
+  const pending = Symbol('pending')
+  expect(await Promise.race([shortfall, Promise.resolve(pending)])).toBe(pending)
+  finishEstimate({ nativeBalance: 100n, minimumFee: 100n })
+  await expect(shortfall).resolves.toBe('0')
+  await expect(
+    previewPrivateShieldDepositMaximum(
+      '100',
+      '100',
+      false,
+      async () => ({ nativeBalance: 19n, minimumFee: 20n }),
+      validateAmount
+    )
+  ).resolves.toBe('0')
+
+  const unavailable = new Error('RPC unavailable')
+  await expect(
+    previewPrivateShieldDepositMaximum(
+      '100',
+      '100',
+      false,
+      () => Promise.reject(unavailable),
+      validateAmount
+    )
+  ).rejects.toBe(unavailable)
+})
+
+test('Incognito Shield Max checks the bridge minimum after allowing for the native fee floor', async () => {
+  const validateAmount = async amount => {
+    if (BigInt(amount) < 85n) {
+      throw new ConfidentialFundingApiError(
+        'Amount is too low for bridge, try at least 85',
+        400,
+        false
+      )
+    }
+  }
+  const feeFloor = async () => ({ nativeBalance: 100n, minimumFee: 20n })
+  const fundedFeeFloor = async () => ({ nativeBalance: 120n, minimumFee: 20n })
+  await expect(
+    previewPrivateShieldDepositMaximum('100', '75', true, feeFloor, validateAmount)
+  ).resolves.toBe('0')
+  await expect(
+    previewPrivateShieldDepositMaximum('120', '75', true, fundedFeeFloor, validateAmount)
+  ).resolves.toBeNull()
+  await expect(
+    previewPrivateShieldDepositMaximum('120', '90', true, fundedFeeFloor, validateAmount)
+  ).resolves.toBe('90')
+  await expect(
+    previewPrivateShieldDepositMaximum('100', '100', false, feeFloor, validateAmount)
+  ).resolves.toBe('100')
+  await expect(
+    previewPrivateShieldDepositMaximum('100', '0', false, feeFloor, validateAmount)
+  ).resolves.toBeNull()
+  const unavailable = new ConfidentialFundingApiError(
+    'Amount is too low for bridge, try at least 85',
+    503,
+    false
+  )
+  await expect(
+    previewPrivateShieldDepositMaximum('100', '75', true, feeFloor, () =>
+      Promise.reject(unavailable)
+    )
+  ).rejects.toBe(unavailable)
+})
 
 test('passive Confidential balance reads skip identity setup without a session', async () => {
   const scope = { network: 'mainnet', keyDomainId: 'wallet:one', accountId: 'account:one' }
@@ -124,6 +206,89 @@ test('passive Confidential balance reads skip identity setup without a session',
   await expect(coordinator.refreshBalances(scope, true)).resolves.toEqual([])
   expect(signingCalls).toBe(1)
   expect(balanceReads).toBe(2)
+})
+
+test('Base USDC Shield Send previews renew a usable session and still reject expired authorization', async () => {
+  const scope = { keyDomainId: 'wallet:one', accountId: 'account:one' }
+  const signerId = '0x1111111111111111111111111111111111111111'
+  const recipient = '0x2222222222222222222222222222222222222222'
+  const asset = {
+    chainId: 'eip155:8453',
+    chainName: 'base',
+    assetId: 'eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    protocolAssetId: 'nep141:base-usdc.omft.near'
+  }
+  const request = {
+    ...scope,
+    network: 'mainnet',
+    operation: 'withdraw',
+    sourceDomain: 'shield',
+    destinationDomain: 'public',
+    source: { ...asset, amountRaw: '1000000' },
+    destination: asset,
+    externalRecipient: recipient,
+    slippageBps: 50
+  }
+  const renewable = { accessToken: 'expiring', expiresAt: 30_000, refreshExpiresAt: 1_000_000 }
+  const renewed = { ...renewable, accessToken: 'renewed', expiresAt: 1_000_000 }
+  let session = renewable
+  let refreshes = 0
+  const deadline = new Date(120_000).toISOString()
+  const coordinator = new ConfidentialFundingCoordinator({
+    network: 'mainnet',
+    evmNetworks: [{ chainId: asset.chainId, rpcUrl: 'https://rpc.example.test' }],
+    now: () => 1_000,
+    assets: { get: () => ({ metadata: { decimals: 6, symbol: 'USDC' } }) },
+    assetMappings: [asset],
+    store: {
+      listPlans: async () => [],
+      getSession: async () => session,
+      putSession: async (_network, _domain, _account, value) => {
+        session = value
+      }
+    },
+    signer: {
+      resolveIdentity: async () => ({
+        address: signerId,
+        addressIndex: 0,
+        context: { keyDomainSource: { kind: 'software' }, chainAccount: { scope } }
+      })
+    },
+    api: {
+      refresh: async candidate => {
+        expect(candidate).toBe(renewable)
+        refreshes += 1
+        return renewed
+      },
+      getBalances: async () => {
+        throw new ConfidentialFundingApiError('Unauthorized balance request', 401, false)
+      },
+      quote: async quoteRequest => ({
+        quoteRequest: {
+          ...quoteRequest,
+          swapType: 'EXACT_INPUT',
+          confidentiality: 'basic',
+          amount: quoteRequest.amountRaw,
+          refundTo: quoteRequest.signerId,
+          slippageTolerance: quoteRequest.slippageBps,
+          deadline
+        },
+        quote: { amountIn: '1000000', amountOut: '980000', minAmountOut: '975000', deadline }
+      })
+    }
+  })
+
+  const previews = await Promise.all([coordinator.preview(request), coordinator.preview(request)])
+  for (const preview of previews) {
+    expect(preview).toMatchObject({ amountOutRaw: '980000', minimumOutputRaw: '975000' })
+  }
+  expect(session).toBe(renewed)
+  expect(refreshes).toBe(1)
+
+  await expect(coordinator.prepare(request)).rejects.toThrow('Refresh Shield balances to continue.')
+
+  session = { ...renewable, refreshExpiresAt: 500 }
+  await expect(coordinator.preview(request)).rejects.toThrow('Refresh Shield balances to continue.')
 })
 
 test('Shield device signatures bind the exact message, account and approval expiry', async () => {
@@ -367,6 +532,18 @@ test('Shield Receive defaults ZEC to Native, requires an explicit multichain cho
       true
     ).route
   ).toBe(singleEth.routes[0])
+
+  for (const blockedAccount of [
+    { ...account, networks: account.networks.slice(0, 1) },
+    {
+      ...account,
+      walletSource: { kind: 'hardware', hardware: { vendor: 'ledger', capabilities: ['evm'] } }
+    }
+  ]) {
+    expect(listShieldReceiveTokens(network, blockedAccount, catalog)).toEqual(nativeOnly)
+  }
+  globalThis.__ENABLED_CHAIN_FEATURE_FLAGS__ = ['chain.zcash']
+  expect(listShieldReceiveTokens(network, account, catalog)).toEqual(nativeOnly)
 })
 
 const apiConfig = {

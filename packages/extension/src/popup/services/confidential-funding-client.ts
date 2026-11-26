@@ -426,6 +426,16 @@ export function createConfidentialFundingClient(
       parseClusterNetworkFee(
         unwrap(await send({ type: 'PREVIEW_CONFIDENTIAL_FUNDING', request, clusterFeeOnly: true }))
       ),
+    previewPrivateDepositMaximum: async (
+      request: PrepareConfidentialFundingRequest,
+      proposedRaw: string
+    ): Promise<string | null> => {
+      const maximum = unwrap(
+        await send({ type: 'PREVIEW_CONFIDENTIAL_FUNDING', request, depositMaximum: proposedRaw })
+      )
+      if (maximum === null || maximum === '0' || maximum === proposedRaw) return maximum
+      throw new Error('Shield transfer maximum preview is invalid')
+    },
     prepare: async (
       request: PrepareConfidentialFundingRequest
     ): Promise<ConfidentialFundingReview> =>

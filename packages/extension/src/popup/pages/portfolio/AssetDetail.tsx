@@ -82,7 +82,12 @@ import { BitcoinAccountTypeSelector } from '@/popup/components/bitcoin/BitcoinAc
 import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-active-account'
 import { getFundingSourceUnavailableReason } from '@/core/wallet/funding-source'
 import { buildShieldActionPath, SHIELD_ACTIONS } from '@/popup/services/shield-action-selection'
-import { shieldFundsPath, type ShieldFundsDirection } from '@/popup/services/shield-funds-route'
+import {
+  resolveShieldFundsOrigin,
+  shieldFundsPath,
+  type ShieldFundsDirection,
+  type ShieldFundsOrigin
+} from '@/popup/services/shield-funds-route'
 import { canSwapNativeShieldZec } from '@/popup/services/shield-swap-zec-sources'
 import type { KeySource } from '@/types/wallet'
 import {
@@ -137,6 +142,17 @@ export function AssetDetail() {
         walletId: effectiveAccount.walletId,
         accountId: effectiveAccount.accountId,
         entryKey: location.key
+      }
+    : undefined
+  const shieldFundsScope = effectiveAccount && { ...effectiveAccount, network: currentNetwork }
+  const providerFundsOrigin = (location.state as { shieldFundsOrigin?: ShieldFundsOrigin } | null)
+    ?.shieldFundsOrigin
+  const shieldFundsState = shieldFundsScope
+    ? {
+        shieldFundsOrigin: {
+          ...shieldFundsScope,
+          path: resolveShieldFundsOrigin(providerFundsOrigin, shieldFundsScope) ?? sendOriginPath
+        }
       }
     : undefined
   const zcashSendScopeQuery =
@@ -742,7 +758,11 @@ export function AssetDetail() {
         action: 'deposit' as const,
         label: 'Shield',
         disabled: unavailable,
-        onClick: () => asset && navigate(shieldFundsPath('shield', asset.asset.id, 'zcash-shield'))
+        onClick: () =>
+          asset &&
+          navigate(shieldFundsPath('shield', asset.asset.id, 'zcash-shield'), {
+            state: shieldFundsState
+          })
       },
       {
         action: 'swap' as const,
@@ -789,7 +809,7 @@ export function AssetDetail() {
         BigInt(nearConfidentialZec.availableRaw) === 0n)
     const provider = useNative ? 'zcash-shield' : 'near-confidential'
     if (useNative || hasConfidentialCapability)
-      navigate(shieldFundsPath(direction, asset.asset.id, provider))
+      navigate(shieldFundsPath(direction, asset.asset.id, provider), { state: shieldFundsState })
   }
 
   const handleActivityClick = useCallback(

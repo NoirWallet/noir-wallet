@@ -133,6 +133,14 @@ export class ConfidentialFundingApiError extends Error {
   }
 }
 
+export function readConfidentialBridgeMinimum(error: unknown): bigint | null {
+  if (!(error instanceof ConfidentialFundingApiError) || error.status !== 400) return null
+  const minimum = /amount is too low for bridge,?\s*try at least ([1-9][0-9]{0,77})\b/i.exec(
+    error.message
+  )?.[1]
+  return minimum ? BigInt(minimum) : null
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -1036,14 +1044,9 @@ export class ConfidentialFundingApi {
       assertFlexibleExternalDepositQuoteBinding(quote, binding, Date.now(), true)
       minimumInputRaw = quote.quote.minAmountIn!
     } catch (error) {
-      const minimum =
-        error instanceof ConfidentialFundingApiError && error.status === 400
-          ? error.message.match(
-              /amount is too low for bridge,?\s*try at least ([1-9][0-9]*)\b/i
-            )?.[1]
-          : undefined
-      if (!minimum || minimum.length > 78 || BigInt(minimum) <= BigInt(request.amount)) throw error
-      minimumInputRaw = minimum
+      const minimum = readConfidentialBridgeMinimum(error)
+      if (minimum === null || minimum <= BigInt(request.amount)) throw error
+      minimumInputRaw = minimum.toString()
     }
     if (minimumInputRaw.length > 78) throw new Error('Confidential minimum input is invalid')
     const minimum = BigInt(minimumInputRaw)

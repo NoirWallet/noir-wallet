@@ -45,7 +45,10 @@ import { TransactionNotice } from '@/popup/components/transaction/TransactionNot
 import { ShieldHardwareTabNotice } from '@/popup/components/transaction/ShieldHardwareTabNotice'
 import { needsShieldHardwareTab } from '@/popup/services/shield-hardware-tab'
 import { buildShieldActionPath } from '@/popup/services/shield-action-selection'
-import { getSwapQuoteNotice } from '@/popup/services/swap-quote-error-message'
+import {
+  getSwapQuoteFailureMessage,
+  getSwapQuoteNotice
+} from '@/popup/services/swap-quote-error-message'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/popup/components/ui/dialog'
 import {
   CONFIDENTIAL_PREVIEW_CONNECTION_ERROR,
@@ -592,7 +595,11 @@ export function ConfidentialSendForm({
     active ? previewRequest : null,
     `${scopeKey}:${previewGeneration}`
   )
-  const previewNotice = getSwapQuoteNotice(previewError)
+  const fundingError = error ?? (previewLoading ? null : previewError)
+  const fundingNotice = getSwapQuoteNotice(fundingError)
+  const needsSession = fundingError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR
+  const needsBalanceRefresh =
+    needsSession || fundingError === 'Shield balance is insufficient for this transfer'
   const previewFee =
     source && destination && previewRequest && preview && preview.expiresAt > Date.now()
       ? estimateShieldSendRouteFee(
@@ -672,6 +679,15 @@ export function ConfidentialSendForm({
         setRecoveryPending(false)
     }
   }
+  const retryFundingQuote = () => {
+    if (busy || !scopeStillCurrent()) return
+    if (error) {
+      setError(null)
+      setPreviewGeneration(value => value + 1)
+    } else {
+      retryPreview()
+    }
+  }
   const prepare = async () => {
     if (
       !account ||
@@ -733,12 +749,10 @@ export function ConfidentialSendForm({
     } catch (cause) {
       if (scopeStillCurrent() && latestDraftKey.current === submittedDraftKey) {
         quoteReview.reset()
-        setRecoveryPending(true)
-        setError(cause instanceof Error ? cause.message : `${actionLabel} quote unavailable`)
-        setPreviewGeneration(value => value + 1)
-        await loadBalances(true, false).catch(() => false)
-        if (scopeStillCurrent() && latestDraftKey.current === submittedDraftKey)
-          setRecoveryPending(false)
+        setError(
+          getSwapQuoteFailureMessage(cause) ??
+            (cause instanceof Error ? cause.message : `${actionLabel} quote unavailable`)
+        )
       }
     } finally {
       if (mounted.current && latestScope.current === scopeKey && latestEntry.current === entryKey)
@@ -1200,29 +1214,17 @@ export function ConfidentialSendForm({
         />
       ) : amountState?.error ? (
         <TransactionNotice message={amountState.error} tone="warning" />
-      ) : error ? (
-        <TransactionNotice
-          message={classifyError(error).userMessage}
-          onRetry={() => void refreshBalances()}
-          retrying={connecting || recoveryPending}
-        />
-      ) : !previewLoading && previewError ? (
+      ) : fundingError ? (
         <TransactionNotice
           message={
-            previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR
+            needsSession
               ? 'Shield balances need to be updated.'
-              : (previewNotice ?? classifyError(previewError).userMessage)
+              : (fundingNotice ?? classifyError(fundingError).userMessage)
           }
-          tone={previewNotice ? 'muted' : 'warning'}
-          onRetry={
-            previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR
-              ? () => void refreshBalances()
-              : retryPreview
-          }
+          tone={fundingNotice ? 'muted' : 'warning'}
+          onRetry={needsBalanceRefresh ? () => void refreshBalances() : retryFundingQuote}
           retrying={connecting || recoveryPending}
-          retryLabel={
-            previewError === CONFIDENTIAL_PREVIEW_CONNECTION_ERROR ? 'Refresh balances' : undefined
-          }
+          retryLabel={needsBalanceRefresh ? 'Refresh balances' : undefined}
         />
       ) : null}
     </>

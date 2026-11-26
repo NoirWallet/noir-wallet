@@ -51,7 +51,6 @@ import {
   getActivityStatusPresentation,
   getActivitySwapPresentation,
   getActivityTransferRecipient,
-  getClusterBatchStatusLabel,
   getClusterChildStatusLabel,
   getClusterSettledDestination,
   isDirectAccountMove,
@@ -236,7 +235,7 @@ export function buildActivityTransactionView(input: {
   const chain = primaryChainId
     ? resolveActivityChainMetadata(primaryChainId, chainMetadata)
     : undefined
-  const status = getActivityStatusPresentation(item)
+  const status = getActivityStatusPresentation(item, clusterPlan)
   const direction = item.snapshot?.direction
   const isShieldMove = Boolean(
     item.snapshot?.shield && direction === 'self' && item.snapshot.shield.operation !== 'swap'
@@ -305,8 +304,7 @@ export function buildActivityTransactionView(input: {
     network,
     swap,
     status,
-    statusLabel:
-      input.statusLabel ?? (clusterPlan ? getClusterBatchStatusLabel(clusterPlan) : status.label),
+    statusLabel: input.statusLabel ?? status.label,
     statusTone: input.statusTone ?? status.tone,
     clusterPlan,
     amount,
@@ -338,10 +336,14 @@ export function buildActivityTransactionView(input: {
     references,
     confidentialReference,
     replacementReferences,
-    progressSteps: getActivityProgressSteps(item, chainId =>
-      chainId === 'near:mainnet'
-        ? 'NEAR'
-        : (resolveActivityChainMetadata(chainId, chainMetadata)?.displayName ?? 'Unknown network')
+    progressSteps: getActivityProgressSteps(
+      item,
+      chainId =>
+        chainId === 'near:mainnet'
+          ? 'NEAR'
+          : (resolveActivityChainMetadata(chainId, chainMetadata)?.displayName ??
+            'Unknown network'),
+      clusterPlan
     ),
     isCrossChain: item.segments.length > 1,
     isIncoming:
