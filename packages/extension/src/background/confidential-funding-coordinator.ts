@@ -117,7 +117,7 @@ import {
   type ConfidentialPrivateOrder,
   type ConfidentialSession,
   type ConfidentialStatus
-} from '@/infrastructure/near-intents/confidential-funding-api'
+} from './confidential-funding-api'
 import {
   ConfidentialFundingSigner,
   requireConfidentialPea,

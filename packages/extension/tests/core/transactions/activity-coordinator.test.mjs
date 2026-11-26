@@ -17,7 +17,7 @@ import { parseActivityReadModel } from '../../../src/core/activity/index.ts'
 import { parseConfidentialHistoryPage } from '../../../src/core/services/near-intents/confidential-history.ts'
 import { filterActivityItems } from '../../../src/popup/services/activity-list-model.ts'
 import { createEvmTransferGraph } from '../../../src/infrastructure/chains/evm/index.ts'
-import { ConfidentialFundingApiError } from '../../../src/infrastructure/near-intents/confidential-funding-api.ts'
+import { ConfidentialFundingApiError } from '../../../src/background/confidential-funding-api.ts'
 import { InMemoryTransactionRepository } from '../../../src/infrastructure/persistence/repositories/index.ts'
 
 const chains = createEvmBitcoinChainRegistry('mainnet')
@@ -188,7 +188,9 @@ function historyCoordinator({
     confidentialHistory: {
       network: 'mainnet',
       canRead,
-      api: { getHistory },
+      getHistory,
+      getHistoryErrorStatus: error =>
+        error instanceof ConfidentialFundingApiError ? error.status : null,
       readSession,
       fundingStore: {
         getPlansForTransactions: async ids =>

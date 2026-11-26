@@ -13,7 +13,7 @@ import type {
   ConfidentialBalance,
   ConfidentialOrderAuthToken,
   ConfidentialSession
-} from '@/infrastructure/near-intents/confidential-funding-api'
+} from './confidential-funding-api'
 
 const PLAN_PREFIX = 'confidential_funding_plan:'
 const EXTERNAL_DEPOSIT_PREFIX = 'confidential_external_deposit:'

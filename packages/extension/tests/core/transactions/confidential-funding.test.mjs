@@ -4,7 +4,7 @@ import { privateKeyToAccount } from 'viem/accounts'
 import {
   ConfidentialFundingApi,
   parseConfidentialOneClickStatus
-} from '../../../src/infrastructure/near-intents/confidential-funding-api.ts'
+} from '../../../src/background/confidential-funding-api.ts'
 import { ConfidentialFundingCoordinator } from '../../../src/background/confidential-funding-coordinator.ts'
 import { ConfidentialFundingSigner } from '../../../src/background/confidential-funding-signer.ts'
 import { createBackgroundConfidentialFundingRuntime } from '../../../src/background/confidential-funding.ts'

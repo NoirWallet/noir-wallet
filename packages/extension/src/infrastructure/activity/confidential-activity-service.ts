@@ -18,11 +18,6 @@ import {
   type ConfidentialHistoryPage
 } from '@/core/services/near-intents/confidential-history'
 import { logDevelopmentError } from '@/lib/development-console'
-import {
-  ConfidentialFundingApiError,
-  type ConfidentialFundingApi,
-  type ConfidentialSession
-} from '@/infrastructure/near-intents/confidential-funding-api'
 
 const MAX_PAGES = 10
 const LOCAL_PAGE_SIZE = 200
@@ -30,12 +25,16 @@ const LOCAL_PAGE_SIZE = 200
 export interface ConfidentialActivitySource {
   readonly network: Network
   readonly canRead: () => Promise<boolean>
-  readonly api: Pick<ConfidentialFundingApi, 'getHistory'>
+  readonly getHistory: (
+    accessToken: string,
+    prevCursor?: string
+  ) => Promise<ConfidentialHistoryPage>
+  readonly getHistoryErrorStatus: (error: unknown) => number | null
   readonly readSession: (
     scope: ActivityScope,
     isCurrent: () => Promise<boolean>,
     rejectedAccessToken?: string
-  ) => Promise<Pick<ConfidentialSession, 'accessToken'> | null>
+  ) => Promise<{ readonly accessToken: string } | null>
   readonly assetCatalog: {
     readonly assets: Pick<AssetRegistry, 'get'>
     readonly assetMappings: readonly ConfidentialPortfolioAssetMapping[]
@@ -218,11 +217,11 @@ export class ConfidentialActivityService {
       const session = await source.readSession(scope, isCurrent, rejectedAccessToken)
       if (!session || !(await isCurrent())) return null
       try {
-        return await source.api.getHistory(session.accessToken, prevCursor)
+        return await source.getHistory(session.accessToken, prevCursor)
       } catch (error) {
-        if (!(error instanceof ConfidentialFundingApiError)) throw error
-        if (error.status === 403) return null
-        if (error.status !== 401) throw error
+        const status = source.getHistoryErrorStatus(error)
+        if (status === 403) return null
+        if (status !== 401) throw error
         if (retry) return null
         rejectedAccessToken = session.accessToken
       }

@@ -37,7 +37,7 @@ import {
 import { SerialTaskQueue } from '@/lib/async-utils'
 import { withUndeletedWalletAccountMetadata } from '@/lib/wallet-metadata-storage'
 import { withMetadataLock } from '@/lib/wallet-metadata-storage'
-import { readConfidentialQuoteAppFees } from '@/infrastructure/near-intents/confidential-funding-api'
+import { readConfidentialQuoteAppFees } from './confidential-funding-api'
 import { credentialSession } from './credential-session'
 import { queryOneClickOrderStatus, resolveZcashOneClickViewer } from './one-click-status'
 import type { FundingSource, Network, QuoteBinding } from '@/types/wallet'

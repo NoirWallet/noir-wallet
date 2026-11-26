@@ -16,7 +16,6 @@ import { getCachedTokens, type SwapToken } from '@/core/services/intents-api'
 import { resolveIntentsEvmAssets } from '@/core/services/intents-evm-assets'
 import type { ConfidentialActivitySource } from '@/infrastructure/activity/confidential-activity-service'
 import { loadActiveEvmPortfolioContext } from '@/infrastructure/chains/evm'
-import { ConfidentialFundingApi } from '@/infrastructure/near-intents/confidential-funding-api'
 import { EvmMultichainSigningClient } from '@/infrastructure/keyring/multichain/evm-signing-client'
 import { HardwareEvmSigningContextResolver } from '@/infrastructure/keyring/hardware-evm-signing-context'
 import {
@@ -26,6 +25,7 @@ import {
 } from '@/infrastructure/persistence/repositories'
 import { credentialSession } from './credential-session'
 import { accountContextTransition } from './account-context-transition'
+import { ConfidentialFundingApi, ConfidentialFundingApiError } from './confidential-funding-api'
 import {
   CONFIDENTIAL_FUNDING_MONITOR_ALARM,
   ConfidentialFundingCoordinator,
@@ -191,7 +191,9 @@ export function createBackgroundConfidentialFundingRuntime(
     coordinator,
     confidentialActivity: {
       network: DEFAULT_NETWORK,
-      api,
+      getHistory: (accessToken, prevCursor) => api.getHistory(accessToken, prevCursor),
+      getHistoryErrorStatus: error =>
+        error instanceof ConfidentialFundingApiError ? error.status : null,
       readSession: (scope, isCurrent, rejectedAccessToken) =>
         coordinator.readUsableSessionForScope(
           scope.keyDomainId,

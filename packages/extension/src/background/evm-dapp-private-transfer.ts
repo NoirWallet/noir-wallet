@@ -10,10 +10,7 @@ import {
   type OneClickOrder,
   type OneClickViewer
 } from '@/core/services/near-intents/one-click-order'
-import {
-  ConfidentialFundingApi,
-  parseConfidentialOneClickStatus
-} from '@/infrastructure/near-intents/confidential-funding-api'
+import { ConfidentialFundingApi, parseConfidentialOneClickStatus } from './confidential-funding-api'
 import type { queryOneClickOrderStatus } from './one-click-status'
 import {
   RHEA_SWAP_CHAIN_CATALOG,

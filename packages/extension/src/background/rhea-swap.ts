@@ -30,7 +30,7 @@ import { RHEA_SWAP_TRANSACTION_MONITOR_ALARM } from './rhea-swap-transaction-mon
 import type { FundingSource, QuoteBinding } from '@/types/wallet'
 import { safeBig } from '@/lib/big'
 import { PersistentRheaSwapCatalogCache } from '@/infrastructure/persistence/rhea-swap-catalog-cache'
-import { ConfidentialFundingApi } from '@/infrastructure/near-intents/confidential-funding-api'
+import { ConfidentialFundingApi } from './confidential-funding-api'
 import { PublicConfidentialTransfer } from './public-confidential-transfer'
 
 export async function readRheaZcashTransferDeadline(

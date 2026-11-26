@@ -11,7 +11,7 @@ import {
   observeDAppRequest,
   type DAppAnalyticsSink
 } from './dapp-analytics'
-import { ConfidentialFundingApiError } from '@/infrastructure/near-intents/confidential-funding-api'
+import { ConfidentialFundingApiError } from './confidential-funding-api'
 import type { EvmNetworkConfig } from '@/config/networks'
 import {
   EvmRpcError,

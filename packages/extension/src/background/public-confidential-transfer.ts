@@ -29,7 +29,7 @@ import type {
 import {
   parseConfidentialOneClickStatus,
   type ConfidentialFundingApi
-} from '@/infrastructure/near-intents/confidential-funding-api'
+} from './confidential-funding-api'
 import type { queryOneClickOrderStatus, resolveZcashOneClickViewer } from './one-click-status'
 
 const ROUTER = 'nearintents'
