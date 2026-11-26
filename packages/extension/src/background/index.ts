@@ -550,11 +550,11 @@ subscribeTransactionPortfolioInvalidations(async ({ scope, chainIds }) => {
   }
 })
 let activityCoordinator!: ReturnType<typeof createBackgroundActivityCoordinator>
-const activityStorageRepository = new IndexedDbStorageV2Repository()
+const activeAccountStorageRepository = new IndexedDbStorageV2Repository()
 const activityNotifications = new ActivityNotifications({
   activeScope: async () => {
     if (networkRestartRequired) return null
-    const active = (await readActiveStorageV2Snapshot(activityStorageRepository))?.manifest
+    const active = (await readActiveStorageV2Snapshot(activeAccountStorageRepository))?.manifest
       .activeAccount
     return active ? { ...active, network: DEFAULT_NETWORK } : null
   },
@@ -569,7 +569,7 @@ const activityNotifications = new ActivityNotifications({
     await rehydrateWalletStore()
     const { network, keyDomainId, accountId } = scope
     const account = useWalletStore.getState().getAccount(keyDomainId, accountId)
-    const snapshot = await readActiveStorageV2Snapshot(activityStorageRepository)
+    const snapshot = await readActiveStorageV2Snapshot(activeAccountStorageRepository)
     const storedChains = (snapshot?.chainAccounts ?? [])
       .filter(
         chain => chain.scope.keyDomainId === keyDomainId && chain.scope.accountId === accountId
@@ -920,31 +920,21 @@ const walletDAppConnection = new WalletDAppConnectionCoordinator({
 
 const currentDAppEvmNetworks = new CurrentDAppEvmNetworkCoordinator({
   read: async (): Promise<CurrentDAppEvmNetworkState | null> => {
-    await rehydrateWalletStore()
+    if (networkRestartRequired) return null
     const dapp = await dappManager.getCurrentTabDApp()
     if (!dapp) return null
-    const wallet = useWalletStore.getState()
     const active = await accountNetworksCoordinator.readActiveAccount()
     const networkState = await dappManager.getEvmNetworkState(dapp.origin)
-    if (
-      !active ||
-      !networkState ||
-      !wallet.currentWalletId ||
-      !wallet.currentAccountId ||
-      wallet.currentNetwork !== DEFAULT_NETWORK ||
-      active.reference.walletId !== wallet.currentWalletId ||
-      active.reference.accountId !== wallet.currentAccountId
-    )
-      return null
+    if (!active || !networkState) return null
+    const { walletId, accountId } = active.reference
     const sourceChainId = (await evmDAppOrigins.get(dapp.origin)).getCaip2ChainId()
     if (!active.chainIds.includes(sourceChainId)) return null
     const authorization = await dappManager.getChainAuthorization(dapp.origin, sourceChainId)
     if (
-      !authorization?.accounts.some(
-        ref => ref.walletId === wallet.currentWalletId && ref.accountId === wallet.currentAccountId
-      )
-    )
+      !authorization?.accounts.some(ref => ref.walletId === walletId && ref.accountId === accountId)
+    ) {
       return null
+    }
     const unlockEpoch = await credentialSession.getUnlockEpoch()
     if (!unlockEpoch) return null
     const catalog = resolveEvmNetworkCatalog(
@@ -961,9 +951,7 @@ const currentDAppEvmNetworks = new CurrentDAppEvmNetworkCoordinator({
               scope.chainId === network.chainId &&
               (scope.accounts === undefined ||
                 scope.accounts.some(
-                  ref =>
-                    ref.walletId === wallet.currentWalletId &&
-                    ref.accountId === wallet.currentAccountId
+                  ref => ref.walletId === walletId && ref.accountId === accountId
                 ))
           )
       )
@@ -974,8 +962,8 @@ const currentDAppEvmNetworks = new CurrentDAppEvmNetworkCoordinator({
       options,
       selectionContext: {
         origin: dapp.origin,
-        walletId: wallet.currentWalletId,
-        accountId: wallet.currentAccountId,
+        walletId,
+        accountId,
         networkMode: DEFAULT_NETWORK,
         activeChainId: sourceChainId,
         authorizationRevision: await dappManager.getAuthorizationRevision(dapp.origin),
@@ -1225,53 +1213,45 @@ async function handleEvmDAppNetworkRequest(
 ): Promise<void> {
   const runtime = await evmDAppOrigins.get(origin)
   const networkState = await dappManager.getEvmNetworkState(origin)
-  const account = useWalletStore.getState()
-  const accountIdentity = [
-    account.currentWalletId,
-    account.currentAccountId,
-    account.currentNetwork
-  ]
+  const readActiveAccount = async () =>
+    (await readActiveStorageV2Snapshot(activeAccountStorageRepository))?.manifest.activeAccount
+  const account = await readActiveAccount()
+  const networkMode = DEFAULT_NETWORK
   const sourceChainId = runtime.getCaip2ChainId()
   const sourceRuntimeKey = multichainRuntimeKey
   const sourceRuntimeGeneration = currentDAppEvmRuntimeGeneration
   const authorizationRevision = await dappManager.getAuthorizationRevision(origin)
-  const authorization = JSON.stringify(
-    await dappManager.getChainAuthorization(origin, sourceChainId)
-  )
-  if (action === 'switch') {
-    const grant = await dappManager.getChainAuthorization(origin, sourceChainId)
-    if (
-      !grant?.accounts.some(
-        ref =>
-          ref.walletId === account.currentWalletId && ref.accountId === account.currentAccountId
-      )
-    ) {
-      throw new Eip1193ProviderError(
-        4100,
-        'Connect the current EVM account before switching networks.'
-      )
-    }
+  const grant = await dappManager.getChainAuthorization(origin, sourceChainId)
+  const authorization = JSON.stringify(grant)
+  if (
+    action === 'switch' &&
+    !grant?.accounts.some(
+      ref => ref.walletId === account?.keyDomainId && ref.accountId === account?.accountId
+    )
+  ) {
+    throw new Eip1193ProviderError(
+      4100,
+      'Connect the current EVM account before switching networks.'
+    )
   }
   const readUnlockEpoch = async () =>
-    account.currentWalletId
-      ? (await credentialSession.getCredentialBinding(account.currentWalletId).catch(() => null))
+    account
+      ? (await credentialSession.getCredentialBinding(account.keyDomainId).catch(() => null))
           ?.globalUnlockEpoch
       : undefined
   const unlockEpoch = await readUnlockEpoch()
   const validateRequest = async (): Promise<void> => {
-    const current = useWalletStore.getState()
+    const current = await readActiveAccount()
     if (
+      networkRestartRequired ||
+      networkMode !== DEFAULT_NETWORK ||
       sourceRuntimeKey !== multichainRuntimeKey ||
       sourceRuntimeGeneration !== currentDAppEvmRuntimeGeneration ||
       sourceChainId !== (await evmDAppOrigins.get(origin)).getCaip2ChainId() ||
       JSON.stringify(networkState) !==
         JSON.stringify(await dappManager.getEvmNetworkState(origin)) ||
-      JSON.stringify(accountIdentity) !==
-        JSON.stringify([
-          current.currentWalletId,
-          current.currentAccountId,
-          current.currentNetwork
-        ]) ||
+      current?.keyDomainId !== account?.keyDomainId ||
+      current?.accountId !== account?.accountId ||
       authorization !==
         JSON.stringify(await dappManager.getChainAuthorization(origin, sourceChainId)) ||
       unlockEpoch !== (await readUnlockEpoch()) ||
@@ -1288,7 +1268,17 @@ async function handleEvmDAppNetworkRequest(
     requested,
     origin,
     action,
-    JSON.stringify([accountIdentity, sourceChainId, sourceRuntimeKey, authorization, unlockEpoch]),
+    JSON.stringify([
+      account?.keyDomainId,
+      account?.accountId,
+      networkMode,
+      sourceChainId,
+      sourceRuntimeKey,
+      sourceRuntimeGeneration,
+      authorizationRevision,
+      authorization,
+      unlockEpoch
+    ]),
     {
       readSettings: () => chainEndpointSettingsCoordinator.read(),
       isChainAuthorized: async chainId => {
@@ -1316,16 +1306,9 @@ async function handleEvmDAppNetworkRequest(
           validateRequest
         ),
       requestApproval: async (approvalOrigin, approvalAction, data) => {
-        const executionMode =
-          account.currentWalletId && account.currentAccountId
-            ? (
-                await dappExecutionModeCoordinator.read({
-                  network: DEFAULT_NETWORK,
-                  keyDomainId: account.currentWalletId,
-                  accountId: account.currentAccountId
-                })
-              ).mode
-            : 'main'
+        const executionMode = account
+          ? (await dappExecutionModeCoordinator.read({ network: networkMode, ...account })).mode
+          : 'main'
         await validateRequest()
         return dappHandler.requestExternalApproval(approvalOrigin, approvalAction, {
           ...data,
