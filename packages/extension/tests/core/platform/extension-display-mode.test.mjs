@@ -12,7 +12,11 @@ import {
   isSidePanelSurface,
   readStoredExtensionDisplayMode
 } from '../../../src/lib/extension-display-mode.ts'
-import { launchHardwareSignSurface } from '../../../src/lib/hardware-sign-launcher.ts'
+import {
+  focusHardwareSignSurface,
+  getHardwareSignOriginTab,
+  launchHardwareSignSurface
+} from '../../../src/lib/hardware-sign-launcher.ts'
 
 test.describe('extension display mode', () => {
   let originalChrome
@@ -158,6 +162,7 @@ test.describe('extension display mode', () => {
   })
 
   test('opens hardware signing in an active tab without creating a window', async () => {
+    const url = 'chrome-extension://wallet/index.html#/hardware/sign?req=x'
     const calls = []
     let openedWindow = false
     globalThis.chrome = {
@@ -170,15 +175,68 @@ test.describe('extension display mode', () => {
       }
     }
 
-    await expect(
-      launchHardwareSignSurface('chrome-extension://wallet/index.html#/hardware/sign?req=x')
-    ).resolves.toEqual({ id: 8 })
-    expect(calls).toEqual([
-      {
-        url: 'chrome-extension://wallet/index.html#/hardware/sign?req=x',
-        active: true
-      }
-    ])
+    await expect(launchHardwareSignSurface(url)).resolves.toEqual({ id: 8, url })
+    expect(calls).toEqual([{ url, active: true }])
     expect(openedWindow).toBe(false)
+  })
+
+  test('leaves the panel tab active and focuses the same signer on demand', async () => {
+    const url = 'chrome-extension://wallet/index.html#/hardware/ledger-sign?family=evm&tx=approval'
+    const calls = []
+    const storedOrigins = {}
+    let signerDocumentUrl = url
+    globalThis.chrome = {
+      storage: {
+        session: {
+          set: async items => Object.assign(storedOrigins, items),
+          get: async key => ({ [key]: storedOrigins[key] })
+        }
+      },
+      runtime: {
+        ContextType: { TAB: 'TAB' },
+        getContexts: async filter => {
+          expect(filter).toEqual({ contextTypes: ['TAB'], tabIds: [8], documentUrls: [url] })
+          return filter.documentUrls.includes(signerDocumentUrl)
+            ? [{ contextType: 'TAB', tabId: 8, documentUrl: signerDocumentUrl }]
+            : []
+        }
+      },
+      tabs: {
+        query: async options => {
+          expect(options).toEqual({ active: true, currentWindow: true })
+          return [{ id: 3, windowId: 17 }]
+        },
+        create: async options => {
+          calls.push(['create', options])
+          return { id: 8, windowId: 17 }
+        },
+        get: async tabId => ({ id: tabId }),
+        update: async (tabId, options) => {
+          calls.push(['activate', tabId, options])
+          return { id: tabId, windowId: 24 }
+        }
+      },
+      windows: {
+        update: async (windowId, options) => calls.push(['focus', windowId, options])
+      }
+    }
+
+    const signer = await launchHardwareSignSurface(url, true)
+    expect(calls).toEqual([['create', { url, active: false, windowId: 17, openerTabId: 3 }]])
+    await expect(getHardwareSignOriginTab({ id: 8, windowId: 24 }, url)).resolves.toBe(3)
+    await expect(
+      getHardwareSignOriginTab({ id: 8, windowId: 24 }, `${url}-other`)
+    ).resolves.toBeUndefined()
+
+    await focusHardwareSignSurface(signer)
+    expect(calls.slice(1)).toEqual([
+      ['activate', 8, { active: true }],
+      ['focus', 24, { focused: true }]
+    ])
+
+    signerDocumentUrl =
+      'chrome-extension://wallet/index.html#/hardware/ledger-sign?family=evm&tx=other'
+    await expect(focusHardwareSignSurface(signer)).rejects.toThrow('Signing tab is unavailable')
+    expect(calls).toHaveLength(3)
   })
 })

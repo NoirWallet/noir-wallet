@@ -5,6 +5,8 @@ import type {
   SwapApprovalContinuationResult
 } from '@/background/swap-approval-continuation'
 
+export const RETURN_TO_LEDGER_SWAP_EVENT = 'noir:return-to-ledger-swap'
+
 async function request<T>(type: string, fields: Record<string, unknown>): Promise<T> {
   const response = await chrome.runtime.sendMessage({ type, ...fields })
   if (!response || typeof response !== 'object') throw new Error('Swap continuation is unavailable')

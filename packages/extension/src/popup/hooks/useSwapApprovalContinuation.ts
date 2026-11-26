@@ -14,6 +14,7 @@ import { swapApprovalContinuationClient } from '@/popup/services/swap-approval-c
 export interface SubmittedSwapApproval {
   readonly graph: TransactionGraph
   readonly awaitingHardwareSignature?: boolean
+  readonly continuation?: SwapApprovalContinuation
   readonly token: string
   readonly spender: string
   readonly amountRaw: string
@@ -69,12 +70,8 @@ export function useSwapApprovalContinuation({
   readonly sequence: RefObject<number>
   readonly onPreparing: (value: boolean) => void
   readonly onError: (error: string | null) => void
-  readonly onReady: (result: {
-    readonly restoredQuote: RheaSwapQuoteView | null
-    readonly reuseApprovedQuote: boolean
-  }) => void
+  readonly onReady: (reuseApprovedQuote: boolean) => void
 }) {
-  const completedApprovalId = useRef<string | null>(null)
   const origin = approval?.graph.segments.find(segment => segment.role === 'origin')
   const chainId = origin?.target.kind === 'onchain' ? origin.target.chainId : null
 
@@ -105,22 +102,9 @@ export function useSwapApprovalContinuation({
         resumed?.approval.amountRaw ?? (await getApprovalAllowance(chainId, approval))
       if (requestSequence !== sequence.current) return
       if (BigInt(allowance) < BigInt(approval.amountRaw)) return 'pending'
-      if (continuation) completedApprovalId.current = continuation.transactionId
-      const restoredQuote =
-        resumed?.quote &&
-        continuation?.quoteHandle === resumed.quote.quoteHandle &&
-        continuation.quoteRequestKey === requestKey &&
-        resumed.quote.recipient.toLowerCase() === intent.recipientAddress?.toLowerCase() &&
-        isRheaSwapQuoteFresh(resumed.quote) &&
-        intent.destinationAssetId
-          ? resumed.quote
-          : null
-      onReady({
-        restoredQuote,
-        reuseApprovedQuote:
-          restoredQuote !== null ||
-          (quote !== null && quoteKey === requestKey && isRheaSwapQuoteFresh(quote))
-      })
+      onReady(
+        !continuation && quote !== null && quoteKey === requestKey && isRheaSwapQuoteFresh(quote)
+      )
     } catch (error) {
       if (requestSequence === sequence.current) onError(getRheaSwapErrorMessage(error))
     } finally {
@@ -174,13 +158,6 @@ export function useSwapApprovalContinuation({
       if (timer !== undefined) window.clearTimeout(timer)
     }
   }, [phase, approval, walletId, accountId, chainId, preparing, requestKey, onError])
-
-  useEffect(() => {
-    if (phase !== 'review' || !completedApprovalId.current) return
-    const transactionId = completedApprovalId.current
-    completedApprovalId.current = null
-    void swapApprovalContinuationClient.clear(transactionId).catch(() => {})
-  }, [phase])
 
   return continueAfterApproval
 }

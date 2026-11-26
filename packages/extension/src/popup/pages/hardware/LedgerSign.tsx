@@ -17,6 +17,7 @@ import {
 import type { LedgerTransport } from '@/lib/ledger/device'
 import { swapApprovalContinuationClient } from '../../services/swap-approval-continuation-client'
 import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
+import { focusHardwareSignOrigin } from '@/lib/hardware-sign-launcher'
 import { logger } from '@/lib/logger'
 
 export function LedgerSign() {
@@ -31,6 +32,7 @@ export function LedgerSign() {
   const abort = useRef<AbortController | null>(null)
   const terminal = useRef(false)
   const signing = useRef(false)
+  const returning = useRef(false)
   useEffect(() => {
     let disposed = false
     const query = new URLSearchParams(location.hash.split('?')[1] ?? '')
@@ -102,6 +104,7 @@ export function LedgerSign() {
     if (view?.family === 'evm' && view.transactionId && !terminal.current)
       await swapApprovalContinuationClient.clear(view.transactionId).catch(() => {})
     terminal.current = true
+    await focusHardwareSignOrigin().catch(() => false)
     window.close()
   }
   const sign = async (transport: LedgerTransport) => {
@@ -138,18 +141,27 @@ export function LedgerSign() {
     }
   }
   const continueSwap = async () => {
-    if (!swapApprovalId) return
+    if (!swapApprovalId || returning.current) return
+    returning.current = true
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: 'CONTINUE_LEDGER_SWAP_IN_PANEL',
-        transactionId: swapApprovalId
-      })
-      if (response?.result === true) {
-        window.close()
-        return
+      if (await focusHardwareSignOrigin().catch(() => false)) {
+        const response = await chrome.runtime.sendMessage({
+          type: 'CONTINUE_LEDGER_SWAP_IN_PANEL',
+          transactionId: swapApprovalId
+        })
+        if (response?.result === true) {
+          window.close()
+          return
+        }
       }
     } catch {
-      // The side panel may have been closed while the Ledger tab was active.
+    } finally {
+      returning.current = false
+    }
+    const tab = await chrome.tabs.getCurrent().catch(() => undefined)
+    if (tab?.id !== undefined) {
+      await chrome.tabs.update(tab.id, { active: true }).catch(() => {})
+      await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {})
     }
     navigate(`/swap?resumeApproval=${encodeURIComponent(swapApprovalId)}`)
   }
