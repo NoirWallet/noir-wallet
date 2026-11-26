@@ -1471,11 +1471,23 @@ async function reloadMultichainRuntime(
       }
     }
   )
+  activityCoordinator?.clearConfidentialHistory()
   activityCoordinator = createBackgroundActivityCoordinator(
     bitcoinRpcUrl,
     settings,
     (scope, chainId, mode) =>
-      activityNotifications.historyRead({ ...scope, network: DEFAULT_NETWORK }, chainId, mode)
+      activityNotifications.historyRead({ ...scope, network: DEFAULT_NETWORK }, chainId, mode),
+    {
+      canRead: async () =>
+        !networkRestartRequired &&
+        !walletLockCleanupPending &&
+        confidentialFundingCoordinator !== null &&
+        (await credentialSession.hasUnlockSession()),
+      readPage: (scope, cursor, isCurrent) =>
+        confidentialFundingCoordinator?.readHistoryPage(scope, cursor, isCurrent) ??
+        Promise.resolve(null),
+      getAssets: () => confidentialFundingCoordinator?.getHistoryAssets() ?? new Map()
+    }
   )
   additionalReceiveTargetsCoordinator =
     createBackgroundAdditionalReceiveTargetsCoordinator(customEvmNetworks)
@@ -2096,6 +2108,9 @@ async function switchGlobalNetworkMode(target: Network): Promise<{ restartRequir
     }
   })
 }
+accountContextTransition.registerInvalidator({
+  invalidate: async () => activityCoordinator?.clearConfidentialHistory()
+})
 accountContextTransition.registerInvalidator({
   invalidate: async request => {
     const scope = {
@@ -4357,7 +4372,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
             .then(([prices, portfolio]) =>
               observeActivityReceipts(
                 result.scope,
-                result.items,
+                result.items.filter(item => item.source !== 'confidential-history'),
                 prices.status === 'fulfilled' ? prices.value : undefined,
                 portfolio.status === 'fulfilled' ? (portfolio.value?.assets ?? []) : []
               )
@@ -7332,6 +7347,7 @@ function beginWalletLockQuiesce(): Promise<
   { readonly success: true } | { readonly success: false; readonly error: unknown }
 > {
   walletLockCleanupPending = true
+  activityCoordinator?.clearConfidentialHistory()
   cancelAllKeystoneEvmSigning('Wallet was locked. Review this action again.')
   backgroundZcashWalletRuntime.beginLock()
   void credentialSession.lock().catch(() => {})

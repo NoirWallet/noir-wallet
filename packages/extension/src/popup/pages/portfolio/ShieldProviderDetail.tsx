@@ -146,6 +146,7 @@ function ShieldProviderContent() {
   } = useShieldBalances({
     hardware: activeAccount?.walletSource.kind === 'hardware',
     active: provider === 'near-confidential',
+    authorizeOnMount: detailTab !== 'activity',
     enabled: canManageNear,
     scopeKey,
     scope: account

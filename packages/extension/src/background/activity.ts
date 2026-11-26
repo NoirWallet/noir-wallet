@@ -50,6 +50,7 @@ import type { BitcoinSupportedAddressType } from '@/core/chains/bitcoin'
 import { credentialSession } from './credential-session'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
 import { refreshZcashReceiveConfirmations } from './zcash-receive-confirmations'
+import { confidentialHistoryOrderKey } from '@/core/services/near-intents/confidential-history'
 import { recoverRheaWithdrawActivity } from './rhea-swap'
 
 const ACTIVITY_REFRESH_TTL_MS = 5 * 60_000
@@ -235,7 +236,11 @@ function solanaSignature(item: ActivityItem): string | null {
 export function createBackgroundActivityCoordinator(
   bitcoinCustomRpcUrl?: string,
   endpointSettings?: ChainEndpointSettings,
-  onHistoryRead?: (scope: ActivityScope, chainId: string, mode?: 'main' | 'private') => void
+  onHistoryRead?: (scope: ActivityScope, chainId: string, mode?: 'main' | 'private') => void,
+  confidentialHistory?: Omit<
+    NonNullable<ConstructorParameters<typeof ActivityCoordinator>[0]['confidentialHistory']>,
+    'loadOrderKeys'
+  >
 ): ActivityCoordinator {
   const storageRepository = new IndexedDbStorageV2Repository()
   const peaSigner = new EvmMultichainSigningClient({ credentials: credentialSession })
@@ -932,6 +937,50 @@ export function createBackgroundActivityCoordinator(
           }
         }
       : {}),
-    filterLocalGraphs
+    filterLocalGraphs,
+    ...(confidentialHistory
+      ? {
+          confidentialHistory: {
+            ...confidentialHistory,
+            loadOrderKeys: async (scope, graphs) => {
+              const fundingStore = new ChromeConfidentialFundingStore()
+              const ids = new Set(graphs.map(graph => graph.root.id as string))
+              const [plans, external] = await Promise.all([
+                fundingStore.getPlansForTransactions([...ids]),
+                [...ids].some(id => id.startsWith('tx:confidential-external:'))
+                  ? fundingStore.listExternalDeposits()
+                  : []
+              ])
+              const keys = new Set<string>()
+              const scoped = (entry: { network: string; keyDomainId: string; accountId: string }) =>
+                entry.network === DEFAULT_NETWORK &&
+                entry.keyDomainId === scope.keyDomainId &&
+                entry.accountId === scope.accountId
+              for (const plan of plans.values()) {
+                if (!scoped(plan)) continue
+                for (const quote of [plan.depositQuote?.quote, plan.swapQuote?.quote]) {
+                  if (quote?.depositAddress)
+                    keys.add(confidentialHistoryOrderKey(quote.depositAddress, quote.depositMemo))
+                }
+                for (const row of plan.withdraws) {
+                  if (row.depositAddress)
+                    keys.add(
+                      confidentialHistoryOrderKey(
+                        row.depositAddress,
+                        row.oneClickOrder?.depositMemo
+                      )
+                    )
+                }
+              }
+              for (const record of external) {
+                if (ids.has(record.transactionId) && scoped(record)) {
+                  keys.add(confidentialHistoryOrderKey(record.depositAddress, record.depositMemo))
+                }
+              }
+              return keys
+            }
+          }
+        }
+      : {})
   })
 }

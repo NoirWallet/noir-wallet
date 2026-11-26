@@ -1223,6 +1223,31 @@ test.describe('confidential funding safety rules', () => {
     }
   })
 
+  test('sends the Confidential history cursor and user session to the direct 1Click endpoint', async () => {
+    const originalFetch = globalThis.fetch
+    const api = new ConfidentialFundingApi(apiConfig, 'https://near.example.test', '')
+    let request
+    globalThis.fetch = async (url, init) => {
+      request = { url: new URL(url), init }
+      return Response.json({ items: [] })
+    }
+    try {
+      await expect(api.getHistory('session', 'older+cursor')).resolves.toEqual({ entries: [] })
+      expect(request.url.origin).toBe('https://direct.example.test')
+      expect(request.url.pathname).toBe('/v0/account/history')
+      expect(request.url.searchParams.get('prevCursor')).toBe('older+cursor')
+      expect(request.url.searchParams.get('nextCursor')).toBeNull()
+      expect(request.url.searchParams.getAll('depositType')).toEqual([
+        'CONFIDENTIAL_INTENTS',
+        'null',
+        'null'
+      ])
+      expect(request.init.headers.Authorization).toBe('Bearer session')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   test('keeps the destination hash from a pending RHEA order status', async () => {
     const originalFetch = globalThis.fetch
     const hash = `0x${'cd'.repeat(32)}`

@@ -10,7 +10,12 @@ import type {
   TransactionSegmentTarget
 } from '@/core/transactions/domain'
 
-export const ACTIVITY_SOURCES = Object.freeze(['zcash-v1', 'wallet-v2', 'rpc'] as const)
+export const ACTIVITY_SOURCES = Object.freeze([
+  'zcash-v1',
+  'wallet-v2',
+  'rpc',
+  'confidential-history'
+] as const)
 
 export type ActivitySource = (typeof ACTIVITY_SOURCES)[number]
 export type ActivityCompleteness = 'complete' | 'partial'
@@ -67,4 +72,5 @@ export interface ActivityReadModel {
   readonly items: readonly ActivityItem[]
   readonly partialItemCount: number
   readonly hasMore?: boolean
+  readonly confidentialHistoryUnavailable?: true
 }

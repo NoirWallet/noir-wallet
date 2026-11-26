@@ -34,6 +34,7 @@ import {
   resolveIntentsEvmChainId
 } from '@/core/services/intents-evm-assets'
 import { resolveManagedIntentsAssets } from '@/core/services/intents-managed-assets'
+import type { ActivityScope } from '@/core/activity'
 import type { ChainId } from '@/core/chains/domain'
 import { parseAccountId } from '@/core/accounts/domain'
 import { parseKeyDomainId } from '@/core/keyring/domain'
@@ -3016,6 +3017,65 @@ export class ConfidentialFundingCoordinator {
     return Object.freeze({ identity, session })
   }
 
+  async readHistoryPage(
+    scope: ActivityScope,
+    prevCursor: string | undefined,
+    isCurrent: () => Promise<boolean>
+  ) {
+    const { keyDomainId, accountId } = scope
+    const session = await this.readUsableSessionForScope(keyDomainId, accountId, isCurrent)
+    if (!session || !(await isCurrent())) return null
+    try {
+      return await this.options.api.getHistory(session.accessToken, prevCursor)
+    } catch (error) {
+      if (!(error instanceof ConfidentialFundingApiError)) throw error
+      if (error.status === 403) return null
+      if (error.status !== 401 || !(await isCurrent())) throw error
+    }
+    const refreshed = await this.readUsableSessionForScope(
+      keyDomainId,
+      accountId,
+      isCurrent,
+      session.accessToken
+    )
+    if (!refreshed || !(await isCurrent())) return null
+    try {
+      return await this.options.api.getHistory(refreshed.accessToken, prevCursor)
+    } catch (error) {
+      if (
+        error instanceof ConfidentialFundingApiError &&
+        (error.status === 401 || error.status === 403)
+      )
+        return null
+      throw error
+    }
+  }
+
+  getHistoryAssets() {
+    const assets = new Map<string, { assetId: string; decimals: number }>()
+    const tokens = this.options.getProtocolTokens?.() ?? this.options.protocolTokens ?? []
+    try {
+      for (const asset of resolveManagedIntentsAssets(
+        tokens,
+        this.options.network,
+        this.options.evmNetworks
+      )) {
+        assets.set(asset.protocolAssetId, asset)
+      }
+    } catch (error) {
+      logDevelopmentError('[Confidential Funding] History asset catalog unavailable', error)
+    }
+    for (const mapping of this.options.assetMappings) {
+      const asset = this.options.assets.get(mapping.assetId)
+      if (asset)
+        assets.set(mapping.protocolAssetId, {
+          assetId: mapping.assetId,
+          decimals: asset.metadata.decimals
+        })
+    }
+    return assets
+  }
+
   async refreshBalances(
     scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>,
     authorize: boolean
@@ -5045,21 +5105,41 @@ export class ConfidentialFundingCoordinator {
     return this.readUsableSessionForScope(plan.keyDomainId, plan.accountId)
   }
 
-  private async readUsableSessionForScope(keyDomainId: string, accountId: string) {
+  private async readUsableSessionForScope(
+    keyDomainId: string,
+    accountId: string,
+    isCurrent?: () => Promise<boolean>,
+    rejectedAccessToken?: string
+  ) {
     const session = await this.options.store.getSession(
       this.options.network,
       keyDomainId,
       accountId
     )
     if (!session) return null
-    if (session.expiresAt > this.now() + SESSION_REFRESH_BUFFER_MS) return session
+    if (
+      session.expiresAt > this.now() + SESSION_REFRESH_BUFFER_MS &&
+      session.accessToken !== rejectedAccessToken
+    )
+      return session
     if (session.refreshExpiresAt <= this.now()) return null
     try {
+      if (isCurrent && !(await isCurrent())) return null
       const refreshed = await this.options.api.refresh(session)
+      if (isCurrent && !(await isCurrent())) return null
       await this.options.store.putSession(this.options.network, keyDomainId, accountId, refreshed)
       return refreshed
     } catch (error) {
       logDevelopmentError('[Confidential Funding] Session refresh failed', error)
+      if (
+        isCurrent &&
+        !(
+          error instanceof ConfidentialFundingApiError &&
+          (error.status === 401 || error.status === 403)
+        )
+      ) {
+        throw error
+      }
       return null
     }
   }

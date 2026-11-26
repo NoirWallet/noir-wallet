@@ -276,7 +276,11 @@ export function MultichainActivityPanel({
   )
   const activityKey = JSON.stringify([network, walletId, accountId, activityOptions])
   const visibleModel =
-    loaded?.key === activityKey ? loaded.model : readActivitySnapshot(activityKey)
+    loaded?.key === activityKey
+      ? loaded.model
+      : confidentialIntentsOnly
+        ? null
+        : readActivitySnapshot(activityKey)
   const status =
     visibleModel || !walletId || !accountId
       ? 'ready'
@@ -285,10 +289,10 @@ export function MultichainActivityPanel({
         : 'loading'
   const setModel = useCallback(
     (model: ActivityReadModel) => {
-      rememberActivitySnapshot(activityKey, model)
+      if (!confidentialIntentsOnly) rememberActivitySnapshot(activityKey, model)
       setLoaded({ key: activityKey, model })
     },
-    [activityKey]
+    [activityKey, confidentialIntentsOnly]
   )
   const showsTransparentHistory =
     selectedChainIds.includes(getZcashChainId(network)) &&
@@ -379,6 +383,17 @@ export function MultichainActivityPanel({
       if (getOwnExtensionSenderContext(sender, chrome.runtime.id) !== 'service-worker') return
       if (!message || typeof message !== 'object' || !('type' in message)) return
       if (
+        confidentialIntentsOnly &&
+        message.type === 'PORTFOLIO_UPDATED' &&
+        'walletId' in message &&
+        message.walletId === walletId &&
+        'accountId' in message &&
+        message.accountId === accountId
+      ) {
+        void load()
+        return
+      }
+      if (
         message.type !== 'TRANSACTION_ADDED' &&
         message.type !== 'TRANSACTION_UPDATED' &&
         message.type !== 'TRANSACTION_STATUS_UPDATED' &&
@@ -404,7 +419,15 @@ export function MultichainActivityPanel({
       cancelled = true
       chrome.runtime.onMessage.removeListener(listener)
     }
-  }, [accountId, activityOptions, readHistoryRefreshStatus, setModel, walletId])
+  }, [
+    accountId,
+    activityOptions,
+    confidentialIntentsOnly,
+    load,
+    readHistoryRefreshStatus,
+    setModel,
+    walletId
+  ])
 
   const selectedNetwork =
     selectedChainIds.length === 1
@@ -573,7 +596,7 @@ export function MultichainActivityPanel({
     maxItems === undefined &&
     (visibleItems.length > visibleLimit ||
       (!localPagination &&
-        visibleItems.length > 1 &&
+        (confidentialIntentsOnly || visibleItems.length > 1) &&
         visibleModel?.hasMore === true &&
         historyPageCount.current < MAX_HISTORY_PAGE_COUNT))
   const loadOlder = async () => {
@@ -609,10 +632,18 @@ export function MultichainActivityPanel({
   }
   const groups = useMemo(() => groupActivityItemsByDate(displayedItems), [displayedItems])
   const historyIssueBanner =
-    historyRefreshFailed &&
-    showsTransparentHistory &&
-    status === 'ready' &&
-    visibleItems.length === 0 ? (
+    confidentialIntentsOnly && visibleModel?.confidentialHistoryUnavailable ? (
+      <div className="px-5 py-2">
+        <InlineError
+          message="Could not refresh Confidential history."
+          tone="muted"
+          onRetry={() => void load()}
+        />
+      </div>
+    ) : historyRefreshFailed &&
+      showsTransparentHistory &&
+      status === 'ready' &&
+      visibleItems.length === 0 ? (
       <div className="px-5 py-2">
         <InlineError
           message="Zcash history is out of date"
@@ -783,6 +814,7 @@ export function MultichainActivityPanel({
     <section aria-label="Multichain activity" className={sectionClassName}>
       {sectionHeading}
       {toolbar}
+      {historyIssueBanner}
       <div className="space-y-4 pb-4">
         {groups.map(([date, items]) => (
           <section key={date} aria-label={date}>

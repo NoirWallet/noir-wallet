@@ -715,6 +715,11 @@ export function getActivityDetailTitle(
   perspective: ActivityPerspective = {},
   route?: ActivitySwapPresentation | null
 ): string {
+  if (item.source === 'confidential-history') {
+    return item.failureCode === 'refunded'
+      ? 'Refund'
+      : getActivityAction(item, perspective, route).label
+  }
   if (isPublicSendToShield(item, perspective, route)) return 'Send to shield'
   if (item.incognitoDeposit) return 'Deposit'
   if (item.snapshot?.shield) {
@@ -1206,6 +1211,10 @@ export function getActivityRowTextPresentation(
   const direction = item.snapshot?.direction
   const isIncoming = item.kind === 'receive' || direction === 'incoming'
   const action = getActivityAction(item, perspective, route)
+  if (item.source === 'confidential-history') {
+    const label = item.failureCode === 'refunded' ? 'Refund' : action.label
+    return { title: symbol ? `${label} ${symbol}` : label, subtitle: 'NEAR Confidential' }
+  }
   if (isPublicSendToShield(item, perspective, route))
     return { title: 'Send', subtitle: 'To shield' }
 

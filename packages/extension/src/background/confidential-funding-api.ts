@@ -21,6 +21,10 @@ import {
   requestOneClickQuote
 } from '@/core/services/near-intents/one-click-quote'
 import { DedupPromise } from '@/lib/async-utils'
+import {
+  CONFIDENTIAL_HISTORY_PAGE_SIZE,
+  parseConfidentialHistoryPage
+} from '@/core/services/near-intents/confidential-history'
 import { logDevelopmentError } from '@/lib/development-console'
 import { parseSiweMessage } from 'viem/siwe'
 import { isAddress } from 'viem'
@@ -856,6 +860,22 @@ export class ConfidentialFundingApi {
       }),
       session
     )
+  }
+
+  async getHistory(accessToken: string, prevCursor?: string) {
+    const url = new URL(`${this.config.oneClickDirectApiUrl}/account/history`)
+    url.searchParams.set('limit', String(CONFIDENTIAL_HISTORY_PAGE_SIZE))
+    if (prevCursor) url.searchParams.set('prevCursor', prevCursor)
+    for (const [deposit, recipient, refund] of [
+      ['CONFIDENTIAL_INTENTS', 'null', 'null'],
+      ['null', 'CONFIDENTIAL_INTENTS', 'null'],
+      ['null', 'null', 'CONFIDENTIAL_INTENTS']
+    ]) {
+      url.searchParams.append('depositType', deposit)
+      url.searchParams.append('recipientType', recipient)
+      url.searchParams.append('refundType', refund)
+    }
+    return parseConfidentialHistoryPage(await requestJson(url.toString(), {}, accessToken))
   }
 
   async getBalances(accessToken: string): Promise<readonly ConfidentialBalance[]> {

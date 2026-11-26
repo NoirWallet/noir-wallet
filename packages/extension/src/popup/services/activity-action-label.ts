@@ -99,6 +99,11 @@ export function getActivityAction(
   perspective: ActivityPerspective = {},
   route?: Route | null
 ): ActivityAction {
+  if (item.source === 'confidential-history') {
+    if (item.kind === 'shield') return { label: 'Deposit', side: 'destination' }
+    if (item.kind === 'withdraw') return { label: 'Withdraw', side: 'source' }
+    return { label: 'Transfer', side: 'none' }
+  }
   if (item.incognitoDeposit) return { label: 'Deposit', side: 'destination' }
   if (item.kind === 'receive' || isExternalShieldDepositActivity(item))
     return { label: 'Receive', side: 'destination' }

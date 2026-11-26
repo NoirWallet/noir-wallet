@@ -13,6 +13,12 @@ import {
   parseTransactionSegmentId
 } from '../../../src/core/transactions/domain/index.ts'
 import { ActivityCoordinator } from '../../../src/infrastructure/activity/index.ts'
+import { parseActivityReadModel } from '../../../src/core/activity/index.ts'
+import {
+  confidentialHistoryOrderKey,
+  parseConfidentialHistoryPage
+} from '../../../src/core/services/near-intents/confidential-history.ts'
+import { filterActivityItems } from '../../../src/popup/services/activity-list-model.ts'
 import { createEvmTransferGraph } from '../../../src/infrastructure/chains/evm/index.ts'
 import { InMemoryTransactionRepository } from '../../../src/infrastructure/persistence/repositories/index.ts'
 
@@ -148,6 +154,196 @@ function rpcActivity(transactionHash, overrides = {}) {
     ...overrides
   }
 }
+
+const confidentialOptions = { protocolProvider: 'Confidential Intents' }
+
+function historyRow(overrides = {}) {
+  return {
+    depositAddress: 'shared-deposit.near',
+    depositMemo: 'first',
+    status: 'SUCCESS',
+    depositType: 'ORIGIN_CHAIN',
+    recipientType: 'CONFIDENTIAL_INTENTS',
+    refundType: 'ORIGIN_CHAIN',
+    createdAt: '2026-11-20T14:30:00.000000Z',
+    destinationAsset: 'nep141:usdc',
+    amountOutFormatted: '1.002001',
+    ...overrides
+  }
+}
+
+function historyCoordinator({
+  readPage,
+  canRead = async () => true,
+  repository = new InMemoryTransactionRepository(),
+  readStorage = storage(),
+  loadOrderKeys = async () => new Set()
+}) {
+  return new ActivityCoordinator({
+    storageRepository: readStorage,
+    transactionRepository: repository,
+    loadZcashTransactions: async () => {
+      throw new Error('Confidential view must not load Zcash history')
+    },
+    confidentialHistory: {
+      canRead,
+      readPage,
+      loadOrderKeys,
+      getAssets: () =>
+        new Map([
+          [
+            'nep141:usdc',
+            { assetId: 'eip155:1/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', decimals: 6 }
+          ]
+        ])
+    }
+  })
+}
+
+test.describe('Confidential activity history', () => {
+  test('restores read-only Shield records and preserves distinct memos without a local ledger', async () => {
+    const coordinator = historyCoordinator({
+      readPage: async () =>
+        parseConfidentialHistoryPage({
+          items: [
+            historyRow(),
+            historyRow({ depositMemo: 'second', destinationAsset: undefined }),
+            historyRow({ depositMemo: 'public', recipientType: 'DESTINATION_CHAIN' })
+          ]
+        })
+    })
+    const before = await coordinator.readActive({
+      ...confidentialOptions,
+      includeSupplemental: false
+    })
+    expect(before.items).toEqual([])
+    const model = parseActivityReadModel(await coordinator.readActive(confidentialOptions))
+    const rows = filterActivityItems({
+      items: model.items,
+      selectedChainIds: [],
+      domain: 'shield',
+      shieldProvider: 'near-confidential',
+      confidentialIntentsOnly: true
+    })
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toMatchObject({
+      source: 'confidential-history',
+      status: 'final',
+      kind: 'shield',
+      snapshot: { primaryAmount: { amountRaw: '1002001' } }
+    })
+    expect(rows[1].snapshot.primaryAmount).toBeUndefined()
+  })
+
+  test('prefers a known local funding order and leaves local Activity available without an invite', async () => {
+    const repository = await repositoryWithEvmTransfer()
+    const localGraphs = await repository.list({ scope, limit: 1 })
+    const readRepository = { list: async () => localGraphs }
+    let denied = false
+    const coordinator = historyCoordinator({
+      repository: readRepository,
+      readPage: async () =>
+        denied
+          ? null
+          : parseConfidentialHistoryPage({
+              items: [historyRow(), historyRow({ depositMemo: 'second' })]
+            }),
+      loadOrderKeys: async () =>
+        new Set([confidentialHistoryOrderKey('shared-deposit.near', 'first')])
+    })
+    const model = await coordinator.readActive(confidentialOptions)
+    expect(model.items.map(item => item.source)).toEqual(['confidential-history', 'wallet-v2'])
+    expect(model.items[0].id).toContain('second')
+    coordinator.clearConfidentialHistory()
+    denied = true
+    await expect(coordinator.readActive(confidentialOptions)).resolves.toMatchObject({
+      items: [{ source: 'wallet-v2' }]
+    })
+  })
+
+  test('retries the same older cursor after failure and keeps cached rows visible', async () => {
+    const cursors = []
+    const coordinator = historyCoordinator({
+      readPage: async (_scope, cursor) => {
+        cursors.push(cursor)
+        if (cursors.length === 2) throw new Error('Temporary failure')
+        return parseConfidentialHistoryPage(
+          cursor
+            ? { items: [historyRow({ depositMemo: 'older' })] }
+            : {
+                items: Array.from({ length: 100 }, (_, index) =>
+                  historyRow({ depositMemo: String(index) })
+                ),
+                prevCursor: 'older-page'
+              }
+        )
+      }
+    })
+    const first = await coordinator.readActive(confidentialOptions)
+    expect(first.hasMore).toBe(true)
+    const older = { ...confidentialOptions, historyPageCount: 2 }
+    await expect(coordinator.readActive(older)).rejects.toThrow(
+      'Could not load older Confidential activity'
+    )
+    expect(
+      await coordinator.readActive({ ...confidentialOptions, includeSupplemental: false })
+    ).toEqual(first)
+    const next = await coordinator.readActive(older)
+    expect(next.items).toHaveLength(101)
+    expect(next.hasMore).toBeUndefined()
+    expect(cursors).toEqual([undefined, 'older-page', 'older-page'])
+  })
+
+  test('keeps history after a failed refresh and updates it on retry from the latest page', async () => {
+    const cursors = []
+    const coordinator = historyCoordinator({
+      readPage: async (_scope, cursor) => {
+        cursors.push(cursor)
+        if (cursors.length === 2) throw new Error('Temporary failure')
+        return parseConfidentialHistoryPage({
+          items: [historyRow({ status: cursors.length === 1 ? 'PROCESSING' : 'SUCCESS' })]
+        })
+      }
+    })
+    const initial = await coordinator.readActive(confidentialOptions)
+    expect(initial.items[0].status).toBe('confirming')
+    const failed = await coordinator.readActive(confidentialOptions)
+    expect(failed).toEqual({ ...initial, confidentialHistoryUnavailable: true })
+    const retried = await coordinator.readActive(confidentialOptions)
+    expect(retried.items[0].status).toBe('final')
+    expect(retried.confidentialHistoryUnavailable).toBeUndefined()
+    expect(cursors).toEqual([undefined, undefined, undefined])
+  })
+
+  test('drops a late history response after account switch', async () => {
+    let activeAccount = scope
+    const started = Promise.withResolvers()
+    const response = Promise.withResolvers()
+    const coordinator = historyCoordinator({
+      readStorage: storage({
+        getSnapshot: async () => ({
+          ...snapshot,
+          manifest: { ...snapshot.manifest, activeAccount }
+        })
+      }),
+      readPage: async requestedScope => {
+        if (requestedScope.accountId !== scope.accountId) return { entries: [] }
+        started.resolve()
+        return response.promise
+      }
+    })
+    const old = coordinator.readActive(confidentialOptions)
+    await started.promise
+    activeAccount = { ...scope, accountId: 'account:other' }
+    coordinator.clearConfidentialHistory()
+    await expect(coordinator.readActive(confidentialOptions)).resolves.toMatchObject({
+      scope: activeAccount,
+      items: []
+    })
+    response.resolve(parseConfidentialHistoryPage({ items: [historyRow()] }))
+    await expect(old).resolves.toBeNull()
+  })
+})
 
 test.describe('Activity coordinator', () => {
   test('reads the active Account partition and combines Zcash V1 with non-Zcash V2', async () => {

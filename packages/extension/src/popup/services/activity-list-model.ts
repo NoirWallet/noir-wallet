@@ -127,14 +127,15 @@ export function filterActivityItems(input: {
     return (
       providerMatches &&
       (!input.confidentialIntentsOnly || hasConfidentialIntentsSegment) &&
-      chainId !== undefined &&
+      (chainId !== undefined ||
+        (input.confidentialIntentsOnly && item.source === 'confidential-history')) &&
       (input.confidentialIntentsOnly ||
         (input.includeAllConfidentialChains &&
           domain === 'shield' &&
           hasConfidentialIntentsSegment) ||
         (input.shieldProvider === 'zcash-shield'
-          ? ZCASH_CHAIN_IDS.has(chainId)
-          : selectedChainIdSet.has(chainId))) &&
+          ? chainId !== undefined && ZCASH_CHAIN_IDS.has(chainId)
+          : chainId !== undefined && selectedChainIdSet.has(chainId))) &&
       originMatchesAsset
     )
   })

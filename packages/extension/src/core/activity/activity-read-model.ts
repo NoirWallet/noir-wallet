@@ -35,7 +35,8 @@ export const ACTIVITY_READ_LIMITS = Object.freeze({
 const SOURCE_PRIORITY: Readonly<Record<ActivitySource, number>> = Object.freeze({
   'zcash-v1': 3,
   'wallet-v2': 2,
-  rpc: 1
+  rpc: 1,
+  'confidential-history': 0
 })
 
 const ACTIVITY_COMPLETENESS = Object.freeze(['complete', 'partial'] as const)
@@ -277,7 +278,7 @@ export function mergeActivityHistoryItems(
 
 function itemIdentityKeys(item: ActivityItem): readonly string[] {
   const keys = [`source:${activityRecordKey(item)}`]
-  if (isActivityReceive(item)) return keys
+  if (isActivityReceive(item) || item.source === 'confidential-history') return keys
   for (const segment of item.segments) {
     if (segment.target.kind !== 'onchain' || !segment.evidence?.transactionHash) continue
     if (item.segments.length > 1 && segment.role !== 'origin') {
@@ -619,7 +620,11 @@ function isEvmOrigin(segment: ActivityItem['segments'][number]): boolean {
 export function parseActivityReadModel(value: unknown): ActivityReadModel {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ['scope', 'items', 'partialItemCount'], ['hasMore']) ||
+    !hasExactKeys(
+      value,
+      ['scope', 'items', 'partialItemCount'],
+      ['hasMore', 'confidentialHistoryUnavailable']
+    ) ||
     !Array.isArray(value.items) ||
     value.items.length > ACTIVITY_READ_LIMITS.resultItems
   ) {
@@ -640,11 +645,20 @@ export function parseActivityReadModel(value: unknown): ActivityReadModel {
   if (value.hasMore !== undefined && typeof value.hasMore !== 'boolean') {
     throw new Error('Invalid Activity pagination state')
   }
+  if (
+    value.confidentialHistoryUnavailable !== undefined &&
+    value.confidentialHistoryUnavailable !== true
+  ) {
+    throw new Error('Invalid Confidential Activity history state')
+  }
   return Object.freeze({
     scope,
     items,
     partialItemCount,
-    ...(value.hasMore === undefined ? {} : { hasMore: value.hasMore })
+    ...(value.hasMore === undefined ? {} : { hasMore: value.hasMore }),
+    ...(value.confidentialHistoryUnavailable
+      ? { confidentialHistoryUnavailable: true as const }
+      : {})
   })
 }
 
