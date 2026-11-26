@@ -40,7 +40,11 @@ interface FetchOptions extends RequestInit {
   timeoutMs?: number
   maxBytes?: number
   fetcher?: typeof fetch
-  acceptHttpErrors?: boolean
+  acceptHttpErrors?: boolean | 'status-only'
+}
+
+export function getDefaultFetchTransportIdentity(): object {
+  return fetch
 }
 
 export function jsonRequestInit(
@@ -145,9 +149,10 @@ async function fetchBytes(
     maxBytes = DEFAULT_MAX_BYTES,
     fetcher,
     acceptHttpErrors = false,
-    signal: externalSignal,
+    signal,
     ...fetchInit
   } = init || {}
+  const externalSignal = signal === undefined && input instanceof Request ? input.signal : signal
   const controller = new AbortController()
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
   let rejectAbort: (reason: unknown) => void = () => {}
@@ -172,6 +177,10 @@ async function fetchBytes(
         if (controller.signal.aborted) {
           void response.body?.cancel().catch(() => {})
           throw controller.signal.reason
+        }
+        if (!response.ok && acceptHttpErrors === 'status-only') {
+          void response.body?.cancel().catch(() => {})
+          return { bytes: new Uint8Array(0), response }
         }
         if (!response.ok && !acceptHttpErrors) {
           let detail: string | undefined
@@ -226,6 +235,14 @@ export async function fetchJsonWithTimeout<T = unknown>(
   return JSON.parse(new TextDecoder().decode(bytes)) as T
 }
 
+export async function fetchArrayBufferWithTimeout(
+  input: RequestInfo | URL,
+  init?: FetchOptions
+): Promise<ArrayBuffer> {
+  const { bytes } = await fetchBytes(input, init)
+  return bytes.buffer
+}
+
 /** Retains the Response contract for clients while bounding the complete read. */
 export async function fetchWithTimeout(
   input: RequestInfo | URL,
@@ -237,18 +254,4 @@ export async function fetchWithTimeout(
     statusText: response.statusText,
     headers: response.headers
   })
-}
-
-export async function readBoundedResponseText(
-  response: Response,
-  maximumBytes: number,
-  responseTooLarge: () => Error
-): Promise<string> {
-  try {
-    const { bytes } = await readBody(response, maximumBytes, () => {})
-    return new TextDecoder().decode(bytes)
-  } catch (error) {
-    if (error instanceof FetchResponseTooLargeError) throw responseTooLarge()
-    throw error
-  }
 }

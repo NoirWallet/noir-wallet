@@ -1,4 +1,5 @@
 /** Durable, bounded collector outbox owned by the background service worker. */
+import { fetchJsonWithTimeout, jsonRequestInit } from '@/lib/fetch-utils'
 import { CUSTOM_ANALYTICS_CONFIG } from '../../config/analytics.ts'
 import { encryptAnalyticsPayload } from './crypto.ts'
 import {
@@ -158,34 +159,25 @@ export async function flushAnalyticsOutbox(): Promise<void> {
     const abortController = new AbortController()
     activeAbortController = abortController
     let acknowledged = false
-    let timedOut = false
-    let timeout: ReturnType<typeof setTimeout> | null = null
     try {
       const encryptedData = await encryptAnalyticsPayload(
         JSON.stringify(batch.map(entry => entry.payload)),
         CUSTOM_ANALYTICS_CONFIG.cryptoPassword
       )
       if (abortController.signal.aborted) return
-      timeout = setTimeout(() => {
-        timedOut = true
-        abortController.abort()
-      }, FETCH_TIMEOUT_MS)
-      const response = await fetch(CUSTOM_ANALYTICS_CONFIG.endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: encryptedData }),
-        signal: abortController.signal
+      const body = await fetchJsonWithTimeout(CUSTOM_ANALYTICS_CONFIG.endpoint, {
+        ...jsonRequestInit({ method: 'POST' }, { data: encryptedData }),
+        signal: abortController.signal,
+        timeoutMs: FETCH_TIMEOUT_MS
       })
-      const body: unknown = response.ok ? await response.json() : null
       acknowledged = Boolean(
-        response.ok && body && typeof body === 'object' && (body as { code?: unknown }).code === 0
+        body && typeof body === 'object' && (body as { code?: unknown }).code === 0
       )
       failed = !acknowledged
     } catch {
-      if (abortController.signal.aborted && !timedOut) return
+      if (abortController.signal.aborted) return
       failed = true
     } finally {
-      if (timeout) clearTimeout(timeout)
       if (activeAbortController === abortController) activeAbortController = null
     }
 

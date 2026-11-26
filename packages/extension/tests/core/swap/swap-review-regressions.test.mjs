@@ -48,7 +48,6 @@ import {
   getRheaSwapMinimumAmountMessage,
   getSafeRheaSwapRuntimeErrorMessage
 } from '../../../src/core/services/rhea-swap/rhea-swap-error.ts'
-import { createRheaSwapFetch } from '../../../src/core/services/rhea-swap/rhea-swap-fetch.ts'
 import { RheaSwapApi } from '../../../src/core/services/rhea-swap/rhea-swap-api.ts'
 import { classifyError } from '../../../src/lib/errors.ts'
 import { selectSwapFeeEstimate } from '../../../src/lib/swap-fee.ts'
@@ -882,8 +881,10 @@ it('keeps minimum amounts while removing nested provider metadata without changi
 })
 
 it('keeps a quote timeout retryable when a successful HTTP response also mentions an unsupported route', async () => {
-  const fetchQuote = createRheaSwapFetch(
-    async () =>
+  const api = new RheaSwapApi({
+    baseUrl: 'https://api.rhea.finance',
+    retry: { maxRetries: 0 },
+    fetch: async () =>
       new Response(
         JSON.stringify({
           code: -1,
@@ -894,8 +895,8 @@ it('keeps a quote timeout retryable when a successful HTTP response also mention
         }),
         { status: 200, headers: { 'content-type': 'application/json' } }
       )
-  )
-  await assert.rejects(fetchQuote('https://api.rhea.finance/api/swap/quote'), error => {
+  })
+  await assert.rejects(api.quote({}), error => {
     assert.equal(error.code, 'REQUEST_TIMEOUT')
     const runtimeMessage = getSafeRheaSwapRuntimeErrorMessage(error)
     assert.equal(runtimeMessage, 'quote_timeout')

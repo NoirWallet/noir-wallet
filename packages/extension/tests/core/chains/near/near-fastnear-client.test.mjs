@@ -34,17 +34,17 @@ test.describe('FastNear account token client', () => {
         lastUpdateBlockHeight: 123
       }
     ])
-    expect(requests).toEqual([
+    expect(requests).toMatchObject([
       {
         url: 'https://api.fastnear.com/v1/account/alice.near/ft',
         init: {
           method: 'GET',
           cache: 'no-store',
-          credentials: 'omit',
-          timeoutMs: 8000
+          credentials: 'omit'
         }
       }
     ])
+    expect(new Headers(requests[0].init.headers).get('accept')).toBe('application/json')
   })
 
   test('preserves unusable legacy rows for targeted RPC fallback', async () => {

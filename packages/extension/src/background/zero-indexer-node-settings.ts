@@ -8,6 +8,7 @@ import {
 } from '@/infrastructure/chains/zero-indexer-preferences'
 import { DEFAULT_ZERO_INDEXER_REGISTRY, ZERO_INDEXER_REGISTRY_URL } from '@/config/zero-indexer'
 import { DedupPromise, SerialTaskQueue } from '@/lib/async-utils'
+import { fetchJsonWithTimeout } from '@/lib/fetch-utils'
 import {
   createCustomZeroIndexerEndpoint,
   normalizeZeroIndexerUrl,
@@ -55,23 +56,16 @@ async function readRegistry(): Promise<ZeroIndexerRegistryDocument> {
 }
 
 async function fetchRegistry(): Promise<ZeroIndexerRegistryDocument> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REGISTRY_TIMEOUT_MS)
-  try {
-    const response = await fetch(ZERO_INDEXER_REGISTRY_URL, {
-      cache: 'no-store',
-      credentials: 'omit',
-      redirect: 'error',
-      referrerPolicy: 'no-referrer',
-      signal: controller.signal
-    })
-    if (!response.ok) throw new Error(`ZeroIndexer registry returned HTTP ${response.status}`)
-    const parsed = parseZeroIndexerRegistryDocument(await response.json())
-    if (!parsed) throw new Error('ZeroIndexer registry returned an invalid document')
-    return parsed
-  } finally {
-    clearTimeout(timer)
-  }
+  const document = await fetchJsonWithTimeout(ZERO_INDEXER_REGISTRY_URL, {
+    cache: 'no-store',
+    credentials: 'omit',
+    redirect: 'error',
+    referrerPolicy: 'no-referrer',
+    timeoutMs: REGISTRY_TIMEOUT_MS
+  })
+  const parsed = parseZeroIndexerRegistryDocument(document)
+  if (!parsed) throw new Error('ZeroIndexer registry returned an invalid document')
+  return parsed
 }
 
 function buildStatus(

@@ -1,6 +1,6 @@
 import type { ActivityItem, ActivityScope } from '@/core/activity'
 import { parseAssetId, parseChainId } from '@/core/chains/registry'
-import { fetchWithTimeout } from '@/lib/fetch-utils'
+import { FetchResponseTooLargeError, fetchWithTimeout, jsonRequestInit } from '@/lib/fetch-utils'
 
 import { readNearAccountId } from './near-rpc-codecs'
 
@@ -33,7 +33,7 @@ export interface ReadNearAddressActivityInput {
 
 export interface NearActivityHistorySourceConfig {
   readonly chainId: string
-  readonly fetchImpl?: typeof fetchWithTimeout
+  readonly fetchImpl?: typeof fetch
 }
 
 function readRecord(value: unknown): Record<string, unknown> {
@@ -66,18 +66,6 @@ function parseSafeIntegerString(value: unknown, label: string): number {
 function parseSafeUnsignedInteger(value: unknown, label: string): number {
   if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value
   return parseSafeIntegerString(value, label)
-}
-
-async function readBoundedJson(response: Response): Promise<unknown> {
-  const text = await response.text()
-  if (new TextEncoder().encode(text).byteLength > MAXIMUM_RESPONSE_BYTES) {
-    throw new Error('FastNear transfer response is too large')
-  }
-  try {
-    return JSON.parse(text)
-  } catch {
-    throw new Error('Invalid FastNear transfer response')
-  }
 }
 
 function parseTransfers(
@@ -199,28 +187,37 @@ export function createNearActivityHistorySource(
   if (chain.namespace !== 'near' || chain.reference !== 'mainnet') {
     throw new Error('FastNear transfer history supports NEAR mainnet only')
   }
-  const fetchImpl = config.fetchImpl ?? fetchWithTimeout
   const readDirection = async (
     accountId: string,
     direction: NearIndexedTransfer['direction']
   ): Promise<readonly NearIndexedTransfer[]> => {
-    const response = await fetchImpl(`${TRANSFERS_API_ORIGIN}/v0/transfers`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        account_id: accountId,
-        direction: direction === 'incoming' ? 'receiver' : 'sender',
-        desc: true,
-        limit: TRANSFERS_PER_DIRECTION,
-        ignore_system: true
-      }),
-      cache: 'no-store',
-      credentials: 'omit',
-      timeoutMs: REQUEST_TIMEOUT_MS
+    const response = await fetchWithTimeout(`${TRANSFERS_API_ORIGIN}/v0/transfers`, {
+      ...jsonRequestInit(
+        { method: 'POST', cache: 'no-store', credentials: 'omit' },
+        {
+          account_id: accountId,
+          direction: direction === 'incoming' ? 'receiver' : 'sender',
+          desc: true,
+          limit: TRANSFERS_PER_DIRECTION,
+          ignore_system: true
+        }
+      ),
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      maxBytes: MAXIMUM_RESPONSE_BYTES,
+      fetcher: config.fetchImpl,
+      acceptHttpErrors: 'status-only'
+    }).catch(error => {
+      if (error instanceof FetchResponseTooLargeError) {
+        throw new Error('FastNear transfer response is too large')
+      }
+      throw error
     })
     if (!response.ok)
       throw new Error(`FastNear transfer request failed with HTTP ${response.status}`)
-    return parseTransfers(await readBoundedJson(response), direction)
+    const decoded: unknown = await response.json().catch(() => {
+      throw new Error('Invalid FastNear transfer response')
+    })
+    return parseTransfers(decoded, direction)
   }
   return Object.freeze({
     readAddressActivity: async (input: ReadNearAddressActivityInput) => {

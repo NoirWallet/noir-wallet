@@ -1,6 +1,6 @@
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import Big from 'big.js'
-import { readBoundedResponseText } from '@/lib/fetch-utils'
+import { FetchResponseTooLargeError, fetchWithTimeout } from '@/lib/fetch-utils'
 import type { AssetMarketHistorySourceMapping } from '@/core/prices/asset-market-source-mappings'
 import { parseAssetId } from '@/core/chains/registry'
 import {
@@ -273,14 +273,6 @@ function parseCoinGeckoMarketChartResponse(value: unknown): readonly AssetMarket
   return limitHistoryPoints(points)
 }
 
-async function readBoundedResponse(response: Response, maximumBytes: number): Promise<string> {
-  return readBoundedResponseText(
-    response,
-    maximumBytes,
-    () => new Error('Market history response exceeds the allowed size')
-  )
-}
-
 function cacheKey(marketAssetId: MarketAssetId, range: AssetMarketHistoryRange): string {
   return `${marketAssetId}:${range}`
 }
@@ -327,9 +319,9 @@ function hasSameFallback(
 
 export class AssetMarketHistoryService {
   private readonly options: Required<
-    Pick<AssetMarketHistoryServiceOptions, 'fetch' | 'now' | 'timeoutMs' | 'maximumResponseBytes'>
+    Pick<AssetMarketHistoryServiceOptions, 'now' | 'timeoutMs' | 'maximumResponseBytes'>
   > &
-    Pick<AssetMarketHistoryServiceOptions, 'cache'>
+    Pick<AssetMarketHistoryServiceOptions, 'cache' | 'fetch'>
   private readonly mappingByAssetId: ReadonlyMap<string, AssetMarketHistorySourceMapping>
   private readonly refreshGates = new Map<
     string,
@@ -397,10 +389,9 @@ export class AssetMarketHistoryService {
     ) {
       throw new Error('Invalid market history response limit')
     }
-    const fetchImplementation = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.options = {
       cache: options.cache,
-      fetch: (input, init) => fetchImplementation(input, init),
+      fetch: options.fetch,
       now: options.now ?? Date.now,
       timeoutMs,
       maximumResponseBytes
@@ -662,24 +653,30 @@ export class AssetMarketHistoryService {
     maximumBytes = this.options.maximumResponseBytes,
     unsupportedOn404 = false
   ): Promise<unknown> {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs)
     try {
-      const response = await this.options.fetch(url, {
+      const response = await fetchWithTimeout(url, {
         method: 'GET',
         cache: 'no-store',
         credentials: 'omit',
         redirect: 'error',
         referrerPolicy: 'no-referrer',
-        signal: controller.signal
+        fetcher: this.options.fetch,
+        timeoutMs: this.options.timeoutMs,
+        maxBytes: maximumBytes,
+        acceptHttpErrors: 'status-only'
       })
-      if (unsupportedOn404 && response.status === 404) {
-        throw new UnsupportedAssetMarketHistoryError()
+      if (!response.ok) {
+        if (unsupportedOn404 && response.status === 404) {
+          throw new UnsupportedAssetMarketHistoryError()
+        }
+        throw new Error(`Market history endpoint returned ${response.status}`)
       }
-      if (!response.ok) throw new Error(`Market history endpoint returned ${response.status}`)
-      return JSON.parse(await readBoundedResponse(response, maximumBytes)) as unknown
-    } finally {
-      clearTimeout(timeout)
+      return await response.json()
+    } catch (error) {
+      if (error instanceof FetchResponseTooLargeError) {
+        throw new Error('Market history response exceeds the allowed size')
+      }
+      throw error
     }
   }
 

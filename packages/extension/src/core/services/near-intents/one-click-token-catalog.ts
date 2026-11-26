@@ -1,5 +1,9 @@
 import { ONE_CLICK_TOKEN_CATALOG_URL } from '@/config/intents'
-import { FetchResponseTooLargeError, fetchWithTimeout } from '@/lib/fetch-utils'
+import {
+  FetchResponseTooLargeError,
+  fetchArrayBufferWithTimeout,
+  getDefaultFetchTransportIdentity
+} from '@/lib/fetch-utils'
 
 const MAXIMUM_CATALOG_BYTES = 8 * 1024 * 1024
 export const ONE_CLICK_TOKEN_REFRESH_INTERVAL_MS = 60_000
@@ -20,10 +24,10 @@ interface CatalogRequest {
   nextRequestAt: number
 }
 
-const requests = new WeakMap<typeof fetch, CatalogRequest>()
+const requests = new WeakMap<object, CatalogRequest>()
 
 async function requestCatalog(options: RequestOptions): Promise<CatalogResponse> {
-  const response = await fetchWithTimeout(ONE_CLICK_TOKEN_CATALOG_URL, {
+  const bytes = await fetchArrayBufferWithTimeout(ONE_CLICK_TOKEN_CATALOG_URL, {
     method: 'GET',
     fetcher: options.fetcher,
     timeoutMs: options.timeoutMs,
@@ -33,19 +37,18 @@ async function requestCatalog(options: RequestOptions): Promise<CatalogResponse>
     redirect: 'error',
     referrerPolicy: 'no-referrer'
   })
-  const bytes = await response.arrayBuffer()
   return { value: JSON.parse(new TextDecoder().decode(bytes)), byteLength: bytes.byteLength }
 }
 
 function readSharedCatalog(): Promise<CatalogResponse> {
-  const fetcher = globalThis.fetch
+  const transport = getDefaultFetchTransportIdentity()
   const now = Date.now()
-  const cached = requests.get(fetcher)
+  const cached = requests.get(transport)
   if (cached && now < cached.nextRequestAt) return cached.response
 
   const response = requestCatalog({})
   const pending = { response, nextRequestAt: Infinity }
-  requests.set(fetcher, pending)
+  requests.set(transport, pending)
   const complete = () => {
     pending.nextRequestAt = now + ONE_CLICK_TOKEN_REFRESH_INTERVAL_MS
   }

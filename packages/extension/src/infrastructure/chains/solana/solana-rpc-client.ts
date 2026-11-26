@@ -1,6 +1,7 @@
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import { getSolanaNetworkConfigs } from '@/config/networks'
-import { readBoundedResponseText } from '@/lib/fetch-utils'
+import { FetchResponseTooLargeError, FetchTimeoutError } from '@/lib/fetch-utils'
+import { fetchJsonRpcResponse, type JsonRpcTransport } from '../json-rpc-failover-fetch'
 import { parseChainId } from '@/core/chains/registry'
 
 import {
@@ -60,8 +61,6 @@ export {
   type SolanaTransactionSummary,
   type SolanaTransactionTokenDelta
 } from './solana-rpc-types'
-
-type FetchImplementation = (input: string, init: RequestInit) => Promise<Response>
 
 const DEFAULT_MAXIMUM_RESPONSE_BYTES = 1024 * 1024
 const MAXIMUM_TIMEOUT_MS = 60_000
@@ -188,17 +187,10 @@ function mapHttpError(status: number): SolanaRpcError {
   return new SolanaRpcError('network-unavailable', 'Solana RPC endpoint is unavailable')
 }
 
-async function readResponseText(response: Response, maximumBytes: number): Promise<string> {
-  return readBoundedResponseText(
-    response,
-    maximumBytes,
-    () => new SolanaRpcError('invalid-response', 'Solana RPC response exceeds the allowed size')
-  )
-}
-
 export function createSolanaRpcClient(
   config: SolanaRpcClientConfig,
-  fetchImplementation: FetchImplementation = fetch
+  fetchImplementation?: typeof fetch,
+  transport?: JsonRpcTransport
 ): SolanaReadRpc & SolanaBroadcastRpc {
   const expectedNetwork = parseExpectedNetwork(config.chainId)
   const rpcUrl = parseRpcUrl(config.rpcUrl)
@@ -237,35 +229,20 @@ export function createSolanaRpcClient(
     if (externalSignal?.aborted) {
       throw new SolanaRpcError('cancelled', 'Solana RPC request was cancelled')
     }
-    const controller = new AbortController()
-    let timedOut = false
-    const onExternalAbort = () => controller.abort()
-    externalSignal?.addEventListener('abort', onExternalAbort, { once: true })
-    const timeout = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, timeoutMs)
     requestId = requestId >= 2_147_483_647 ? 1 : requestId + 1
     const id = requestId
     try {
-      const response = await fetchImplementation(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
-        cache: 'no-store',
-        credentials: 'omit',
-        redirect: 'error',
-        referrerPolicy: 'no-referrer',
-        signal: controller.signal
-      })
+      const response = await (transport ?? fetchJsonRpcResponse)(
+        rpcUrl,
+        { jsonrpc: '2.0', id, method, params },
+        { timeoutMs, maxBytes: maximumResponseBytes, signal: externalSignal },
+        fetchImplementation
+      )
       if (!response.ok) throw mapHttpError(response.status)
-      const text = await readResponseText(response, maximumResponseBytes)
-      let decoded: unknown
-      try {
-        decoded = JSON.parse(text)
-      } catch {
+      if (!response.validJson) {
         throw new SolanaRpcError('invalid-response', 'Solana RPC response is not valid JSON')
       }
+      const decoded = response.body
       if (!isRecord(decoded) || decoded.jsonrpc !== '2.0' || decoded.id !== id) {
         throw new SolanaRpcError('invalid-response', 'Invalid Solana RPC response envelope')
       }
@@ -281,16 +258,18 @@ export function createSolanaRpcClient(
       return decoded.result
     } catch (error) {
       if (error instanceof SolanaRpcError) throw error
-      if (controller.signal.aborted) {
+      if (externalSignal?.aborted || error instanceof FetchTimeoutError) {
         throw new SolanaRpcError(
-          timedOut ? 'timeout' : 'cancelled',
-          timedOut ? 'Solana RPC request timed out' : 'Solana RPC request was cancelled'
+          externalSignal?.aborted ? 'cancelled' : 'timeout',
+          externalSignal?.aborted
+            ? 'Solana RPC request was cancelled'
+            : 'Solana RPC request timed out'
         )
       }
+      if (error instanceof FetchResponseTooLargeError) {
+        throw new SolanaRpcError('invalid-response', 'Solana RPC response exceeds the allowed size')
+      }
       throw new SolanaRpcError('network-unavailable', 'Solana RPC request failed')
-    } finally {
-      clearTimeout(timeout)
-      externalSignal?.removeEventListener('abort', onExternalAbort)
     }
   }
 

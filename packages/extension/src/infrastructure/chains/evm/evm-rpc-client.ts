@@ -1,6 +1,11 @@
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import { parseChainId } from '@/core/chains/registry'
-import { readBoundedResponseText } from '@/lib/fetch-utils'
+import {
+  FetchResponseTooLargeError,
+  FetchTimeoutError,
+  fetchWithTimeout,
+  jsonRequestInit
+} from '@/lib/fetch-utils'
 import { logDevelopmentError } from '@/lib/development-console'
 import type { EvmDAppReadMethod } from '@/core/dapp/eip1193'
 
@@ -165,8 +170,6 @@ export interface EvmNonceQueueEndpointSelector {
   ) => Promise<Result>
 }
 
-type FetchImplementation = (input: string, init: RequestInit) => Promise<Response>
-
 const DEFAULT_MAXIMUM_RESPONSE_BYTES = 1024 * 1024
 const MAXIMUM_TIMEOUT_MS = 60_000
 const MAXIMUM_RESPONSE_BYTES = 4 * 1024 * 1024
@@ -304,17 +307,9 @@ function mapHttpError(status: number, method: string): EvmRpcError {
   )
 }
 
-async function readResponseText(response: Response, maximumBytes: number): Promise<string> {
-  return readBoundedResponseText(
-    response,
-    maximumBytes,
-    () => new EvmRpcError('invalid-response', 'EVM RPC response exceeds the allowed size')
-  )
-}
-
 export function createEvmRpcClient(
   config: EvmRpcClientConfig,
-  fetchImplementation: FetchImplementation = fetch
+  fetchImplementation?: typeof fetch
 ): EvmBalanceRpc & EvmContractRpc & EvmTransactionRpc & EvmBroadcastRpc & EvmDAppReadRpc {
   const expectedChain = parseExpectedChainId(config.chainId)
   const rpcUrl = parseRpcUrl(config.rpcUrl)
@@ -353,33 +348,31 @@ export function createEvmRpcClient(
     if (externalSignal?.aborted) {
       throw new EvmRpcError('cancelled', 'EVM RPC request was cancelled', undefined, method)
     }
-    const controller = new AbortController()
-    let timedOut = false
-    const onExternalAbort = () => controller.abort()
-    externalSignal?.addEventListener('abort', onExternalAbort, { once: true })
-    const timeout = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, timeoutMs)
     requestId = requestId >= 2_147_483_647 ? 1 : requestId + 1
     const id = requestId
 
     try {
-      const response = await fetchImplementation(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
-        cache: 'no-store',
-        credentials: 'omit',
-        redirect: 'error',
-        referrerPolicy: 'no-referrer',
-        signal: controller.signal
+      const response = await fetchWithTimeout(rpcUrl, {
+        ...jsonRequestInit(
+          {
+            method: 'POST',
+            cache: 'no-store',
+            credentials: 'omit',
+            redirect: 'error',
+            referrerPolicy: 'no-referrer',
+            signal: externalSignal
+          },
+          { jsonrpc: '2.0', id, method, params }
+        ),
+        timeoutMs,
+        maxBytes: maximumResponseBytes,
+        fetcher: fetchImplementation,
+        acceptHttpErrors: 'status-only'
       })
       if (!response.ok) throw mapHttpError(response.status, method)
-      const text = await readResponseText(response, maximumResponseBytes)
       let decoded: unknown
       try {
-        decoded = JSON.parse(text)
+        decoded = await response.json()
       } catch (error) {
         logDevelopmentError(`[EVM RPC] ${method} returned invalid JSON`, error)
         throw new EvmRpcError('invalid-response', 'EVM RPC response is not valid JSON')
@@ -400,18 +393,18 @@ export function createEvmRpcClient(
     } catch (error) {
       if (error instanceof EvmRpcError) throw error
       logDevelopmentError(`[EVM RPC] ${method} request failed`, error)
-      if (controller.signal.aborted) {
+      if (externalSignal?.aborted || error instanceof FetchTimeoutError) {
         throw new EvmRpcError(
-          timedOut ? 'timeout' : 'cancelled',
-          timedOut ? 'EVM RPC request timed out' : 'EVM RPC request was cancelled',
+          externalSignal?.aborted ? 'cancelled' : 'timeout',
+          externalSignal?.aborted ? 'EVM RPC request was cancelled' : 'EVM RPC request timed out',
           undefined,
           method
         )
       }
+      if (error instanceof FetchResponseTooLargeError) {
+        throw new EvmRpcError('invalid-response', 'EVM RPC response exceeds the allowed size')
+      }
       throw new EvmRpcError('network-unavailable', 'EVM RPC request failed', undefined, method)
-    } finally {
-      clearTimeout(timeout)
-      externalSignal?.removeEventListener('abort', onExternalAbort)
     }
   }
 

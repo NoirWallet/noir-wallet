@@ -1,5 +1,5 @@
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
-import { readBoundedResponseText } from '@/lib/fetch-utils'
+import { FetchResponseTooLargeError, FetchTimeoutError, fetchWithTimeout } from '@/lib/fetch-utils'
 import { parseAssetId, parseChainId } from '@/core/chains/registry'
 import { EvmRpcError } from './evm-rpc-client'
 import {
@@ -28,8 +28,6 @@ interface EvmBlockscoutHistoryClientConfig {
   readonly timeoutMs?: number
   readonly maximumResponseBytes?: number
 }
-
-type FetchImplementation = (input: string, init: RequestInit) => Promise<Response>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
@@ -199,14 +197,6 @@ function parseEnvelope(value: unknown): ParsedEnvelope {
   return Object.freeze({ items: Object.freeze(value.result), partial })
 }
 
-async function readResponseText(response: Response, maximumBytes: number): Promise<string> {
-  return readBoundedResponseText(
-    response,
-    maximumBytes,
-    () => new EvmRpcError('invalid-response', 'EVM history response exceeds the allowed size')
-  )
-}
-
 function mapHttpError(status: number): EvmRpcError {
   if (status === 401 || status === 403) {
     return new EvmRpcError('unauthorized', 'EVM history authorization failed')
@@ -217,7 +207,7 @@ function mapHttpError(status: number): EvmRpcError {
 
 export function createEvmBlockscoutHistoryClient(
   config: EvmBlockscoutHistoryClientConfig,
-  fetchImplementation: FetchImplementation = fetch
+  fetchImplementation?: typeof fetch
 ): EvmActivityHistorySource {
   const chain = parseChainId(config.chainId)
   if (chain.namespace !== 'eip155') throw new Error('EVM history requires an EVM chain ID')
@@ -289,44 +279,39 @@ export function createEvmBlockscoutHistoryClient(
     url.searchParams.set('offset', String(EVM_HISTORY_LIMIT))
     url.searchParams.set('sort', 'desc')
 
-    const controller = new AbortController()
-    let timedOut = false
-    const onAbort = () => controller.abort()
-    signal?.addEventListener('abort', onAbort, { once: true })
-    const timeout = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, timeoutMs)
     try {
-      const response = await fetchImplementation(url.toString(), {
+      const response = await fetchWithTimeout(url.toString(), {
         method: 'GET',
         cache: 'no-store',
         credentials: 'omit',
         redirect: 'error',
         referrerPolicy: 'no-referrer',
-        signal: controller.signal
+        signal,
+        timeoutMs,
+        maxBytes: maximumResponseBytes,
+        fetcher: fetchImplementation,
+        acceptHttpErrors: 'status-only'
       })
       if (!response.ok) throw mapHttpError(response.status)
-      const text = await readResponseText(response, maximumResponseBytes)
       let decoded: unknown
       try {
-        decoded = JSON.parse(text)
+        decoded = await response.json()
       } catch {
         throw new EvmRpcError('invalid-response', 'EVM history response is not valid JSON')
       }
       return parseEnvelope(decoded)
     } catch (error) {
       if (error instanceof EvmRpcError) throw error
-      if (controller.signal.aborted) {
+      if (signal?.aborted || error instanceof FetchTimeoutError) {
         throw new EvmRpcError(
-          timedOut ? 'timeout' : 'cancelled',
-          timedOut ? 'EVM history request timed out' : 'EVM history request was cancelled'
+          signal?.aborted ? 'cancelled' : 'timeout',
+          signal?.aborted ? 'EVM history request was cancelled' : 'EVM history request timed out'
         )
       }
+      if (error instanceof FetchResponseTooLargeError) {
+        throw new EvmRpcError('invalid-response', 'EVM history response exceeds the allowed size')
+      }
       throw new EvmRpcError('network-unavailable', 'EVM history request failed')
-    } finally {
-      clearTimeout(timeout)
-      signal?.removeEventListener('abort', onAbort)
     }
   }
 
