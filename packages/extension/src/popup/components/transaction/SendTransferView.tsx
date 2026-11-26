@@ -2,6 +2,7 @@ import { Icon } from '@iconify/react'
 import { TransactionNotice } from './TransactionNotice'
 import type { ComponentProps, ReactNode } from 'react'
 import { formatInsufficientBalance } from '@/lib/format'
+import { compactFractionalZeros } from '@/lib/number-format'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
 import { ChainSelector } from '../common/ChainSelector'
 import {
@@ -109,6 +110,7 @@ export function SendTransferView({
   const { asset, family, networkName, feeSymbol, review, selectedRecipient, approving } = state
   const titleId = `${family}-send-review-title`
   const balanceKnown = state.balanceKnown ?? true
+  const previewFeeDisplay = compactFractionalZeros(state.previewFee)
 
   return (
     <SendTransferScreen
@@ -156,7 +158,13 @@ export function SendTransferView({
             <div>
               <SendRouteInfoCard
                 networkFee={
-                  <span>
+                  <span
+                    title={
+                      previewFeeDisplay !== state.previewFee
+                        ? `${state.previewFee} ${feeSymbol}`
+                        : undefined
+                    }
+                  >
                     {state.feePreviewLoading && (
                       <Icon
                         icon="lucide:loader-circle"
@@ -167,7 +175,7 @@ export function SendTransferView({
                     )}
                     {state.previewFee === '—'
                       ? state.previewFee
-                      : `${state.previewFee} ${feeSymbol}`}
+                      : `${previewFeeDisplay} ${feeSymbol}`}
                   </span>
                 }
                 {...routeInfo}

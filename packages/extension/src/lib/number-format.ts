@@ -213,20 +213,22 @@ export function formatFiatAmount(value: NumericValue, options?: { showSign?: boo
   return `${sign}${prefix}${groupDecimal(parsed.abs().toFixed(2, Big.roundHalfUp))}`
 }
 
-/** Only unit prices compact runs of fractional zeroes into a subscript count. */
+export function compactFractionalZeros(display: string): string {
+  const match = /^(-?<?0\.)(0{4,})([1-9]\d*)$/.exec(display)
+  if (!match) return display
+  const [, prefix, zeros, digits] = match
+  if (zeros.length + digits.length <= 8) return display
+  const subscript = '₀₁₂₃₄₅₆₇₈₉'
+  const count = String(zeros.length).replace(/\d/g, digit => subscript[Number(digit)])
+  return `${prefix}0${count}${digits}`
+}
+
 export function formatTokenPrice(value: NumericValue, options?: { showSign?: boolean }): string {
   const parsed = parseNumericValue(value)
   if (!parsed) return UNKNOWN
   if (parsed.eq(0) || parsed.abs().gte(1)) return formatFiatAmount(value, options)
   const rounded = parsed.abs().prec(4, Big.roundHalfUp).toFixed()
-  const fraction = rounded.split('.')[1] ?? ''
-  const leadingZeros = fraction.match(/^0*/)?.[0].length ?? 0
-  const subscript = '₀₁₂₃₄₅₆₇₈₉'
-  const display =
-    fraction.length > 8 && leadingZeros > 3
-      ? `0.0${String(leadingZeros).replace(/\d/g, digit => subscript[Number(digit)])}${fraction.slice(leadingZeros)}`
-      : rounded
-  return `${parsed.lt(0) ? '-' : ''}${options?.showSign ? '$' : ''}${display}`
+  return `${parsed.lt(0) ? '-' : ''}${options?.showSign ? '$' : ''}${compactFractionalZeros(rounded)}`
 }
 
 export function formatPercentage(

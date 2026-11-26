@@ -27,6 +27,7 @@ import { formatEvmWeiAsGwei } from '@/infrastructure/chains/evm'
 import { decodeErc20CalldataRequest } from '@/infrastructure/chains/evm/evm-contract-call-classification'
 import { formatSortAddress } from '@/lib/format'
 import {
+  compactFractionalZeros,
   formatAmount,
   formatBaseUnitDecimalAmount,
   formatFeeAmount,
@@ -100,9 +101,14 @@ function assertNever(value: never): never {
   throw new Error(`Unsupported signing summary item: ${JSON.stringify(value)}`)
 }
 
-function formatWeiPerGasAsGwei(value: string | null): string | null {
-  if (value === null) return null
-  return `${formatEvmWeiAsGwei(value)} GWEI`
+function evmPerGasFeeRow(label: string, wei: string | null): SigningSummaryReviewRow {
+  if (wei === null) return reviewRow(label, null, { code: true })
+  const exact = formatEvmWeiAsGwei(wei)
+  const display = compactFractionalZeros(exact)
+  return reviewRow(label, `${display} GWEI`, {
+    code: true,
+    ...(display !== exact ? { title: `${exact} GWEI` } : {})
+  })
 }
 
 function typedDataRows(
@@ -315,15 +321,9 @@ export function evmTransactionReview(
           reviewRow('Nonce', summary.fields.nonce, { code: true }),
           reviewRow('Transaction type', summary.fields.transactionType),
           reviewRow('Method selector', summary.fields.methodSelector, { code: true }),
-          reviewRow('Gas price', formatWeiPerGasAsGwei(summary.fields.gasPriceWei), { code: true }),
-          reviewRow('Max fee per gas', formatWeiPerGasAsGwei(summary.fields.maxFeePerGasWei), {
-            code: true
-          }),
-          reviewRow(
-            'Priority fee per gas',
-            formatWeiPerGasAsGwei(summary.fields.maxPriorityFeePerGasWei),
-            { code: true }
-          )
+          evmPerGasFeeRow('Gas price', summary.fields.gasPriceWei),
+          evmPerGasFeeRow('Max fee per gas', summary.fields.maxFeePerGasWei),
+          evmPerGasFeeRow('Priority fee per gas', summary.fields.maxPriorityFeePerGasWei)
         ]
       },
       ...(requestedTokenCallRows.length > 0
