@@ -8,8 +8,10 @@ import { CopyToast, useCopyToClipboard } from '../../components/common/CopyToast
 import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
 import { Skeleton } from '../../components/ui/skeleton'
+import { useOnboardingTranslation } from '@/popup/components/onboarding/useOnboardingTranslation'
 
 export function ViewPhrase() {
+  const { t, errorText } = useOnboardingTranslation()
   const { navigate } = useNavigate()
   const {
     seedPhrase,
@@ -42,7 +44,7 @@ export function ViewPhrase() {
     return (
       <div className="page-container">
         <PageHeader showBack />
-        <div role="status" aria-label="Loading recovery phrase" className="flex-1 px-5 pt-3">
+        <div role="status" aria-label={t('loadingPhrase')} className="flex-1 px-5 pt-3">
           <div className="space-y-2">
             <Skeleton className="h-3 w-full" />
             <Skeleton className="h-3 w-[82%]" />
@@ -69,7 +71,12 @@ export function ViewPhrase() {
       <div className="page-container">
         <PageHeader showBack />
         <div className="flex-1 flex items-center justify-center px-5">
-          <InlineError className="w-full" message={error} onRetry={() => generateSeedPhrase()} />
+          <InlineError
+            className="w-full"
+            message={errorText(error, 'generatePhraseFailed')}
+            onRetry={() => generateSeedPhrase()}
+            retryLabel={t('retry')}
+          />
         </div>
       </div>
     )
@@ -78,12 +85,11 @@ export function ViewPhrase() {
   return (
     <div className="page-container">
       <CopyToast show={showToast} />
-      <PageHeader title="View Secret Phrase" showBack />
+      <PageHeader title={t('viewPhrase')} showBack />
 
       <div className="flex-1 px-5 pt-3 overflow-y-auto">
         <p className="text-sm text-muted mb-4">
-          Store these {mnemonicWordCount} words securely to restore your wallet anytime. Never share
-          them, or you could lose your assets.
+          {t('savePhraseWarning', { count: mnemonicWordCount })}
         </p>
 
         <div className="relative mb-4">
@@ -102,11 +108,11 @@ export function ViewPhrase() {
           <LabeledCheckbox
             checked={acknowledgedWarning}
             onChange={setAcknowledgedWarning}
-            label="I have saved it"
+            label={t('phraseSaved')}
           />
         </div>
         <Button onClick={handleNext} disabled={!acknowledgedWarning} className="w-full h-[45px]">
-          Next
+          {t('next')}
         </Button>
       </div>
     </div>

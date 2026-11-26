@@ -3,11 +3,14 @@ import { getWalletsNeedingSecretPhraseBackup } from '@/core/wallet/secret-phrase
 import { formatWalletName } from '@/lib/format'
 import { useWalletStore } from '@/store/wallet-store'
 import { useNavigate } from '../../provider/Router'
+import { useTranslation } from '@/popup/i18n'
+import { shellMessages } from '@/popup/i18n/shell-messages'
 
 export function SecretPhraseBackupBanner() {
   const wallets = useWalletStore(state => state.wallets)
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const { navigate } = useNavigate()
+  const { t } = useTranslation(shellMessages)
   const wallet = getWalletsNeedingSecretPhraseBackup(wallets).find(
     candidate => candidate.id === currentWalletId
   )
@@ -15,13 +18,13 @@ export function SecretPhraseBackupBanner() {
 
   return (
     <aside
-      aria-label="Secret phrase backup reminder"
+      aria-label={t('phraseBackupReminder')}
       className="flex shrink-0 items-center gap-3 border-b border-warning/25 bg-warning-surface px-3 py-2"
     >
       <Icon icon="lucide:triangle-alert" width={18} height={18} className="shrink-0 text-warning" />
       <div className="min-w-0 flex-1">
         <p className="break-words text-xs leading-4 text-warning">
-          Back up the secret phrase for {formatWalletName(wallet, wallets)}.
+          {t('backUpPhraseFor', { wallet: formatWalletName(wallet, wallets) })}
         </p>
       </div>
       <button
@@ -33,7 +36,7 @@ export function SecretPhraseBackupBanner() {
           })
         }
       >
-        Back up
+        {t('backUp')}
       </button>
     </aside>
   )

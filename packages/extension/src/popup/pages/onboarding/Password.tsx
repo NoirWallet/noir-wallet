@@ -1,4 +1,4 @@
-import { PasswordForm } from '../../components/auth/PasswordForm'
+import { OnboardingPasswordForm } from '../../components/onboarding/OnboardingPasswordForm'
 import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
 
@@ -17,15 +17,5 @@ export function Password() {
     goBack()
   }
 
-  return (
-    <PasswordForm
-      mode="create"
-      title="Create Password"
-      description="This password is used to unlock your wallet. We cannot reset this password. If you lose it, you'll need to restore your wallet using your Secret Recovery Phrase."
-      submitText="Create"
-      showTerms={true}
-      onSubmit={handleSubmit}
-      onBack={handleBack}
-    />
-  )
+  return <OnboardingPasswordForm mode="create" onSubmit={handleSubmit} onBack={handleBack} />
 }

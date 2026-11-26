@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '@iconify/react'
+import { useTranslation } from '@/popup/i18n'
+import { shellMessages } from '@/popup/i18n/shell-messages'
 
 interface CopyToastProps {
   show: boolean
@@ -8,12 +10,14 @@ interface CopyToastProps {
   error?: boolean
 }
 
-export function CopyToast({ show, message = 'Copied', error = true }: CopyToastProps) {
+export function CopyToast({ show, message, error = true }: CopyToastProps) {
+  const { locale, t } = useTranslation(shellMessages)
   if (!show) return null
 
   return createPortal(
     <div
       role={error ? 'alert' : 'status'}
+      lang={locale}
       className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] animate-in fade-in slide-in-from-top-2 duration-200"
     >
       <div className="bg-card border border-white/10 rounded-lg px-4 py-2.5 flex items-center gap-2 shadow-lg">
@@ -23,7 +27,9 @@ export function CopyToast({ show, message = 'Copied', error = true }: CopyToastP
           height={16}
           className={error ? 'text-destructive' : 'text-primary'}
         />
-        <span className="text-sm font-medium">{error ? 'Could not copy' : message}</span>
+        <span className="text-sm font-medium">
+          {error ? t('copyFailed') : (message ?? t('copied'))}
+        </span>
       </div>
     </div>,
     document.body

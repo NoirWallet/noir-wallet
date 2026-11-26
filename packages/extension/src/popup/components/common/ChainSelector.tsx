@@ -37,7 +37,7 @@ export function ChainSelector({
   options,
   selectedId,
   onSelect,
-  title = 'Select Network',
+  title,
   label,
   loading = false,
   allowSelectionWhileLoading = false,
@@ -45,6 +45,9 @@ export function ChainSelector({
   onRetry,
   enabledFirst = false
 }: ChainSelectorProps) {
+  const { t } = useTranslation(pickerMessages)
+  const { t: common } = useTranslation(shellMessages)
+  const heading = title ?? t('selectNetwork')
   const [search, setSearch] = useState('')
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [selectionError, setSelectionError] = useState('')
@@ -89,10 +92,10 @@ export function ChainSelector({
         className="gap-0 p-0"
         onOpenAutoFocus={event => event.preventDefault()}
       >
-        <DialogTitle className="sr-only">{title}</DialogTitle>
-        <DialogDescription className="sr-only">Choose a network</DialogDescription>
+        <DialogTitle className="sr-only">{heading}</DialogTitle>
+        <DialogDescription className="sr-only">{t('chooseNetwork')}</DialogDescription>
         <PageHeader
-          title={title}
+          title={heading}
           showBack
           backDisabled={pendingId !== null}
           onBack={() => onOpenChange(false)}
@@ -101,14 +104,14 @@ export function ChainSelector({
           <SearchInput
             value={search}
             onChange={event => setSearch(event.target.value)}
-            placeholder="Search network"
-            aria-label="Search networks"
+            placeholder={t('searchNetwork')}
+            aria-label={t('searchNetworks')}
             className="h-[45px] rounded-xl border-white/5 bg-card"
           />
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4">
           {label && <p className="px-4 pt-2 pb-1 text-xs text-muted">{label}</p>}
-          <div role="radiogroup" aria-label={title}>
+          <div role="radiogroup" aria-label={heading}>
             {filtered.map(option => (
               <button
                 key={option.id}
@@ -144,7 +147,7 @@ export function ChainSelector({
                   <Icon
                     icon="lucide:loader-circle"
                     className="size-4 animate-spin"
-                    aria-label="Switching network"
+                    aria-label={t('switchingNetwork')}
                   />
                 )}
               </button>
@@ -152,11 +155,11 @@ export function ChainSelector({
           </div>
           {loading && (
             <p role="status" className="px-4 py-6 text-sm text-muted">
-              Loading networks…
+              {t('loadingNetworks')}
             </p>
           )}
           {!loading && filtered.length === 0 && (
-            <p className="px-4 py-6 text-sm text-muted">No networks found</p>
+            <p className="px-4 py-6 text-sm text-muted">{t('noNetworks')}</p>
           )}
           {(error || selectionError) && (
             <div className="px-4 py-3 text-sm">
@@ -165,7 +168,7 @@ export function ChainSelector({
               </p>
               {onRetry && (
                 <button type="button" onClick={onRetry} className="mt-2 text-primary">
-                  Retry
+                  {common('retry')}
                 </button>
               )}
             </div>
@@ -175,3 +178,6 @@ export function ChainSelector({
     </Dialog>
   )
 }
+import { useTranslation } from '@/popup/i18n'
+import { pickerMessages } from '@/popup/i18n/picker-messages'
+import { shellMessages } from '@/popup/i18n/shell-messages'

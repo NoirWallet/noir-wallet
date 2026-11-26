@@ -3,8 +3,10 @@ import { PageHeader } from '../../components/common/PageHeader'
 import WalletIcon from '@/images/wallet-icon.svg'
 import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
+import { useOnboardingTranslation } from '@/popup/components/onboarding/useOnboardingTranslation'
 
 export function Congratulations() {
+  const { t } = useOnboardingTranslation()
   const { replace } = useNavigate()
   const { dappRequestId, reset } = useOnboardingStore()
 
@@ -27,19 +29,17 @@ export function Congratulations() {
 
       <div className="flex-1 flex flex-col items-center justify-center px-5">
         <div className="mb-8">
-          <img src={WalletIcon} alt="Wallet" />
+          <img src={WalletIcon} alt={t('wallet')} />
         </div>
 
-        <h1 className="text-lg font-semibold text-center mb-3">Congratulations!</h1>
+        <h1 className="text-lg font-semibold text-center mb-3">{t('congratulations')}</h1>
 
-        <p className="text-base text-muted text-center leading-relaxed">
-          Your wallet is ready. You can now securely send, receive, and store digital assets.
-        </p>
+        <p className="text-base text-muted text-center leading-relaxed">{t('walletReady')}</p>
       </div>
 
       <div className="px-5 pb-5">
         <Button onClick={handleComplete} className="w-full h-[45px]">
-          Got it
+          {t('gotIt')}
         </Button>
       </div>
     </div>

@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { EnglishCopy } from '@/popup/i18n'
+import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { PageHeader } from '../../components/common/PageHeader'
 import { StandardTransactionResult } from '../../components/transaction/StandardTransactionResult'
 import { SwapStatusDisplay } from '../../components/swap/SwapStatus'
@@ -773,89 +775,98 @@ export function TransactionOutcome() {
         : data.customDescription
 
     return (
-      <div className="page-container">
-        <PageHeader title="" />
-        <StandardTransactionResult
-          activityView={resultActivityView}
-          step={resultStep}
-          phaseLayout={data.operation === 'send'}
-          operation={
-            data.operation ??
-            (resultTransaction?.type === 'shield' || resultTransaction?.type === 'unshield'
-              ? 'move'
-              : 'send')
-          }
-          amount={data.amount}
-          fromAddress={data.fromAddress}
-          toAddress={data.toAddress}
-          txHash={resultView?.txHash}
-          timestamp={resultView?.timestamp}
-          error={data.error}
-          customTitle={recordCopy?.title ?? data.customTitle}
-          customDescription={recordCopy?.description ?? pendingDescription}
-          showFrom={data.showFrom}
-          showTo={data.showTo}
-          showTxHash={data.showTxHash}
-          showTime={data.showTime}
-          extraDetails={data.extraDetails}
-          failureAction={failureAction}
-          onDone={handleDone}
-          onCancel={resultStep === 'failed' ? handleCancel : undefined}
-        />
-        {speedUpSheet}
-      </div>
+      <EnglishCopy
+        active={
+          data.operation !== 'send' ||
+          isZcashHardwareKeySource(wallets.find(wallet => wallet.id === currentWalletId)?.keySource)
+        }
+      >
+        <div className="page-container">
+          <PageHeader title="" />
+          <StandardTransactionResult
+            activityView={resultActivityView}
+            step={resultStep}
+            phaseLayout={data.operation === 'send'}
+            operation={
+              data.operation ??
+              (resultTransaction?.type === 'shield' || resultTransaction?.type === 'unshield'
+                ? 'move'
+                : 'send')
+            }
+            amount={data.amount}
+            fromAddress={data.fromAddress}
+            toAddress={data.toAddress}
+            txHash={resultView?.txHash}
+            timestamp={resultView?.timestamp}
+            error={data.error}
+            customTitle={recordCopy?.title ?? data.customTitle}
+            customDescription={recordCopy?.description ?? pendingDescription}
+            showFrom={data.showFrom}
+            showTo={data.showTo}
+            showTxHash={data.showTxHash}
+            showTime={data.showTime}
+            extraDetails={data.extraDetails}
+            failureAction={failureAction}
+            onDone={handleDone}
+            onCancel={resultStep === 'failed' ? handleCancel : undefined}
+          />
+          <EnglishCopy>{speedUpSheet}</EnglishCopy>
+        </div>
+      </EnglishCopy>
     )
   }
 
   if (data.type === 'swap') {
     return (
-      <div className="page-container">
-        <PageHeader title={data.actionName || 'Swap'} />
-        <SwapStatusDisplay
-          network={currentNetwork}
-          portfolio={resultPortfolio}
-          confidentialPlan={scopedConfidentialPlan}
-          status={data.status}
-          tokenInSymbol={data.tokenInSymbol}
-          tokenOutSymbol={data.tokenOutSymbol}
-          amountIn={data.amountIn}
-          amountOut={data.amountOut}
-          actionName={data.actionName}
-          router={data.router}
-          destinationChain={data.destinationChain}
-          internalDestination={nativeIntentsInternalDestination}
-          destinationConfirmations={destinationConfirmations}
-          originChain={data.originChain}
-          originTxHash={
-            data.originTxHash ??
-            (scopedOriginActivity ? getActivityOriginHash(scopedOriginActivity) : undefined)
-          }
-          originStatus={
-            swapZcashTransaction
-              ? getZcashIntentsOriginStatus(swapZcashTransaction)
-              : scopedOriginActivity
-                ? getActivityOriginStatus(scopedOriginActivity)
-                : undefined
-          }
-          originConfirmations={swapZcashTransaction?.confirmations}
-          signedOrder={data.signedOrder}
-          fee={data.fee}
-          confidentialFunding={data.confidentialFunding}
-          activityItem={scopedOriginActivity}
-          approvalProgress={data.approvalProgress}
-          activeAccount={activeAccount}
-          onResumeConfidentialFunding={handleResumeConfidentialFunding}
-          resumingConfidentialFunding={resumingConfidentialFunding}
-          onClose={handleDone}
-          onViewActivity={handleViewActivity}
-          viewActivityDisabled={
-            data.originChain === 'zcash' &&
-            Boolean(data.rheaQuoteHandle) &&
-            !data.activityTransactionId &&
-            !data.zcashTransactionId
-          }
-        />
-      </div>
+      <EnglishCopy>
+        <div className="page-container">
+          <PageHeader title={data.actionName || 'Swap'} />
+          <SwapStatusDisplay
+            network={currentNetwork}
+            portfolio={resultPortfolio}
+            confidentialPlan={scopedConfidentialPlan}
+            status={data.status}
+            tokenInSymbol={data.tokenInSymbol}
+            tokenOutSymbol={data.tokenOutSymbol}
+            amountIn={data.amountIn}
+            amountOut={data.amountOut}
+            actionName={data.actionName}
+            router={data.router}
+            destinationChain={data.destinationChain}
+            internalDestination={nativeIntentsInternalDestination}
+            destinationConfirmations={destinationConfirmations}
+            originChain={data.originChain}
+            originTxHash={
+              data.originTxHash ??
+              (scopedOriginActivity ? getActivityOriginHash(scopedOriginActivity) : undefined)
+            }
+            originStatus={
+              swapZcashTransaction
+                ? getZcashIntentsOriginStatus(swapZcashTransaction)
+                : scopedOriginActivity
+                  ? getActivityOriginStatus(scopedOriginActivity)
+                  : undefined
+            }
+            originConfirmations={swapZcashTransaction?.confirmations}
+            signedOrder={data.signedOrder}
+            fee={data.fee}
+            confidentialFunding={data.confidentialFunding}
+            activityItem={scopedOriginActivity}
+            approvalProgress={data.approvalProgress}
+            activeAccount={activeAccount}
+            onResumeConfidentialFunding={handleResumeConfidentialFunding}
+            resumingConfidentialFunding={resumingConfidentialFunding}
+            onClose={handleDone}
+            onViewActivity={handleViewActivity}
+            viewActivityDisabled={
+              data.originChain === 'zcash' &&
+              Boolean(data.rheaQuoteHandle) &&
+              !data.activityTransactionId &&
+              !data.zcashTransactionId
+            }
+          />
+        </div>
+      </EnglishCopy>
     )
   }
 

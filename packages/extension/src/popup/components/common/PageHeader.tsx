@@ -1,5 +1,7 @@
 import type { ReactElement } from 'react'
 import { useNavigate } from '../../provider/Router'
+import { useTranslation } from '@/popup/i18n'
+import { shellMessages } from '@/popup/i18n/shell-messages'
 
 interface PageHeaderProps {
   title?: string | ReactElement
@@ -25,6 +27,7 @@ export function PageHeader({
   action
 }: PageHeaderProps) {
   const { goBack } = useNavigate()
+  const { t } = useTranslation(shellMessages)
   const handleBack = onBack || goBack
   const visibleTitle = typeof title === 'string' ? title.trim() : title
 
@@ -41,7 +44,7 @@ export function PageHeader({
           type="button"
           onClick={handleBack}
           disabled={backDisabled}
-          aria-label="Back"
+          aria-label={t('back')}
           className="wallet-interactive absolute left-3 size-8 rounded-lg text-foreground flex items-center justify-center hover:bg-accent enabled:active:brightness-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring cursor-pointer disabled:pointer-events-none disabled:opacity-50"
         >
           <svg

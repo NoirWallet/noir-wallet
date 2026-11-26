@@ -1,5 +1,6 @@
 import { MNEMONIC_WORD_COUNTS, type MnemonicWordCount } from '@/config/wallet'
 import { cn } from '@/lib/utils'
+import { useOnboardingTranslation } from './useOnboardingTranslation'
 
 interface MnemonicWordCountSelectorProps {
   value: MnemonicWordCount
@@ -8,8 +9,9 @@ interface MnemonicWordCountSelectorProps {
 
 /** Selects one of the product-supported canonical recovery phrase lengths. */
 export function MnemonicWordCountSelector({ value, onChange }: MnemonicWordCountSelectorProps) {
+  const { t } = useOnboardingTranslation()
   return (
-    <div role="radiogroup" aria-label="Recovery phrase length" className="grid grid-cols-2 gap-3">
+    <div role="radiogroup" aria-label={t('phraseLength')} className="grid grid-cols-2 gap-3">
       {MNEMONIC_WORD_COUNTS.slice()
         .reverse()
         .map(wordCount => {
@@ -40,7 +42,7 @@ export function MnemonicWordCountSelector({ value, onChange }: MnemonicWordCount
                 {selected && <span className="size-2 rounded-full bg-primary" />}
               </span>
               <span className={cn('text-sm', selected ? 'font-medium' : 'font-normal')}>
-                {wordCount} words
+                {t('words', { count: wordCount })}
               </span>
             </button>
           )

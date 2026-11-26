@@ -6,8 +6,10 @@ import WalletIcon from '@/images/wallet-icon.svg'
 import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
 import { openHardwareConnectTab } from '@/lib/hardware-tab'
+import { useOnboardingTranslation } from '@/popup/components/onboarding/useOnboardingTranslation'
 
 export function Welcome() {
+  const { t } = useOnboardingTranslation()
   const { navigate } = useNavigate()
   const { setMode, reset } = useOnboardingStore()
 
@@ -36,25 +38,25 @@ export function Welcome() {
 
       <div className="flex-1 flex flex-col items-center px-5">
         <div className="my-20">
-          <img src={WalletIcon} alt="Wallet" />
+          <img src={WalletIcon} alt={t('wallet')} />
         </div>
 
-        <h1 className="text-lg font-semibold text-center mb-3">Welcome to Noir Wallet</h1>
+        <h1 className="text-lg font-semibold text-center mb-3">{t('welcome')}</h1>
 
-        <p className="text-xs text-muted text-center">Safely manage your assets.</p>
+        <p className="text-xs text-muted text-center">{t('welcomeDescription')}</p>
 
         <div className="w-full mt-auto mb-8 space-y-3">
           <Button onClick={handleCreateWallet} className="w-full h-[45px]">
-            Create Wallet
+            {t('createWalletButton')}
           </Button>
 
           <Button variant="outline" onClick={handleImportWallet} className="w-full h-[45px]">
-            Import wallet
+            {t('importWallet')}
           </Button>
 
           <Button variant="ghost" onClick={handleConnectHardware} className="w-full h-[45px]">
             <Icon icon="lucide:shield" width={16} height={16} className="mr-2" />
-            Connect Hardware Wallet
+            {t('connectHardwareWallet')}
           </Button>
         </div>
       </div>

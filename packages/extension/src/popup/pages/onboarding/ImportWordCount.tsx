@@ -5,8 +5,10 @@ import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
 import { OnboardingAccountNameField } from '../../components/onboarding/OnboardingAccountNameField'
 import { getAccountNameValidationError } from '@/core/wallet/account-name'
+import { useOnboardingTranslation } from '@/popup/components/onboarding/useOnboardingTranslation'
 
 export function ImportWordCount() {
+  const { t } = useOnboardingTranslation()
   const { navigate } = useNavigate()
   const { mnemonicWordCount, setMnemonicWordCount, accountName, setAccountName } =
     useOnboardingStore()
@@ -14,7 +16,7 @@ export function ImportWordCount() {
 
   return (
     <div className="page-container">
-      <PageHeader title="Import wallet" showBack />
+      <PageHeader title={t('importWallet')} showBack />
 
       <div className="page-content pt-6">
         <div className="mt-1">
@@ -22,7 +24,7 @@ export function ImportWordCount() {
         </div>
 
         <div className="mt-5 pb-2">
-          <p className="text-sm text-muted mb-3">Recovery phrase length</p>
+          <p className="text-sm text-muted mb-3">{t('phraseLength')}</p>
           <MnemonicWordCountSelector value={mnemonicWordCount} onChange={setMnemonicWordCount} />
         </div>
       </div>
@@ -33,7 +35,7 @@ export function ImportWordCount() {
           disabled={Boolean(accountNameError)}
           className="w-full h-[45px]"
         >
-          Continue
+          {t('continue')}
         </Button>
       </div>
     </div>

@@ -1,4 +1,6 @@
 import { Icon } from '@iconify/react'
+import { useTranslation } from '@/popup/i18n'
+import { portfolioMessages } from '@/popup/i18n/portfolio-messages'
 import type { ReactNode } from 'react'
 import Big from '@/lib/big'
 import {
@@ -51,20 +53,21 @@ function PortfolioAssetActions({
   readonly onShield?: (trigger: HTMLButtonElement) => void
   readonly children: ReactNode
 }) {
+  const { t } = useTranslation(portfolioMessages)
   if (!onShield) return children
   return (
     <div className="portfolio-shield-row relative min-w-0">
       {children}
       <button
         type="button"
-        aria-label={`Shield ${formatSymbol(symbol)}`}
+        aria-label={t('shieldNamed', { name: formatSymbol(symbol) })}
         aria-haspopup="dialog"
         onClick={event => onShield(event.currentTarget)}
         className="portfolio-shield-action wallet-interactive absolute top-1/2 right-4 z-10 inline-flex h-10 -translate-y-1/2 items-center rounded-lg text-xs font-medium focus-visible:outline-2 focus-visible:outline-primary"
       >
         <span className="flex items-center gap-1 rounded-lg border border-border/70 bg-popover px-2 py-1.5 text-primary shadow-xs">
           <Icon icon="lucide:shield" width={14} aria-hidden="true" />
-          Shield
+          {t('shieldAction')}
         </span>
       </button>
     </div>
@@ -193,11 +196,12 @@ function PortfolioAssetQuantity({
 }
 
 function PendingAssetAmount({ amount, symbol }: { readonly amount: Big; readonly symbol: string }) {
+  const { t } = useTranslation(portfolioMessages)
   if (amount.lte(0)) return null
   return (
     <div className="flex min-w-0 items-center justify-end gap-1 px-3 pb-2.5 text-[11px] text-muted">
       <span className="min-w-0 break-all text-right">
-        {formatDisplayAmount(amount)} {formatSymbol(symbol)} pending
+        {t('pendingAmount', { amount: formatDisplayAmount(amount), symbol: formatSymbol(symbol) })}
       </span>
       <BalanceHelp kind="pending" />
     </div>
@@ -215,6 +219,7 @@ function UnitPrice({
   readonly changeFreshness?: 'fresh' | 'stale' | null
   readonly loading?: boolean
 }) {
+  const { t } = useTranslation(portfolioMessages)
   const changePercent = percent24h ?? null
   const change = changePercent === null ? null : new Big(changePercent)
   const formattedChange =
@@ -234,8 +239,10 @@ function UnitPrice({
       </span>
       {change && formattedChange && (
         <span
-          aria-label={`${formattedChange} over 24 hours${changeFreshness === 'stale' ? ', last available data' : ''}`}
-          title={changeFreshness === 'stale' ? 'Last available 24h change' : '24h change'}
+          aria-label={t(changeFreshness === 'stale' ? 'lastNamedChange24h' : 'namedChange24h', {
+            change: formattedChange
+          })}
+          title={t(changeFreshness === 'stale' ? 'lastChange24h' : 'change24h')}
           className={cn(
             'shrink-0',
             change.gt(0) ? 'text-success' : change.lt(0) ? 'text-danger' : 'text-muted'
@@ -261,6 +268,7 @@ function PortfolioAssetBalanceRow({
   onShield,
   swapCatalog
 }: PortfolioAssetBalanceRowProps) {
+  const { t } = useTranslation(portfolioMessages)
   const amount = assetAmount(entry.asset)
   const pendingAmount = assetPendingAmount(entry.asset)
   const zec = confidentialZec?.assetId === entry.asset.asset.id ? confidentialZec : null
@@ -277,7 +285,10 @@ function PortfolioAssetBalanceRow({
       <PortfolioAssetActions symbol={entry.asset.metadata.symbol} onShield={onShield}>
         <button
           type="button"
-          aria-label={`View ${formatSymbol(entry.asset.metadata.symbol)} details on ${entry.chain.chain.displayName}`}
+          aria-label={t('viewDetailsOnNetwork', {
+            symbol: formatSymbol(entry.asset.metadata.symbol),
+            network: entry.chain.chain.displayName
+          })}
           onClick={() => onSelectAsset?.(entry.asset.asset.id)}
           className={cn(
             'wallet-interactive flex min-h-[72px] w-full min-w-0 items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
@@ -368,6 +379,7 @@ export function PortfolioAssetGroupCard({
   onShield,
   swapCatalog
 }: PortfolioAssetGroupCardProps) {
+  const { t } = useTranslation(portfolioMessages)
   const totalAmount = group.entries.reduce(
     (sum, entry) => sum.plus(assetAmount(entry.asset)),
     new Big(0)
@@ -399,8 +411,13 @@ export function PortfolioAssetGroupCard({
           type="button"
           aria-label={
             directAsset
-              ? `View ${formatSymbol(group.symbol)} details on ${group.entries[0]?.chain.chain.displayName}`
-              : `${expanded ? 'Collapse' : 'Expand'} ${formatSymbol(group.symbol)} networks`
+              ? t('viewDetailsOnNetwork', {
+                  symbol: formatSymbol(group.symbol),
+                  network: group.entries[0].chain.chain.displayName
+                })
+              : t(expanded ? 'collapseTokenNetworks' : 'expandTokenNetworks', {
+                  name: formatSymbol(group.symbol)
+                })
           }
           aria-expanded={directAsset ? undefined : expanded}
           onClick={() =>
@@ -487,7 +504,7 @@ export function PortfolioAssetGroupCard({
       {!directAsset && expanded && (
         <div
           role="region"
-          aria-label={`${formatSymbol(group.symbol)} network balances`}
+          aria-label={t('tokenNetworkBalances', { name: formatSymbol(group.symbol) })}
           className="divide-y divide-border/70 border-t border-border/70"
         >
           {group.entries.map(entry => (

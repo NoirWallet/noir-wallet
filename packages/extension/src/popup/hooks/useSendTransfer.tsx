@@ -1,3 +1,5 @@
+import { useTranslation } from '@/popup/i18n'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import type { TransactionGraph, TransactionId } from '@/core/transactions/domain'
@@ -67,6 +69,7 @@ export interface SendTransferConfig<R extends TransferReview, S extends Transfer
 export function useSendTransfer<R extends TransferReview, S extends TransferSubmission>(
   config: SendTransferConfig<R, S>
 ): SendTransferViewState {
+  const { t } = useTranslation(sendMessages)
   const [amount, setAmount] = useState(config.initialAmount ?? '')
   const [recipient, setRecipient] = useState(config.initialRecipient ?? '')
   const [selectedRecipient, setSelectedRecipient] = useState<{
@@ -159,7 +162,7 @@ export function useSendTransfer<R extends TransferReview, S extends TransferSubm
   }
   const selectRecipient = async () => {
     await openModal<string | undefined>({
-      title: 'Select Recipient',
+      title: t('selectRecipient'),
       showCloseButton: true,
       scroll: 'body',
       fixedHeight: true,

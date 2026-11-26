@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
 import { Navigate } from 'react-router-dom'
 import { ToastContainer } from './components/common/ToastContainer'
 import { TestnetModeBanner } from './components/shell/TestnetModeBanner'
@@ -20,6 +20,8 @@ import { parseTransactionId } from '@/core/transactions/domain'
 import { isSidePanelSurface } from '@/lib/extension-display-mode'
 import { initializeAddressBook } from '@/store/address-book-store'
 import { resolveLegacyShieldFundsPath } from './services/home-navigation'
+import { EnglishCopy, useLocale, useTranslation } from './i18n'
+import { shellMessages } from './i18n/shell-messages'
 
 // Pages
 import { Home } from './pages/Home'
@@ -288,6 +290,7 @@ function AppRoutes() {
 
 function AppContent() {
   const { isLoading, initializationFailure, retryInitialization } = useAppRouting()
+  const { t } = useTranslation(shellMessages)
   const location = useLocation()
   const { navigate } = useNavigate()
   const sidePanelWindowId = useRef<number | null>(null)
@@ -385,17 +388,11 @@ function AppContent() {
       <div className="page-container">
         <PageHeader />
         <BlockingWalletFailure
-          title={isUpgradeFailure ? 'Wallet upgrade failed' : 'Wallet startup failed'}
-          description={
-            isUpgradeFailure
-              ? 'Noir Wallet could not finish upgrading this wallet. It will stay locked until the upgrade completes.'
-              : 'Noir Wallet could not finish starting. The wallet will remain unavailable until startup succeeds.'
-          }
-          assurance={
-            isUpgradeFailure
-              ? 'Your existing wallet data is still stored on this device. Noir Wallet will not open a partially upgraded wallet.'
-              : 'Wallet data on this device has not been cleared. Retry to start Noir Wallet again.'
-          }
+          title={t(isUpgradeFailure ? 'upgradeFailed' : 'startupFailed')}
+          description={t(
+            isUpgradeFailure ? 'walletLockedUntilUpgrade' : 'walletUnavailableUntilStartup'
+          )}
+          assurance={t(isUpgradeFailure ? 'upgradeDataRetained' : 'startupDataRetained')}
           isRetrying={isLoading}
           onRetry={() => void retryInitialization()}
         />
@@ -429,6 +426,36 @@ function AppContent() {
   return content
 }
 
+const localizedRoutes = new Set([
+  '/',
+  '/add-wallet',
+  '/asset-detail',
+  '/general',
+  '/import-wallet',
+  '/onboarding',
+  '/receive',
+  '/send',
+  '/settings',
+  '/transaction-result',
+  '/unlock'
+])
+
+function AppLanguage({ children }: { children: ReactNode }) {
+  const { pathname, search } = useLocation()
+  const walletLocale = useLocale()
+  const isLocalized =
+    localizedRoutes.has(pathname) ||
+    pathname.startsWith('/onboarding/') ||
+    (pathname === '/view-seed-phrase' && new URLSearchParams(search).get('backup') === '1')
+  const locale = isLocalized ? walletLocale : 'en'
+
+  useLayoutEffect(() => {
+    document.documentElement.lang = locale
+  }, [locale])
+
+  return <EnglishCopy active={!isLocalized}>{children}</EnglishCopy>
+}
+
 function App() {
   // Extract initial path from URL hash for dApp windows
   const getInitialPath = () => {
@@ -451,22 +478,24 @@ function App() {
 
   return (
     <RouterProvider initialPath={initialPath}>
-      <ModalProvider>
-        <DialogProvider>
-          {isEvmWalletChoice ? (
-            <div className="flex h-full w-full items-center justify-center bg-background">
-              <Routes>
-                <Route path="/evm-wallet-choice" element={<EvmWalletChoice />} />
-              </Routes>
-            </div>
-          ) : (
-            <>
-              <AppContent />
-              <ToastContainer />
-            </>
-          )}
-        </DialogProvider>
-      </ModalProvider>
+      <AppLanguage>
+        <ModalProvider>
+          <DialogProvider>
+            {isEvmWalletChoice ? (
+              <div className="flex h-full w-full items-center justify-center bg-background">
+                <Routes>
+                  <Route path="/evm-wallet-choice" element={<EvmWalletChoice />} />
+                </Routes>
+              </div>
+            ) : (
+              <>
+                <AppContent />
+                <ToastContainer />
+              </>
+            )}
+          </DialogProvider>
+        </ModalProvider>
+      </AppLanguage>
     </RouterProvider>
   )
 }

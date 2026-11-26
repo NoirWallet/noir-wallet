@@ -1,3 +1,6 @@
+import { useTranslation } from '@/popup/i18n'
+import { createSendCopy } from '@/popup/i18n/send-copy'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import { formatSortAddress } from '@/lib/format'
@@ -89,6 +92,8 @@ export function RecipientSelector({
   readonly recipientExecutionMode?: 'main' | 'private'
   readonly onSelect: (address: string, displayName?: string) => void
 }) {
+  const { locale, t } = useTranslation(sendMessages)
+  const copy = createSendCopy(locale)
   const contacts = useAddressBookStore(state => state.contacts)
   const wallets = useWalletStore(state => state.wallets)
   const accountDisplayNames = useWalletStore(state => state.accountDisplayNames)
@@ -202,15 +207,15 @@ export function RecipientSelector({
         <SearchInput
           value={query}
           onChange={event => setQuery(event.target.value)}
-          placeholder="Search accounts or addresses"
-          aria-label="Search accounts or addresses"
+          placeholder={t('searchRecipients')}
+          aria-label={t('searchRecipients')}
           className="h-[46px] rounded-lg text-sm"
           iconSize={18}
         />
       </div>
       <PageTabsList className="w-full shrink-0 border-b border-white/8 px-3">
-        <PageTabsTrigger value="accounts">My Wallets</PageTabsTrigger>
-        <PageTabsTrigger value="address-book">Address Book</PageTabsTrigger>
+        <PageTabsTrigger value="accounts">{t('myWallets')}</PageTabsTrigger>
+        <PageTabsTrigger value="address-book">{t('addressBook')}</PageTabsTrigger>
       </PageTabsList>
 
       <TabsContent
@@ -218,13 +223,13 @@ export function RecipientSelector({
         className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-1 py-4"
       >
         {loading ? (
-          <ListSkeleton rows={3} label="Loading wallet accounts" className="px-1 py-1" card />
+          <ListSkeleton rows={3} label={t('loadingAccounts')} className="px-1 py-1" card />
         ) : error ? (
           <TransactionNotice message="Unable to load accounts" onRetry={loadAccounts} />
         ) : visibleWalletGroups.length === 0 ? (
           <EmptyState
             icon="lucide:wallet"
-            title={normalizedQuery ? 'No matching accounts' : 'No other accounts'}
+            title={t(normalizedQuery ? 'noMatchingAccounts' : 'noOtherAccounts')}
           />
         ) : (
           <div className="space-y-5 pb-1">
@@ -248,13 +253,13 @@ export function RecipientSelector({
                             </p>
                             {group.active && (
                               <span className="shrink-0 rounded bg-wallet-selected px-2 py-0.5 text-xs font-medium text-foreground">
-                                Current
+                                {t('current')}
                               </span>
                             )}
                           </div>
                           {group.addresses.length === 0 ? (
                             <div className="rounded-lg bg-card px-3 py-2.5 text-xs text-muted">
-                              Unavailable on this network
+                              {t('unavailableOnNetwork')}
                             </div>
                           ) : (
                             group.addresses.map(address => {
@@ -265,10 +270,25 @@ export function RecipientSelector({
                                 disablePrivateExecutionAddresses,
                                 isEvm ? recipientExecutionMode : undefined
                               )
+                              const qualifier = address.executionMode
+                                ? address.executionMode === 'private'
+                                  ? 'Confidential'
+                                  : t('publicAddress')
+                                : schemeLabel && copy(schemeLabel)
+                              const labelName = qualifier
+                                ? `${displayName} ${qualifier}`
+                                : displayName
                               const addressButton = (
                                 <button
                                   type="button"
-                                  aria-label={`${unavailableReason ? 'Unavailable: ' : 'Send to '}${displayName}${address.executionMode ? ` ${address.executionMode === 'private' ? 'Confidential' : 'Public'}` : schemeLabel ? ` ${schemeLabel}` : ''}${unavailableReason ? `. ${unavailableReason}` : ''}`}
+                                  aria-label={
+                                    unavailableReason
+                                      ? t('unavailableRecipient', {
+                                          name: labelName,
+                                          reason: copy(unavailableReason)
+                                        })
+                                      : t('sendToName', { name: labelName })
+                                  }
                                   aria-disabled={unavailableReason ? true : undefined}
                                   onClick={() => {
                                     if (!unavailableReason) onSelect(address.value, displayName)
@@ -283,7 +303,7 @@ export function RecipientSelector({
                                           : 'shrink-0 rounded-md bg-white/5 px-2 py-1 text-[10px] text-muted'
                                       }
                                     >
-                                      {schemeLabel}
+                                      {copy(schemeLabel)}
                                     </span>
                                   )}
                                   {isEvm && address.executionMode && (
@@ -298,7 +318,9 @@ export function RecipientSelector({
                                           className="text-muted"
                                         />
                                       )}
-                                      {address.executionMode === 'private' ? 'Incognito' : 'Public'}
+                                      {address.executionMode === 'private'
+                                        ? 'Incognito'
+                                        : t('publicAddress')}
                                     </span>
                                   )}
                                   <p
@@ -323,7 +345,7 @@ export function RecipientSelector({
                                   className="flex min-w-0 items-center gap-1"
                                 >
                                   {unavailableReason ? (
-                                    <Tooltip content={unavailableReason} side="top">
+                                    <Tooltip content={copy(unavailableReason)} side="top">
                                       {addressButton}
                                     </Tooltip>
                                   ) : (
@@ -351,7 +373,7 @@ export function RecipientSelector({
         {visibleRecipients.length === 0 ? (
           <EmptyState
             icon="lucide:book-user"
-            title={normalizedQuery ? 'No matching recipients' : 'No saved recipients'}
+            title={t(normalizedQuery ? 'noMatchingRecipients' : 'noSavedRecipients')}
             action={
               addressBookNetwork && (
                 <Button
@@ -360,7 +382,7 @@ export function RecipientSelector({
                   className="mt-5"
                   onClick={() => setAddingAddress(true)}
                 >
-                  Add address
+                  {t('addAddress')}
                 </Button>
               )
             }
@@ -374,7 +396,7 @@ export function RecipientSelector({
                 className="ml-auto flex items-center gap-1.5 px-2 pb-2 text-xs text-primary"
               >
                 <Icon icon="lucide:plus" width={14} height={14} />
-                Add address
+                {t('addAddress')}
               </button>
             )}
             {visibleRecipients.map(contact => {
@@ -398,7 +420,14 @@ export function RecipientSelector({
               const addressButton = (
                 <button
                   type="button"
-                  aria-label={`${unavailableReason ? 'Unavailable: ' : 'Send to '}${contact.name}${unavailableReason ? `. ${unavailableReason}` : ''}`}
+                  aria-label={
+                    unavailableReason
+                      ? t('unavailableRecipient', {
+                          name: contact.name,
+                          reason: copy(unavailableReason)
+                        })
+                      : t('sendToName', { name: contact.name })
+                  }
                   aria-disabled={unavailableReason ? true : undefined}
                   onClick={() => {
                     if (!unavailableReason) onSelect(contact.address, contact.name)
@@ -427,7 +456,7 @@ export function RecipientSelector({
                 </button>
               )
               return unavailableReason ? (
-                <Tooltip key={contact.id} content={unavailableReason} side="top">
+                <Tooltip key={contact.id} content={copy(unavailableReason)} side="top">
                   {addressButton}
                 </Tooltip>
               ) : (

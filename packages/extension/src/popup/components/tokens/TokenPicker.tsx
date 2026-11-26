@@ -1,5 +1,7 @@
 import { useDeferredValue, useMemo, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
+import { useTranslation } from '@/popup/i18n'
+import { pickerMessages } from '@/popup/i18n/picker-messages'
 import { cn } from '@/lib/utils'
 import { ChainIcon } from '../common/ChainIcon'
 import { ChainSelector } from '../common/ChainSelector'
@@ -89,13 +91,14 @@ export function TokenPicker<Row>({
   emptyAction,
   selectedKey,
   onSelect,
-  emptyMessage = 'No tokens found',
+  emptyMessage,
   loading = false,
   toolbar,
   status,
   afterRows,
   discovery
 }: TokenPickerProps<Row>) {
+  const { t } = useTranslation(pickerMessages)
   const [localSearch, setSearch] = useState('')
   const [localNetwork, setNetwork] = useState(initialNetwork)
   const [networkPickerOpen, setNetworkPickerOpen] = useState(false)
@@ -167,14 +170,19 @@ export function TokenPicker<Row>({
     ? {
         key: 'discovered:' + inspectedResult.candidate.assetId,
         symbol: inspectedResult.token.symbol,
-        subtitle: `${discoveredNetwork ?? 'Selected network'} · ${discoveredAddress?.slice(0, 8)}...${discoveredAddress?.slice(-6)}`,
+        subtitle: `${discoveredNetwork ?? t('selectedNetwork')} · ${discoveredAddress?.slice(0, 8)}...${discoveredAddress?.slice(-6)}`,
         title: discoveredAddress,
-        ariaLabel: `${tokenDiscovery.adding ? 'Adding' : 'Add'} ${inspectedResult.token.symbol} on ${discoveredNetwork ?? 'selected network'} to wallet`,
+        ariaLabel: t(tokenDiscovery.adding ? 'addingToWallet' : 'addToWallet', {
+          symbol: inspectedResult.token.symbol,
+          network: discoveredNetwork ?? t('selectedNetwork')
+        }),
         icon: <TokenIcon token={inspectedResult.token} size={32} />,
         symbolSuffix: (
-          <span className="text-xs text-primary">{tokenDiscovery.adding ? 'Adding' : 'Add'}</span>
+          <span className="text-xs text-primary">
+            {t(tokenDiscovery.adding ? 'adding' : 'add')}
+          </span>
         ),
-        disabledReason: tokenDiscovery.adding ? 'Adding token' : undefined,
+        disabledReason: tokenDiscovery.adding ? t('addingToken') : undefined,
         busy: tokenDiscovery.adding
       }
     : null
@@ -187,7 +195,7 @@ export function TokenPicker<Row>({
         selectedId={effectiveNetwork}
         onSelect={selectNetwork}
         options={[
-          { id: 'all', name: 'All networks' },
+          { id: 'all', name: t('allNetworks') },
           ...orderedNetworks.map(network => ({
             id: network.id,
             name: network.label,
@@ -201,8 +209,8 @@ export function TokenPicker<Row>({
         <SearchInput
           value={search}
           onChange={event => onSearchChange(event.target.value)}
-          aria-label="Search tokens"
-          placeholder="Search tokens"
+          aria-label={t('searchTokens')}
+          placeholder={t('searchTokens')}
           className="h-[45px] rounded-xl border-transparent bg-card"
           autoFocus
         />
@@ -211,13 +219,13 @@ export function TokenPicker<Row>({
           <div
             className="mt-3 flex items-center gap-1.5 overflow-x-auto pb-1"
             role="group"
-            aria-label="Filter assets by network"
+            aria-label={t('filterNetworks')}
           >
             <button
               type="button"
               onClick={() => selectNetwork('all')}
               aria-pressed={effectiveNetwork === 'all'}
-              title="All networks"
+              title={t('allNetworks')}
               className={cn(
                 'wallet-interactive flex size-9 shrink-0 items-center justify-center rounded-md border text-sm focus-visible:outline-2 focus-visible:outline-primary',
                 effectiveNetwork === 'all'
@@ -225,7 +233,7 @@ export function TokenPicker<Row>({
                   : 'border-transparent bg-card text-muted hover:text-foreground'
               )}
             >
-              All
+              {t('all')}
             </button>
             {primary.map(network => (
               <button
@@ -256,8 +264,8 @@ export function TokenPicker<Row>({
             {(more.length > 0 || disabled.length > 0) && (
               <button
                 type="button"
-                aria-label="More networks"
-                title="More networks"
+                aria-label={t('moreNetworks')}
+                title={t('moreNetworks')}
                 onClick={() => setNetworkPickerOpen(true)}
                 className={cn(
                   'wallet-interactive flex size-9 shrink-0 items-center justify-center rounded-md border bg-card focus-visible:outline-2 focus-visible:outline-primary',
@@ -274,15 +282,15 @@ export function TokenPicker<Row>({
         {status}
         {tokenDiscovery.inspecting && (
           <p role="status" className="mt-2 text-xs text-muted">
-            Verifying token...
+            {t('verifying')}
           </p>
         )}
-        {tokenDiscovery.needsChain && (
-          <p className="mt-2 text-xs text-muted">Select an EVM network to find this token</p>
-        )}
+        {tokenDiscovery.needsChain && <p className="mt-2 text-xs text-muted">{t('chooseEvm')}</p>}
         {tokenDiscovery.error && (
           <p role="alert" className="mt-2 text-xs text-destructive">
-            {tokenDiscovery.error}
+            {tokenDiscovery.error === pickerMessages.verifyFailed[0]
+              ? t('verifyFailed')
+              : t('addFailed')}
           </p>
         )}
       </div>
@@ -300,13 +308,15 @@ export function TokenPicker<Row>({
             onSelect={() => void tokenDiscovery.addToken()}
           />
         ) : (loading || tokenDiscovery.inspecting) && filtered.length === 0 ? (
-          <ListSkeleton rows={5} label="Loading tokens" className="px-1" />
+          <ListSkeleton rows={5} label={t('loadTokens')} className="px-1" />
         ) : filtered.length === 0 ? (
           <p
             className="py-8 text-center text-sm text-muted"
             role={tokenDiscovery.added ? 'status' : undefined}
           >
-            {tokenDiscovery.added ?? emptyMessage}
+            {tokenDiscovery.added === pickerMessages.added[0]
+              ? t('added')
+              : (tokenDiscovery.added ?? emptyMessage ?? t('noTokens'))}
           </p>
         ) : (
           <div>
@@ -350,7 +360,7 @@ export function TokenPicker<Row>({
             aria-expanded={showExtraAssets}
             onClick={() => setShowExtraAssets(value => !value)}
           >
-            {showExtraAssets ? 'Show fewer assets' : 'Show more assets'}
+            {t(showExtraAssets ? 'showFewer' : 'showMore')}
           </button>
         )}
       </div>

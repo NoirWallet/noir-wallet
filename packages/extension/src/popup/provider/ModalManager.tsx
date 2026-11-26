@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { didCredentialSessionEnd } from '@/core/wallet/credential-session-state'
+import { useTranslation } from '@/popup/i18n'
+import { shellMessages } from '@/popup/i18n/shell-messages'
 import {
   Dialog,
   DialogContent,
@@ -27,6 +29,7 @@ interface ModalConfig extends Omit<OpenModalOptions, 'body'> {
 let globalOpenModal: (<T>(options: OpenModalOptions<T>) => Promise<T>) | null = null
 
 export function ModalProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation(shellMessages)
   const [modals, setModals] = useState<ModalConfig[]>([])
   const pending = useRef(new Map<string, () => void>())
 
@@ -111,11 +114,11 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
             {modal.title && (
               <DialogHeader>
                 <DialogTitle>{modal.title}</DialogTitle>
-                <DialogDescription className="sr-only">Modal dialog</DialogDescription>
+                <DialogDescription className="sr-only">{t('modalDialog')}</DialogDescription>
               </DialogHeader>
             )}
             {!modal.title && (
-              <DialogDescription className="sr-only">Modal dialog</DialogDescription>
+              <DialogDescription className="sr-only">{t('modalDialog')}</DialogDescription>
             )}
             {modal.body}
           </DialogContent>

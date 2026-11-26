@@ -5,41 +5,48 @@ import { Button } from '../../components/ui/button'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
 import { SidebarModeToggle } from '@/popup/components/shell/SidebarModeToggle'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
+import { useTranslation } from '@/popup/i18n'
+import { settingsMessages } from '@/popup/i18n/settings-messages'
 
 export function Settings() {
   const { navigate } = useNavigate()
   const { activeAccount } = useActiveAccountNetworks()
+  const { t } = useTranslation(settingsMessages)
 
   const menuItems = [
     {
-      label: 'Address Book',
+      label: t('addressBook'),
       icon: 'lucide:contact-round',
       action: () => navigate('/address-book')
     },
-    { label: 'DApps Connection', icon: 'lucide:link', action: () => navigate('/dapp-connections') },
-    { label: 'General', icon: 'lucide:heart', action: () => navigate('/general') },
     {
-      label: 'Security & Privacy',
+      label: t('dappConnections'),
+      icon: 'lucide:link',
+      action: () => navigate('/dapp-connections')
+    },
+    { label: t('general'), icon: 'lucide:heart', action: () => navigate('/general') },
+    {
+      label: t('securityPrivacy'),
       icon: 'lucide:shield-check',
       action: () => navigate('/security-privacy')
     },
-    { label: 'Networks', icon: 'lucide:radio', action: () => navigate('/networks') },
+    { label: t('networks'), icon: 'lucide:radio', action: () => navigate('/networks') },
     {
-      label: 'Default EVM Wallet',
+      label: t('defaultEvmWallet'),
       icon: 'lucide:wallet',
       action: () => navigate('/default-evm-wallet')
     },
     {
-      label: 'Developer Settings',
+      label: t('developerSettings'),
       icon: 'lucide:code',
       action: () => navigate('/developer-settings')
     },
     ...(activeAccount?.walletSource.kind === 'software' &&
     activeAccount.networks.some(network => network.chain.family === 'zcash')
-      ? [{ label: 'Zcash voting', icon: 'lucide:vote', action: () => navigate('/voting') }]
+      ? [{ label: t('voting'), icon: 'lucide:vote', action: () => navigate('/voting') }]
       : []),
-    { label: 'Help', icon: 'lucide:circle-help', action: () => navigate('/help') },
-    { label: 'About', icon: 'lucide:info', action: () => navigate('/about') }
+    { label: t('help'), icon: 'lucide:circle-help', action: () => navigate('/help') },
+    { label: t('about'), icon: 'lucide:info', action: () => navigate('/about') }
   ]
 
   const handleLock = async () => {
@@ -49,7 +56,7 @@ export function Settings() {
 
   return (
     <div className="page-container">
-      <PageHeader title="Settings" showBack />
+      <PageHeader title={t('settings')} showBack />
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4">
         <SidebarModeToggle />
@@ -75,7 +82,7 @@ export function Settings() {
           className="w-full font-normal text-danger hover:text-danger"
         >
           <Icon icon="lucide:lock" width={16} height={16} className="mr-2" />
-          Lock Wallet
+          {t('lockWallet')}
         </Button>
       </div>
     </div>

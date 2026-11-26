@@ -5,7 +5,9 @@ import { useNavigate } from '../../provider/Router'
 import { useOnboardingStore } from '@/store/onboarding-store'
 import { getDefaultImportNetworkFamilies } from '@/core/wallet/account-network-selection'
 import { availableSoftwareAccountFamilies } from '@/popup/services/account-network-selection-client'
-import { AccountNetworkFamilyChoices } from '@/popup/components/account/AccountNetworkFamilyChoices'
+import { OnboardingNetworkChoices } from '@/popup/components/onboarding/OnboardingNetworkChoices'
+import { useOnboardingTranslation } from '@/popup/components/onboarding/useOnboardingTranslation'
+import { DEFAULT_ACCOUNT_NAME } from '@/core/wallet/account-name'
 import { ImportZcashHistorySheet } from '@/popup/components/onboarding/ImportZcashHistorySheet'
 import { InlineError } from '@/popup/components/common/InlineError'
 import { zcashWalletRuntimeClient } from '@/popup/services/zcash-wallet-runtime-client'
@@ -13,6 +15,7 @@ import type { AccountNetworkFamily } from '@/core/wallet/account-network-selecti
 import { Checkbox } from '../../components/ui/checkbox'
 
 export function ImportAccounts() {
+  const { t, errorText } = useOnboardingTranslation()
   const { navigate, replace } = useNavigate()
   const {
     flowMode,
@@ -86,15 +89,15 @@ export function ImportAccounts() {
 
   return (
     <div className="page-container">
-      <PageHeader title="Import Accounts" showBack backDisabled={isLoading} />
+      <PageHeader title={t('importAccounts')} showBack backDisabled={isLoading} />
       <div className="page-content min-w-0 px-4 pb-5 !pt-3">
-        <p className="mb-1.5 px-1 text-sm leading-5 text-muted">We found 1 account</p>
+        <p className="mb-1.5 px-1 text-sm leading-5 text-muted">{t('foundAccount')}</p>
         <label className="mb-3.5 flex min-h-[46px] cursor-pointer items-center justify-between gap-3 rounded-lg bg-popover px-4">
           <span className="text-base font-medium">
-            {selected.length > 0 ? '1 account selected' : '0 accounts selected'}
+            {t(selected.length > 0 ? 'accountSelected' : 'noAccountsSelected')}
           </span>
           <Checkbox
-            aria-label="Select account"
+            aria-label={t('selectAccount')}
             checked={selected.length > 0}
             disabled={isLoading}
             onCheckedChange={checked => {
@@ -113,21 +116,22 @@ export function ImportAccounts() {
           />
         </label>
         <div className="rounded-lg bg-popover px-4 py-4">
-          <h1 className="truncate text-base font-medium">{accountName.trim() || 'Account 1'}</h1>
+          <h1 className="truncate text-base font-medium">
+            {accountName.trim() || DEFAULT_ACCOUNT_NAME}
+          </h1>
           <div className="mt-3">
-            <AccountNetworkFamilyChoices
+            <OnboardingNetworkChoices
               availableFamilies={availableFamilies}
               selectedFamilies={selected}
               onChange={setSelectedNetworkFamilies}
               disabled={isLoading}
-              showZcashSyncWarning
               addressPreviews={addressPreviews}
               addressesLoading={addressesLoading}
-              variant="import"
             />
             {previewFailed && (
               <InlineError
-                message="Could not load addresses."
+                message={t('addressesFailed')}
+                retryLabel={t('retry')}
                 onRetry={() => setPreviewAttempt(attempt => attempt + 1)}
                 className="mt-3"
               />
@@ -138,7 +142,7 @@ export function ImportAccounts() {
       <div className="page-footer">
         {error && (
           <p role="alert" className="mb-2 text-sm text-destructive">
-            {error}
+            {errorText(error, 'importFailed')}
           </p>
         )}
         <Button
@@ -148,7 +152,7 @@ export function ImportAccounts() {
           isLoading={isLoading}
           className="h-[45px] w-full"
         >
-          Continue
+          {t('continue')}
         </Button>
       </div>
       {historyOpen && <ImportZcashHistorySheet onClose={() => setHistoryOpen(false)} />}

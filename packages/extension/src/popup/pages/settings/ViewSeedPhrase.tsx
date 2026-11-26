@@ -14,6 +14,9 @@ import { didCredentialSessionEnd } from '@/core/wallet/credential-session-state'
 import { rehydrateWalletStore, useWalletStore } from '@/store/wallet-store'
 import { classifyError } from '@/lib/errors'
 import { formatWalletName } from '@/lib/format'
+import { useTranslation } from '@/popup/i18n'
+import { recoveryMessages } from '@/popup/i18n/recovery-messages'
+import { shellMessages } from '@/popup/i18n/shell-messages'
 
 type BackupStep = 'password' | 'phrase' | 'confirm'
 
@@ -37,6 +40,8 @@ function SeedPhraseContent({
   walletId: string | null
   backupMode: boolean
 }) {
+  const { locale, t } = useTranslation(recoveryMessages)
+  const { t: common } = useTranslation(shellMessages)
   const wallets = useWalletStore(state => state.wallets)
   const targetWalletId = useRef(walletId ?? useWalletStore.getState().currentWalletId).current
   const targetWallet = targetWalletId
@@ -113,7 +118,7 @@ function SeedPhraseContent({
 
   const handleUnlock = async () => {
     if (!password) {
-      setError('Please enter your password')
+      setError(recoveryMessages.passwordRequired[0])
       return
     }
     if (!targetWallet || (backupMode && !backupTarget)) return
@@ -170,12 +175,12 @@ function SeedPhraseContent({
   }
 
   if (sessionEnded) return null
-  const title = backupMode ? 'Back up secret phrase' : 'View secret phrase'
+  const title = t(backupMode ? 'backup' : 'view')
   if (!targetWallet || (backupMode && !backupTarget && !confirming.current)) {
     return (
       <div className="page-container">
         <PageHeader title={title} showBack onBack={returnToPage} />
-        <div className="page-content text-sm text-muted">Wallet unavailable.</div>
+        <div className="page-content text-sm text-muted">{t('walletUnavailable')}</div>
       </div>
     )
   }
@@ -185,24 +190,31 @@ function SeedPhraseContent({
         <PageHeader title={title} showBack onBack={handleBack} />
         <div className="page-content">
           {backupMode && <p className="mb-4 text-sm font-medium break-words">{targetName}</p>}
-          <p className="mb-5 text-sm text-muted">
-            Sharing your secret phrase may cause you to lose your assets
-          </p>
+          <p className="mb-5 text-sm text-muted">{t('sharingRisk')}</p>
           <label htmlFor="secret-phrase-password" className="block text-sm text-muted mb-2">
-            Enter Password
+            {t('passwordLabel')}
           </label>
           <Input
             id="secret-phrase-password"
             type="password"
             value={password}
             onChange={event => setPassword(event.target.value)}
-            placeholder="Enter your password"
+            placeholder={t('passwordPlaceholder')}
             className="h-[46px] rounded-xl mb-4"
             onKeyDown={event => event.key === 'Enter' && void handleUnlock()}
           />
           {error && (
             <p role="alert" className="text-sm text-danger mt-2">
-              {error}
+              {locale === 'en'
+                ? error
+                : t(
+                    error === recoveryMessages.passwordRequired[0]
+                      ? 'passwordRequired'
+                      : error === recoveryMessages.incorrectPassword[0] ||
+                          error === 'Invalid password. Please try again.'
+                        ? 'incorrectPassword'
+                        : 'revealFailed'
+                  )}
             </p>
           )}
         </div>
@@ -213,7 +225,7 @@ function SeedPhraseContent({
             onClick={handleUnlock}
             className="w-full h-[45px]"
           >
-            Unlock to reveal
+            {t('unlockToReveal')}
           </Button>
         </div>
       </div>
@@ -223,7 +235,7 @@ function SeedPhraseContent({
     return (
       <div className="page-container">
         <PageHeader
-          title="Confirm backup"
+          title={t('confirmBackup')}
           showBack
           backDisabled={verification.isSubmitting}
           onBack={handleBack}
@@ -239,7 +251,7 @@ function SeedPhraseContent({
             onClick={handleConfirm}
             className="w-full h-[45px]"
           >
-            Confirm backup
+            {t('confirmBackup')}
           </Button>
         </div>
       </div>
@@ -251,10 +263,7 @@ function SeedPhraseContent({
       <PageHeader title={title} showBack onBack={handleBack} />
       <div className="page-content">
         {backupMode && <p className="mb-3 text-sm font-medium break-words">{targetName}</p>}
-        <p className="mb-3 text-sm text-muted">
-          Never share your Secret Recovery Phrase with anyone. Anyone with this phrase can take your
-          assets forever.
-        </p>
+        <p className="mb-3 text-sm text-muted">{t('neverShare')}</p>
         <SeedPhraseDisplay
           words={phraseWords}
           blurred={isBlurred}
@@ -268,11 +277,11 @@ function SeedPhraseContent({
           className="h-[45px] flex-1"
         >
           <CopyFeedbackIcon copied={copiedKey === 'default'} width={16} height={16} />
-          {copiedKey === 'default' ? 'Copied' : 'Copy'}
+          {common(copiedKey === 'default' ? 'copied' : 'copy')}
         </Button>
         {backupMode && (
           <Button onClick={handleContinue} className="h-[45px] flex-1">
-            Continue
+            {t('continue')}
           </Button>
         )}
       </div>

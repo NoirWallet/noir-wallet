@@ -1,3 +1,6 @@
+import { useLocale, useTranslation } from '@/popup/i18n'
+import { createSendCopy } from '@/popup/i18n/send-copy'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { Icon } from '@iconify/react'
 import { useState, type ReactNode } from 'react'
 import { getActivityAssetEffects, type ActivityItem } from '@/core/activity'
@@ -23,7 +26,7 @@ import type {
 import { AmountDisplay } from '../common/AmountDisplay'
 import { ChainIcon } from '../common/ChainIcon'
 import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../common/CopyToast'
-import { DetailRow } from '../common/DetailRow'
+import { DetailRow as BaseDetailRow, type DetailRowProps } from '../common/DetailRow'
 import { AccountDomainBadge } from '../account/AccountDomainBadge'
 import { PrivateAddressWarningDialog } from '../account/PrivateAddressWarningDialog'
 import { ZcashFundingBadge } from '../zcash/ZcashFundingBadge'
@@ -590,7 +593,13 @@ function ActivityTransactionAccountRoute({ view }: { readonly view: ActivityTran
   )
 }
 
+function DetailRow({ label, children }: DetailRowProps) {
+  const copy = createSendCopy(useLocale())
+  return <BaseDetailRow label={copy(label)}>{children}</BaseDetailRow>
+}
+
 export function ActivityTransactionStatus({ view }: { readonly view: ActivityTransactionView }) {
+  const copy = createSendCopy(useLocale())
   const cancellation = getActivityCancellationPresentation(view.item)
   return (
     <>
@@ -599,7 +608,7 @@ export function ActivityTransactionStatus({ view }: { readonly view: ActivityTra
           data-activity-status-value
           className={cn('text-sm', getTransactionStatusToneClassName(view.statusTone))}
         >
-          {view.statusLabel}
+          {copy(view.statusLabel)}
         </span>
       </DetailRow>
       {cancellation && (
@@ -610,7 +619,7 @@ export function ActivityTransactionStatus({ view }: { readonly view: ActivityTra
               getTransactionStatusToneClassName(cancellation.tone)
             )}
           >
-            {cancellation.label}
+            {copy(cancellation.label)}
           </span>
         </DetailRow>
       )}
@@ -631,6 +640,13 @@ function AddressValue({
   readonly onCopy: () => void
   readonly copied: boolean
 }) {
+  const { t } = useTranslation(sendMessages)
+  const copyAddress =
+    copyKey === 'sender'
+      ? t('copySender')
+      : copyKey === 'recipient'
+        ? t('copyRecipient')
+        : `Copy ${copyKey} address`
   return (
     <span className="flex min-w-0 max-w-[220px] items-center gap-1.5">
       {url ? (
@@ -650,8 +666,8 @@ function AddressValue({
       )}
       <button
         type="button"
-        aria-label={`Copy ${copyKey} address`}
-        title={`Copy ${copyKey} address`}
+        aria-label={copyAddress}
+        title={copyAddress}
         className="shrink-0 text-muted hover:text-foreground"
         onClick={onCopy}
       >
@@ -1007,6 +1023,7 @@ export function ActivityTransactionBody({
   readonly showAccountRoute?: boolean
   readonly showAmountsAsDetails?: boolean
 }) {
+  const locale = useLocale()
   return (
     <>
       {!showAmountsAsDetails && <ActivityTransactionHero view={view} />}
@@ -1016,7 +1033,7 @@ export function ActivityTransactionBody({
         {showDate && (
           <DetailRow label="Date">
             <span className="max-w-[220px] text-right text-sm">
-              {new Date(view.item.createdAt).toLocaleString()}
+              {new Date(view.item.createdAt).toLocaleString(locale === 'en' ? undefined : locale)}
             </span>
           </DetailRow>
         )}

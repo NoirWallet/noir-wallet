@@ -1,3 +1,6 @@
+import { useTranslation } from '@/popup/i18n'
+import { createSendCopy } from '@/popup/i18n/send-copy'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import { getFeeTierLabel, type FeeTier } from '@/config/fee'
@@ -61,19 +64,25 @@ interface ZcashFeePickerProps {
 }
 
 export function NetworkFeeTierPicker(props: LiveFeePickerProps | ZcashFeePickerProps) {
+  const { locale, t } = useTranslation(sendMessages)
+  const copy = createSendCopy(locale)
   if (props.chainFamily === 'zcash') {
     const { amount, fees, approximate } = zcashFeePresentation(props)
     const value = props.loading ? (
-      <span role="status" aria-label="Estimating network fee" className="inline-flex items-center">
+      <span role="status" aria-label={t('estimateFee')} className="inline-flex items-center">
         <Skeleton className="h-4 w-24" />
       </span>
     ) : amount === null ? (
-      <span className="text-sm">Unavailable</span>
+      <span className="text-sm">{t('unavailable')}</span>
     ) : (
       <AmountDisplay value={amount} symbol="ZEC" profile="fee" prefix="≈ " className="text-sm" />
     )
     const picker = (
-      <FeePickerDialog value={value} label={`(${getFeeTierLabel(props.tier)})`} layout="inline">
+      <FeePickerDialog
+        value={value}
+        label={`(${copy(getFeeTierLabel(props.tier))})`}
+        layout="inline"
+      >
         {close => (
           <ZcashFeeOptions
             tier={props.tier}
@@ -87,7 +96,7 @@ export function NetworkFeeTierPicker(props: LiveFeePickerProps | ZcashFeePickerP
         )}
       </FeePickerDialog>
     )
-    return props.hideLabel ? picker : <DetailRow label="Network fee">{picker}</DetailRow>
+    return props.hideLabel ? picker : <DetailRow label={t('networkFee')}>{picker}</DetailRow>
   }
 
   const {
@@ -109,7 +118,11 @@ export function NetworkFeeTierPicker(props: LiveFeePickerProps | ZcashFeePickerP
   return (
     <FeePickerDialog
       value={<AmountDisplay value={amount} symbol={symbol} profile="fee" />}
-      label={selection && selection.kind !== 'tier' ? 'Custom' : getNetworkFeeTierLabel(tier)}
+      label={
+        selection && selection.kind !== 'tier'
+          ? t('customToken')
+          : copy(getNetworkFeeTierLabel(tier))
+      }
       layout={layout}
       disabled={disabled}
     >
@@ -148,6 +161,7 @@ function FeePickerDialog({
   readonly layout: 'stacked' | 'inline'
   readonly children: (close: () => void) => ReactNode
 }) {
+  const { t } = useTranslation(sendMessages)
   const [open, setOpen] = useState(false)
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -163,7 +177,7 @@ function FeePickerDialog({
             type="button"
             disabled={disabled}
             className="inline-flex min-h-6 items-center gap-1 text-xs text-muted hover:text-foreground disabled:opacity-60"
-            aria-label="Edit network fee"
+            aria-label={t('editFee')}
           >
             {label}
             <Icon icon="lucide:chevron-down" className="size-3.5" aria-hidden="true" />
@@ -194,11 +208,12 @@ function ZcashFeeOptions({
   readonly onTierChange: ZcashFeePickerProps['onTierChange']
   readonly close: () => void
 }) {
+  const { t } = useTranslation(sendMessages)
   return (
     <>
       <DialogHeader className="min-h-6 justify-center pr-9 text-left">
-        <DialogTitle>Network Fee</DialogTitle>
-        <DialogDescription className="sr-only">Select a network fee</DialogDescription>
+        <DialogTitle>{t('feeTitle')}</DialogTitle>
+        <DialogDescription className="sr-only">{t('chooseFee')}</DialogDescription>
       </DialogHeader>
       <FeeOptionList
         value={tier}
@@ -208,7 +223,7 @@ function ZcashFeeOptions({
         }}
         options={zcashFeeOptions({ selected: tier, fees, loading, loadingByTier })}
       />
-      {approximate && <p className="text-xs text-muted">Approximate fee</p>}
+      {approximate && <p className="text-xs text-muted">{t('approximateFee')}</p>}
     </>
   )
 }
@@ -224,12 +239,14 @@ function FeeOptionList<T extends string>({
   readonly onSelect: (value: T) => void
   readonly disabled?: boolean
 }) {
+  const { locale, t } = useTranslation(sendMessages)
+  const copy = createSendCopy(locale)
   const name = useId()
   return (
     <div className="@container min-w-0">
       <div
         role="group"
-        aria-label="Network fee speed"
+        aria-label={t('feeSpeed')}
         aria-busy={disabled}
         className={cn(
           'grid grid-cols-1 gap-1.5 @min-[300px]:gap-2',
@@ -238,6 +255,7 @@ function FeeOptionList<T extends string>({
       >
         {options.map(option => {
           const selected = option.id === value
+          const label = copy(option.label)
           return (
             <button
               key={option.id}
@@ -245,7 +263,7 @@ function FeeOptionList<T extends string>({
               onClick={() => {
                 if (!disabled) onSelect(option.id)
               }}
-              aria-label={option.label}
+              aria-label={label}
               aria-pressed={selected}
               aria-disabled={disabled}
               aria-describedby={`${name}-${option.id}-amount${option.caption ? ` ${name}-${option.id}-caption` : ''}`}
@@ -266,14 +284,14 @@ function FeeOptionList<T extends string>({
                     selected && 'text-primary'
                   )}
                 >
-                  {option.label}
+                  {label}
                 </span>
                 {option.caption && (
                   <span
                     id={`${name}-${option.id}-caption`}
                     className="mt-0.5 block text-[11px] leading-3.5 text-muted"
                   >
-                    {option.caption}
+                    {copy(option.caption)}
                   </span>
                 )}
               </span>
@@ -282,7 +300,7 @@ function FeeOptionList<T extends string>({
                 className="min-w-0 max-w-[63%] [overflow-wrap:anywhere] text-right text-xs leading-4 text-muted tabular-nums @min-[252px]:max-w-full @min-[252px]:text-center @min-[252px]:text-[11px] @min-[300px]:text-xs"
               >
                 {option.loading ? (
-                  <span role="status" aria-label={`Estimating ${option.label} network fee`}>
+                  <span role="status" aria-label={t('estimateTierFee', { tier: label })}>
                     <span className="ml-auto block h-4 w-14 max-w-full animate-pulse rounded-md bg-white/[0.08] motion-reduce:animate-none @min-[252px]:mx-auto" />
                   </span>
                 ) : option.preview ? (
@@ -298,7 +316,7 @@ function FeeOptionList<T extends string>({
                     </span>
                   </>
                 ) : (
-                  <span aria-label="Fee unavailable">&ndash;</span>
+                  <span aria-label={t('feeUnavailable')}>&ndash;</span>
                 )}
               </span>
             </button>
@@ -367,6 +385,8 @@ function NetworkFeeTierEditContent({
   readonly onSelect: (selection: EvmFeeSelection) => void | Promise<void>
   readonly close: () => void
 }) {
+  const { locale, t } = useTranslation(sendMessages)
+  const copy = createSendCopy(locale)
   const [updating, setUpdating] = useState(false)
   const [failure, setFailure] = useState<{ message: string; retry?: EvmFeeSelection } | null>(null)
   const tier = selection.kind === 'tier' ? selection.tier : null
@@ -458,17 +478,17 @@ function NetworkFeeTierEditContent({
     <>
       <DialogHeader className="min-h-6 flex-row items-center justify-between pr-9 text-left">
         <DialogTitle ref={customHeading} tabIndex={-1} className="outline-none">
-          {draft ? 'Custom gas' : 'Network Fee'}
+          {t(draft ? 'customGas' : 'feeTitle')}
         </DialogTitle>
         <DialogDescription className="sr-only">
-          {draft ? 'Edit gas parameters for this transaction' : 'Select a network fee'}
+          {t(draft ? 'editGas' : 'chooseFee')}
         </DialogDescription>
         {!draft && allowCustom && (
           <button
             ref={customEntry}
             type="button"
-            aria-label="Custom gas"
-            title={!canEditCustom ? 'Gas estimate required' : undefined}
+            aria-label={t('customGas')}
+            title={!canEditCustom ? t('gasEstimateRequired') : undefined}
             disabled={!canEditCustom || updating}
             className={cn(
               'inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors enabled:hover:bg-card enabled:hover:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:opacity-55',
@@ -485,7 +505,7 @@ function NetworkFeeTierEditContent({
             }}
           >
             <Icon icon="lucide:pencil" className="size-3.5" aria-hidden="true" />
-            Custom
+            {t('customToken')}
           </button>
         )}
       </DialogHeader>
@@ -493,14 +513,15 @@ function NetworkFeeTierEditContent({
         <TransactionActionReview
           onBack={backToOptions}
           backDisabled={updating}
-          confirmLabel="Apply"
+          backLabel={t('back')}
+          confirmLabel={t('apply')}
           onConfirm={apply}
           loading={updating}
           disabled={fields.some(
             ([field]) => !(fixedGasLimit && field === 'gasLimit') && !draft[field].trim()
           )}
         >
-          <FeeAmountSummary label="Max network fee" fee={currentFee} />
+          <FeeAmountSummary label={t('maxNetworkFee')} fee={currentFee} />
           <div className="divide-y divide-border/60 rounded-lg border border-border/65 bg-card/25">
             {fields.map(([field, label]) => {
               const isLimit = field === 'gasLimit'
@@ -510,10 +531,10 @@ function NetworkFeeTierEditContent({
                   key={field}
                   className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(0,138px)] items-center gap-2 px-3 py-2 text-xs font-medium"
                 >
-                  <span>{label}</span>
+                  <span>{copy(label)}</span>
                   <Input
                     inputMode={isLimit ? 'numeric' : 'decimal'}
-                    aria-label={isLimit ? label : `${label} (Gwei)`}
+                    aria-label={isLimit ? copy(label) : `${copy(label)} (Gwei)`}
                     value={draft[field]}
                     readOnly={readOnly}
                     onChange={event => {
@@ -542,7 +563,7 @@ function NetworkFeeTierEditContent({
       ) : (
         <div className="space-y-3">
           <FeeAmountSummary
-            label={chainFamily === 'evm' ? 'Max network fee' : 'Network fee'}
+            label={t(chainFamily === 'evm' ? 'maxNetworkFee' : 'networkFee')}
             fee={currentFee}
           />
           <FeeOptionList
@@ -564,7 +585,7 @@ function NetworkFeeTierEditContent({
           )}
           {updating && (
             <p role="status" className="text-xs text-muted">
-              Updating fee…
+              {t('updatingFee')}
             </p>
           )}
           {error}

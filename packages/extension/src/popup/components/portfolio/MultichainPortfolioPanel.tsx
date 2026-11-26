@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Icon } from '@iconify/react'
+import { useTranslation } from '@/popup/i18n'
+import { portfolioMessages } from '@/popup/i18n/portfolio-messages'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import { getShieldTransferChainIds } from '@/popup/services/shield-transfer'
@@ -86,6 +88,7 @@ export function MultichainPortfolioPanel({
   onManageTokens,
   onShieldForAsset
 }: MultichainPortfolioPanelProps) {
+  const { t } = useTranslation(portfolioMessages)
   const scopeKey = JSON.stringify([walletId ?? '', accountId ?? ''])
   const network = useWalletStore(state => state.currentNetwork)
   const chainListScopeKey = JSON.stringify([network, walletId ?? '', accountId ?? ''])
@@ -196,15 +199,15 @@ export function MultichainPortfolioPanel({
   ])
 
   if (!visibleModel && (accountLoading || status === 'loading')) {
-    return <ListSkeleton rows={3} label="Loading portfolio" className="px-5 py-3" />
+    return <ListSkeleton rows={3} label={t('loadingPortfolio')} className="px-5 py-3" />
   }
 
   if (status === 'error' && !visibleModel) {
     return (
       <PortfolioState
         icon="lucide:wifi-off"
-        title="Unable to load portfolio"
-        description="Your wallet data is safe. Noir Wallet is reconnecting automatically."
+        title={t('loadPortfolioFailed')}
+        description={t('reconnectingDataSafe')}
       />
     )
   }
@@ -213,8 +216,8 @@ export function MultichainPortfolioPanel({
     return (
       <PortfolioState
         icon="lucide:layers"
-        title="No active account"
-        description="Select an account to view its assets."
+        title={t('noActiveAccount')}
+        description={t('selectAccount')}
       />
     )
   }

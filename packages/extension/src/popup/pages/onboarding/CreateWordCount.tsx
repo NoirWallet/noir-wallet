@@ -7,9 +7,11 @@ import { OnboardingAccountNameField } from '../../components/onboarding/Onboardi
 import { getAccountNameValidationError } from '@/core/wallet/account-name'
 import { getDefaultImportNetworkFamilies } from '@/core/wallet/account-network-selection'
 import { availableSoftwareAccountFamilies } from '@/popup/services/account-network-selection-client'
-import { AccountNetworkFamilyChoices } from '@/popup/components/account/AccountNetworkFamilyChoices'
+import { OnboardingNetworkChoices } from '@/popup/components/onboarding/OnboardingNetworkChoices'
+import { useOnboardingTranslation } from '@/popup/components/onboarding/useOnboardingTranslation'
 
 export function CreateWordCount() {
+  const { t } = useOnboardingTranslation()
   const { navigate } = useNavigate()
   const {
     mnemonicWordCount,
@@ -26,28 +28,26 @@ export function CreateWordCount() {
 
   return (
     <div className="page-container">
-      <PageHeader title="Create wallet" showBack />
+      <PageHeader title={t('createWallet')} showBack />
 
       <div className="page-content pt-6">
         <div className="mt-1">
           <OnboardingAccountNameField
             value={accountName}
             onChange={setAccountName}
-            label="First account name"
+            label={t('firstAccountName')}
           />
         </div>
 
         <div className="mt-5 pb-2">
-          <p className="text-sm text-muted mb-3">Recovery phrase length</p>
-          <p className="mb-3 text-sm leading-relaxed text-muted">
-            Your Secret Recovery Phrase restores every account in this wallet.
-          </p>
+          <p className="text-sm text-muted mb-3">{t('phraseLength')}</p>
+          <p className="mb-3 text-sm leading-relaxed text-muted">{t('phraseRestoresAccounts')}</p>
           <MnemonicWordCountSelector value={mnemonicWordCount} onChange={setMnemonicWordCount} />
         </div>
 
         <div className="mt-5 pb-5">
-          <h2 className="mb-2 text-sm text-muted">Networks</h2>
-          <AccountNetworkFamilyChoices
+          <h2 className="mb-2 text-sm text-muted">{t('networks')}</h2>
+          <OnboardingNetworkChoices
             availableFamilies={availableFamilies}
             selectedFamilies={selected}
             onChange={setSelectedNetworkFamilies}
@@ -64,7 +64,7 @@ export function CreateWordCount() {
           disabled={Boolean(accountNameError) || selected.length === 0}
           className="w-full h-[45px]"
         >
-          Continue
+          {t('continue')}
         </Button>
       </div>
     </div>

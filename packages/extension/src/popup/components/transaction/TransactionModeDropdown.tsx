@@ -1,3 +1,5 @@
+import { useTranslation } from '@/popup/i18n'
+import { sendMessages } from '@/popup/i18n/send-messages'
 import { Icon } from '@iconify/react'
 import type { BalanceDomain } from '@/popup/components/account/BalanceDomainTabs'
 import {
@@ -33,8 +35,11 @@ export function TransactionModeDropdown({
   readonly onChange: (mode: BalanceDomain) => void
   readonly disabled?: boolean
 }) {
-  const getLabel = (mode: BalanceDomain) =>
-    action === 'Swap' ? swapModeLabels[mode] : `${modeLabels[mode]} ${action}`
+  const { t } = useTranslation(sendMessages)
+  const getLabel = (mode: BalanceDomain) => {
+    if (action === 'Swap') return swapModeLabels[mode]
+    return mode === 'public' ? t('publicSend') : `${modeLabels[mode]} ${action}`
+  }
   const title = getLabel(value)
 
   if (options.length < 2) return <span className="block truncate">{title}</span>
@@ -56,7 +61,11 @@ export function TransactionModeDropdown({
           />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="center" className="min-w-44" aria-label={`${action} mode`}>
+      <DropdownMenuContent
+        align="center"
+        className="min-w-44"
+        aria-label={action === 'Send' ? t('sendMode') : `${action} mode`}
+      >
         <DropdownMenuRadioGroup
           value={value}
           onValueChange={next => {

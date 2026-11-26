@@ -2,6 +2,8 @@ import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
+import { EnglishCopy, useTranslation } from '@/popup/i18n'
+import { portfolioMessages } from '@/popup/i18n/portfolio-messages'
 import Big from '@/lib/big'
 import { parseAssetId } from '@/core/chains/registry'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
@@ -91,14 +93,15 @@ import {
   type ShieldProvider
 } from '@/popup/services/asset-domains'
 
-const DETAIL_MODES: readonly { value: AssetDomain; label: string }[] = [
-  { value: 'all', label: 'Total' },
-  { value: 'shield', label: 'Shield' },
-  { value: 'public', label: 'Public' },
-  { value: 'private', label: 'Incognito' }
-]
+const DETAIL_MODES = [
+  { value: 'all', label: 'total' },
+  { value: 'shield', label: 'shield' },
+  { value: 'public', label: 'public' },
+  { value: 'private', label: 'incognito' }
+] as const satisfies readonly { value: AssetDomain; label: keyof typeof portfolioMessages }[]
 
 export function AssetDetail() {
+  const { t } = useTranslation(portfolioMessages)
   const location = useLocation()
   const sendOriginPath = `${location.pathname}${location.search}`
   const [searchParams] = useSearchParams()
@@ -175,7 +178,7 @@ export function AssetDetail() {
     null
   )
   const [bitcoinAccountSwitching, setBitcoinAccountSwitching] = useState(false)
-  const [bitcoinAccountError, setBitcoinAccountError] = useState<string | null>(null)
+  const [bitcoinAccountError, setBitcoinAccountError] = useState(false)
   const { copyToClipboard, showToast, isCopied, copyFailed } = useCopyToClipboard()
   const [privateCopyAddress, setPrivateCopyAddress] = useState<string | null>(null)
   useEffect(() => {
@@ -626,7 +629,7 @@ export function AssetDetail() {
   ) => {
     if (!effectiveWalletId || !effectiveAccountId || bitcoinAccountSwitching) return
     setBitcoinAccountSwitching(true)
-    setBitcoinAccountError(null)
+    setBitcoinAccountError(false)
     try {
       const catalog = await bitcoinAddressBalancesClient.setActiveAddressType({
         walletId: effectiveWalletId,
@@ -636,7 +639,7 @@ export function AssetDetail() {
       setBitcoinCatalog(catalog)
       await load()
     } catch {
-      setBitcoinAccountError('Unable to switch the Bitcoin account.')
+      setBitcoinAccountError(true)
     } finally {
       setBitcoinAccountSwitching(false)
     }
@@ -676,13 +679,13 @@ export function AssetDetail() {
       ? [
           {
             action: 'send' as const,
-            label: 'Send',
+            label: t('send'),
             disabled: !canSend,
             onClick: () => handleSend(domain)
           },
           {
             action: 'receive' as const,
-            label: 'Receive',
+            label: t('receive'),
             disabled: !canReceive,
             onClick: () => handleReceive()
           }
@@ -692,19 +695,19 @@ export function AssetDetail() {
       ? [
           {
             action: 'deposit' as const,
-            label: 'Deposit',
+            label: t('deposit'),
             onClick: () => handlePrivateTransfer('deposit')
           },
           {
             action: 'withdraw' as const,
-            label: 'Withdraw',
+            label: t('withdraw'),
             onClick: () => handlePrivateTransfer('withdraw')
           }
         ]
       : []),
     {
       action: 'swap' as const,
-      label: 'Swap',
+      label: t('swap'),
       disabled: !canSwap || (domain === 'private' && !privateTransferEligible),
       onClick: () => handleSwap(domain)
     }
@@ -724,7 +727,7 @@ export function AssetDetail() {
     return [
       {
         action: 'send' as const,
-        label: 'Send',
+        label: t('send'),
         disabled: unavailable,
         onClick: () =>
           navigate(
@@ -734,19 +737,19 @@ export function AssetDetail() {
       },
       {
         action: 'receive' as const,
-        label: 'Receive',
+        label: t('receive'),
         disabled: !canReceive,
         onClick: () => handleReceive()
       },
       {
         action: 'deposit' as const,
-        label: 'Shield',
+        label: t('shieldAction'),
         disabled: unavailable,
         onClick: () => asset && navigate(shieldFundsPath('shield', asset.asset.id, 'zcash-shield'))
       },
       {
         action: 'swap' as const,
-        label: 'Swap',
+        label: t('swap'),
         disabled: !canSwap,
         onClick: () => handleSwap('public', privacy)
       }
@@ -829,8 +832,8 @@ export function AssetDetail() {
   ) {
     return (
       <div className="page-container">
-        <PageHeader title="Asset details" showBack />
-        <div role="status" aria-label="Loading asset" className="page-content space-y-4">
+        <PageHeader title={t('assetDetails')} showBack />
+        <div role="status" aria-label={t('loadingAsset')} className="page-content space-y-4">
           <div className="flex flex-col items-center pt-1">
             <Skeleton className="size-12 rounded-full" />
             <Skeleton className="mt-4 h-7 w-36" />
@@ -858,15 +861,16 @@ export function AssetDetail() {
     const refreshFailed = status === 'error' || assetRefreshFailed || accountNetworksError
     return (
       <div className="page-container">
-        <PageHeader title="Asset details" showBack />
+        <PageHeader title={t('assetDetails')} showBack />
         <div className="flex flex-1 flex-col items-center justify-center px-8 text-center">
           <Icon icon="lucide:circle-alert" width={40} height={40} className="text-muted" />
           <p className={cn('mt-4 text-base font-medium', !refreshFailed && 'text-muted')}>
-            Asset unavailable
+            {t('assetUnavailable')}
           </p>
           {refreshFailed ? (
             <InlineError
-              message="This asset could not be refreshed. Check your connection."
+              message={t('refreshAssetFailed')}
+              retryLabel={t('retry')}
               onRetry={() => {
                 if (accountNetworksError) void refreshAccountNetworks()
                 if (assetRefreshFailed) setAssetRetry(retry => retry + 1)
@@ -875,9 +879,7 @@ export function AssetDetail() {
               className="mt-4 w-full text-left"
             />
           ) : (
-            <p className="mt-1 text-sm leading-5 text-muted">
-              This asset is not available for the active Wallet and Account.
-            </p>
+            <p className="mt-1 text-sm leading-5 text-muted">{t('assetNotInAccount')}</p>
           )}
         </div>
       </div>
@@ -929,7 +931,8 @@ export function AssetDetail() {
     value == null ? '—' : formatFiatAmount(value, { showSign: true })
   const renderBalanceAddress = (
     address: string | undefined,
-    label: string,
+    copyKey: string,
+    label: keyof typeof portfolioMessages,
     privateAddress = false
   ) =>
     address ? (
@@ -939,14 +942,14 @@ export function AssetDetail() {
         </span>
         <button
           type="button"
-          aria-label={`Copy ${label} address`}
+          aria-label={t('copyNamedAddress', { name: t(label) })}
           onClick={() => {
             if (privateAddress) setPrivateCopyAddress(address)
-            else void copyToClipboard(address, label)
+            else void copyToClipboard(address, copyKey)
           }}
           className="wallet-interactive pointer-events-auto flex size-5 shrink-0 items-center justify-center rounded text-muted hover:text-foreground"
         >
-          <CopyFeedbackIcon copied={isCopied(label)} width={12} />
+          <CopyFeedbackIcon copied={isCopied(copyKey)} width={12} />
         </button>
       </>
     ) : null
@@ -980,8 +983,8 @@ export function AssetDetail() {
   if (searchParams.get('view') === 'info') {
     return (
       <div className="page-container">
-        <CopyToast show={showToast} error={copyFailed} message="Address copied" />
-        <PageHeader title="Token details" showBack onBack={goBack} />
+        <CopyToast show={showToast} error={copyFailed} message={t('addressCopied')} />
+        <PageHeader title={t('tokenDetails')} showBack onBack={goBack} />
         <div className="page-content">
           <div className="flex items-center gap-3 py-5">
             <TokenIcon
@@ -997,20 +1000,20 @@ export function AssetDetail() {
           </div>
           <dl className="divide-y divide-border/60">
             <div className="flex justify-between gap-4 py-4 text-sm">
-              <dt className="text-muted">Network</dt>
+              <dt className="text-muted">{t('network')}</dt>
               <dd>{chain.chain.displayName}</dd>
             </div>
             {preferredBitcoinAddress && (
               <div className="flex items-center gap-3 py-4">
                 <div className="min-w-0 flex-1">
-                  <dt className="text-xs text-muted">Receive address</dt>
+                  <dt className="text-xs text-muted">{t('receiveAddress')}</dt>
                   <dd className="mt-2 break-all font-mono text-sm">
                     {preferredBitcoinAddress.value}
                   </dd>
                 </div>
                 <button
                   type="button"
-                  aria-label="Copy Bitcoin receive address"
+                  aria-label={t('copyBitcoinAddress')}
                   onClick={() =>
                     void copyToClipboard(preferredBitcoinAddress.value, 'bitcoin-address')
                   }
@@ -1020,7 +1023,7 @@ export function AssetDetail() {
                 </button>
                 <button
                   type="button"
-                  aria-label="Receive Bitcoin"
+                  aria-label={t('receiveBitcoin')}
                   onClick={() => handleReceive()}
                   disabled={!canReceive}
                   className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-foreground"
@@ -1032,12 +1035,12 @@ export function AssetDetail() {
             {contractAddress && (
               <div className="flex items-center gap-3 py-4">
                 <div className="min-w-0 flex-1">
-                  <dt className="text-xs text-muted">Contract address</dt>
+                  <dt className="text-xs text-muted">{t('contractAddress')}</dt>
                   <dd className="mt-2 break-all font-mono text-sm">{contractAddress}</dd>
                 </div>
                 <button
                   type="button"
-                  aria-label="Copy contract address"
+                  aria-label={t('copyContractAddress')}
                   onClick={() => void copyToClipboard(contractAddress, 'contract-address')}
                   className="wallet-interactive flex size-8 shrink-0 items-center justify-center rounded-full text-muted hover:bg-white/10 hover:text-foreground"
                 >
@@ -1054,7 +1057,7 @@ export function AssetDetail() {
               referrerPolicy="no-referrer"
               className="mt-3 inline-flex items-center gap-1.5 text-sm text-primary hover:underline"
             >
-              {contractAddress ? 'View token on explorer' : 'View network explorer'}
+              {t(contractAddress ? 'viewTokenExplorer' : 'viewNetworkExplorer')}
               <Icon icon="lucide:external-link" width={15} height={15} />
             </a>
           )}
@@ -1071,25 +1074,27 @@ export function AssetDetail() {
         if (mode) selectDetailMode(mode.value)
       }}
     >
-      <CopyToast show={showToast} error={copyFailed} message="Address copied" />
-      <PrivateAddressWarningDialog
-        address={privateCopyAddress}
-        onClose={() => setPrivateCopyAddress(null)}
-        onConfirm={() => {
-          if (!privateCopyAddress) return
-          void copyToClipboard(privateCopyAddress, 'Incognito', { toastOnSuccess: true }).then(
-            copied => {
-              if (copied) setPrivateCopyAddress(null)
-            }
-          )
-        }}
-      />
+      <CopyToast show={showToast} error={copyFailed} message={t('addressCopied')} />
+      <EnglishCopy>
+        <PrivateAddressWarningDialog
+          address={privateCopyAddress}
+          onClose={() => setPrivateCopyAddress(null)}
+          onConfirm={() => {
+            if (!privateCopyAddress) return
+            void copyToClipboard(privateCopyAddress, 'Incognito', { toastOnSuccess: true }).then(
+              copied => {
+                if (copied) setPrivateCopyAddress(null)
+              }
+            )
+          }}
+        />
+      </EnglishCopy>
       <PageHeader
         title={formatSymbol(asset.metadata.symbol)}
         showBack
         onBack={goBack}
         action={{
-          ariaLabel: 'Token details',
+          ariaLabel: t('tokenDetails'),
           icon: <Icon icon="lucide:ellipsis-vertical" width={19} height={19} />,
           onClick: () => {
             const query = new URLSearchParams(searchParams)
@@ -1100,7 +1105,7 @@ export function AssetDetail() {
       />
 
       <PageTabsList
-        aria-label="Balance view"
+        aria-label={t('balanceView')}
         className="h-11 w-full shrink-0 border-b border-white/8 px-5"
       >
         {detailModes.map(({ value, label }) => (
@@ -1112,7 +1117,7 @@ export function AssetDetail() {
               (Boolean(confidentialOnlyDetail) && value === 'public')
             }
           >
-            {label}
+            {t(label)}
           </PageTabsTrigger>
         ))}
       </PageTabsList>
@@ -1171,19 +1176,19 @@ export function AssetDetail() {
               <>
                 <WalletActionButton
                   icon={<WalletActionIcon action="deposit" />}
-                  label="Deposit"
+                  label={t('deposit')}
                   disabled={!privateTransferEligible}
                   onClick={() => handlePrivateTransfer('deposit')}
                 />
                 <WalletActionButton
                   icon={<WalletActionIcon action="withdraw" />}
-                  label="Withdraw"
+                  label={t('withdraw')}
                   disabled={!privateTransferEligible}
                   onClick={() => handlePrivateTransfer('withdraw')}
                 />
                 <WalletActionButton
                   icon={<WalletActionIcon action="swap" />}
-                  label="Swap"
+                  label={t('swap')}
                   disabled={!privateTransferEligible || !canSwap}
                   onClick={() => handleSwap('private')}
                 />
@@ -1192,7 +1197,7 @@ export function AssetDetail() {
               <>
                 <WalletActionButton
                   icon={<WalletActionIcon action="send" shielded={detailMode === 'shield'} />}
-                  label="Send"
+                  label={t('send')}
                   disabled={
                     detailMode === 'shield'
                       ? !hasConfidentialCapability &&
@@ -1210,7 +1215,7 @@ export function AssetDetail() {
                 />
                 <WalletActionButton
                   icon={<WalletActionIcon action="receive" shielded={detailMode === 'shield'} />}
-                  label="Receive"
+                  label={t('receive')}
                   disabled={
                     detailMode === 'public'
                       ? !canReceive
@@ -1222,21 +1227,21 @@ export function AssetDetail() {
                 />
                 <WalletActionButton
                   icon={<WalletActionIcon action="shield" />}
-                  label="Shield"
+                  label={t('shieldAction')}
                   disabled={!hasConfidentialCapability && !isZcashAsset}
                   onClick={() => handleShieldFunds('shield')}
                 />
                 {detailMode === 'shield' && (
                   <WalletActionButton
                     icon={<WalletActionIcon action="unshield" />}
-                    label="Unshield"
+                    label={t('unshield')}
                     disabled={!hasConfidentialCapability && !isZcashAsset}
                     onClick={() => handleShieldFunds('unshield')}
                   />
                 )}
                 <WalletActionButton
                   icon={<WalletActionIcon action="swap" />}
-                  label="Swap"
+                  label={t('swap')}
                   disabled={
                     detailMode === 'shield'
                       ? !hasConfidentialCapability && !canSwapNativeZec
@@ -1300,7 +1305,7 @@ export function AssetDetail() {
         )}
 
         {detailMode === 'all' && chain.chain.family === 'evm' && (
-          <section className="py-2" aria-label="Account balances">
+          <section className="py-2" aria-label={t('accountBalances')}>
             {detailModes
               .map(({ value }) => value)
               .filter(
@@ -1314,9 +1319,9 @@ export function AssetDetail() {
                     key={domain}
                     shielded={domain === 'shield'}
                     onSelect={() => selectDetailMode(domain)}
-                    label={
-                      domain === 'shield' ? 'Shield' : domain === 'private' ? 'Incognito' : 'Public'
-                    }
+                    label={t(
+                      domain === 'shield' ? 'shield' : domain === 'private' ? 'incognito' : 'public'
+                    )}
                     subtitle={
                       domain === 'shield'
                         ? 'NEAR Confidential Intents'
@@ -1324,9 +1329,10 @@ export function AssetDetail() {
                           ? renderBalanceAddress(
                               accountNetwork?.privateExecutionAddress,
                               'Incognito',
+                              'incognito',
                               true
                             )
-                          : renderBalanceAddress(publicAddress, 'Public')
+                          : renderBalanceAddress(publicAddress, 'Public', 'public')
                     }
                     balance={
                       domain === 'shield' && raw === null && loadingConfidentialBalance ? (
@@ -1346,10 +1352,10 @@ export function AssetDetail() {
         )}
 
         {bitcoinCatalog && (
-          <section className="border-t border-border py-4" aria-label="Bitcoin accounts">
+          <section className="border-t border-border py-4" aria-label={t('bitcoinAccounts')}>
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-sm font-semibold">Bitcoin account</h2>
+                <h2 className="text-sm font-semibold">{t('bitcoinAccount')}</h2>
               </div>
               <button
                 type="button"
@@ -1363,34 +1369,37 @@ export function AssetDetail() {
                 }}
                 className="shrink-0 text-xs font-medium text-primary hover:underline"
               >
-                Addresses
+                {t('addresses')}
               </button>
             </div>
-            <BitcoinAccountTypeSelector
-              value={bitcoinCatalog.activeAddressType}
-              hardware={hardware}
-              className={cn('mt-3', bitcoinAccountSwitching && 'pointer-events-none opacity-60')}
-              onChange={handleBitcoinAccountChange}
-            />
+            <EnglishCopy>
+              <BitcoinAccountTypeSelector
+                value={bitcoinCatalog.activeAddressType}
+                hardware={hardware}
+                className={cn('mt-3', bitcoinAccountSwitching && 'pointer-events-none opacity-60')}
+                onChange={handleBitcoinAccountChange}
+              />
+            </EnglishCopy>
             {bitcoinAccountError && (
               <p role="alert" className="mt-2 text-xs text-danger">
-                {bitcoinAccountError}
+                {t('bitcoinAccountSwitchFailed')}
               </p>
             )}
           </section>
         )}
 
         {isZcashAsset && (isTotalDetail || detailMode === 'shield') && (
-          <section className="py-2" aria-label="Zcash balance breakdown">
+          <section className="py-2" aria-label={t('zcashBreakdown')}>
             {!confidentialOnlyDetail && (
               <AssetDetailBalanceRow
-                label="Zcash Shield"
+                label={t('zcashShield')}
                 shielded
                 onSelect={isTotalDetail ? () => selectDetailMode('shield') : undefined}
                 actions={isTotalDetail ? zcashActions('shielded') : undefined}
                 subtitle={renderBalanceAddress(
                   accountNetwork?.addresses.find(address => address.privacy === 'shielded')?.value,
-                  'Zcash Shield'
+                  'Zcash Shield',
+                  'zcashShield'
                 )}
                 balance={
                   categories?.raw.shield != null && zcashDisplay
@@ -1400,7 +1409,7 @@ export function AssetDetail() {
                 fiat={formatBalanceFiat(categories?.fiat.shield)}
                 pending={
                   zcashDisplay?.shieldedPending
-                    ? `${zcashDisplay.shieldedPending} ZEC pending`
+                    ? t('pendingAmount', { amount: zcashDisplay.shieldedPending, symbol: 'ZEC' })
                     : undefined
                 }
               />
@@ -1431,17 +1440,17 @@ export function AssetDetail() {
             )}
             {isTotalDetail && !confidentialOnlyDetail && (
               <AssetDetailBalanceRow
-                label="Public"
+                label={t('public')}
                 onSelect={() => selectDetailMode('public')}
                 actions={zcashActions('transparent')}
-                subtitle={renderBalanceAddress(publicAddress, 'Transparent')}
+                subtitle={renderBalanceAddress(publicAddress, 'Transparent', 'transparent')}
                 balance={
                   zcashDisplay && !waitingForNativeZcash ? `${zcashDisplay.transparent} ZEC` : '—'
                 }
                 fiat={formatBalanceFiat(categories?.fiat.public)}
                 pending={
                   zcashDisplay?.transparentPending
-                    ? `${zcashDisplay.transparentPending} ZEC pending`
+                    ? t('pendingAmount', { amount: zcashDisplay.transparentPending, symbol: 'ZEC' })
                     : undefined
                 }
               />
@@ -1467,7 +1476,7 @@ export function AssetDetail() {
               onRangeChange={setHistoryRange}
               error={
                 historyStatus === 'error' && !visibleHistory?.points.length
-                  ? 'Chart unavailable'
+                  ? t('chartUnavailable')
                   : null
               }
               onRetry={() => setHistoryRetry(value => value + 1)}
@@ -1476,10 +1485,13 @@ export function AssetDetail() {
         )}
 
         {detailMode === 'all' && hasPendingBalance && !isZcashAsset && (
-          <section className="space-y-3 border-t border-border py-4" aria-label="Balance breakdown">
-            <h2 className="text-sm font-semibold">Balance</h2>
+          <section
+            className="space-y-3 border-t border-border py-4"
+            aria-label={t('balanceBreakdown')}
+          >
+            <h2 className="text-sm font-semibold">{t('balance')}</h2>
             <div className="flex items-center justify-between gap-4 text-sm">
-              <span className="text-muted">Pending</span>
+              <span className="text-muted">{t('pending')}</span>
               <span
                 className="min-w-0 break-all text-right text-sm"
                 title={`${formatBaseUnitAmount(asset.balance.pendingRaw, asset.metadata.decimals)} ${formatSymbol(asset.metadata.symbol)}`}
@@ -1491,28 +1503,30 @@ export function AssetDetail() {
         )}
 
         {detailMode !== 'all' && (
-          <section className="border-t border-border pt-4">
-            <h2 className="text-sm font-semibold">Recent activity</h2>
-            <div className="-mx-5 mt-2">
-              <MultichainActivityPanel
-                walletId={effectiveWalletId}
-                accountId={effectiveAccountId}
-                network={currentNetwork}
-                portfolio={model}
-                accountNetworks={storageV2Account?.networks}
-                filterAssetId={asset.asset.id}
-                filterDomain={activityFilterDomain}
-                showStatusFilter={detailMode === 'shield'}
-                accountMode={'main'}
-                showToolbar={false}
-                pageSize={5}
-                localPagination
-                historyFooter={historyFooter}
-                compact
-                onItemClick={item => void handleActivityClick(item)}
-              />
-            </div>
-          </section>
+          <EnglishCopy>
+            <section className="border-t border-border pt-4">
+              <h2 className="text-sm font-semibold">Recent activity</h2>
+              <div className="-mx-5 mt-2">
+                <MultichainActivityPanel
+                  walletId={effectiveWalletId}
+                  accountId={effectiveAccountId}
+                  network={currentNetwork}
+                  portfolio={model}
+                  accountNetworks={storageV2Account?.networks}
+                  filterAssetId={asset.asset.id}
+                  filterDomain={activityFilterDomain}
+                  showStatusFilter={detailMode === 'shield'}
+                  accountMode={'main'}
+                  showToolbar={false}
+                  pageSize={5}
+                  localPagination
+                  historyFooter={historyFooter}
+                  compact
+                  onItemClick={item => void handleActivityClick(item)}
+                />
+              </div>
+            </section>
+          </EnglishCopy>
         )}
       </TabsContent>
     </Tabs>

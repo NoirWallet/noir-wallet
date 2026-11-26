@@ -4,6 +4,8 @@ import * as React from 'react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 
 import { cn } from '@/lib/utils'
+import { useTranslation } from '@/popup/i18n'
+import { shellMessages } from '@/popup/i18n/shell-messages'
 
 const dialogHeightClassName = 'min-h-[min(150px,80dvh)] max-h-[80dvh]'
 
@@ -51,6 +53,7 @@ function DialogContent({
   scroll?: 'content' | 'body'
   fixedHeight?: boolean
 }) {
+  const { locale, t } = useTranslation(shellMessages)
   const positionClasses = {
     center:
       'top-[50%] left-[50%] translate-x-[-50%] translate-y-[-50%] data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 max-w-[calc(100%-2rem)] sm:max-w-lg rounded-lg',
@@ -75,7 +78,7 @@ function DialogContent({
       >
         <path d="m18 6-12 12M6 6l12 12" />
       </svg>
-      <span className="sr-only">Close</span>
+      <span className="sr-only">{t('close')}</span>
     </DialogPrimitive.Close>
   ) : null
 
@@ -84,6 +87,7 @@ function DialogContent({
       <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        lang={locale}
         className={cn(
           'bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed z-50 w-full shadow-lg duration-200 outline-none [&>*]:min-w-0',
           'flex flex-col gap-4 overflow-hidden p-6',
