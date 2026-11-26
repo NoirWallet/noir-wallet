@@ -46,6 +46,18 @@ export interface JournalReplayOptions {
   allowAfterAbort?: boolean
 }
 
+export interface SyncOwner {
+  ownerId: string
+  ownerStartedAt: number
+}
+
+export interface ZcashRecoveryCapabilities {
+  transaction: boolean
+  range: boolean
+}
+
+export type ZcashTransactionRecoveryResult = 'applied' | 'not-found'
+
 /**
  * A PCZT prepared for hardware signing. `full` keeps the prover-only data
  * (witnesses) and stays in the wallet; `redacted` is stripped down for QR
@@ -253,6 +265,18 @@ export interface RPCSchema {
     request: WalletRouted & { key: string; allowDuringSyncSession?: boolean }
     response: boolean
   }
+  'wallet.getRecoveryCapabilities': {
+    request: Record<string, never>
+    response: ZcashRecoveryCapabilities
+  }
+  'wallet.enhanceTransaction': {
+    request: WalletRouted & SyncOwner & { txid: string }
+    response: ZcashTransactionRecoveryResult
+  }
+  'wallet.rescanRange': {
+    request: WalletRouted & SyncOwner & { startHeight: number; endExclusive: number }
+    response: void
+  }
 
   'wallet.prepareSyncBatch': {
     request: WalletRouted & { batchSize?: number; refresh?: boolean }
@@ -282,11 +306,11 @@ export interface RPCSchema {
     response: number
   }
   'wallet.beginSyncSession': {
-    request: WalletRouted & { ownerId: string; ownerStartedAt: number }
+    request: WalletRouted & SyncOwner
     response: boolean
   }
   'wallet.endSyncSession': {
-    request: WalletRouted & { ownerId: string; ownerStartedAt: number }
+    request: WalletRouted & SyncOwner
     response: boolean
   }
   'wallet.markDirty': {

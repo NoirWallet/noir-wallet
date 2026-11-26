@@ -2,7 +2,7 @@ self.addEventListener('error', e => e.preventDefault())
 self.addEventListener('unhandledrejection', e => e.preventDefault())
 
 import { getOffscreenClient } from '@/core/worker/client'
-import type { RPCSchema, ZcashTransactionContext } from '@/core/worker/types'
+import type { RPCSchema, SyncOwner, ZcashTransactionContext } from '@/core/worker/types'
 import { decodeWorkerRpcError, encodeWorkerRpcError } from '@/core/worker/rpc-errors'
 import { isTransactionSubmissionUnknown } from '@/core/zcash/transfer-result'
 import { replayJournalPages } from '@/lib/sync-journal'
@@ -182,7 +182,6 @@ const reinitializingByWallet = new Map<string, Promise<void>>()
 const pendingInitByWallet = new Map<string, Promise<any>>()
 const pendingInitStartedAt = new Map<string, number>()
 const activeSyncBatchByWallet = new Map<string, Promise<unknown>>()
-type SyncOwner = { ownerId: string; ownerStartedAt: number }
 type SyncSessionEntry = SyncOwner & { promise: Promise<void>; resolve: () => void }
 const activeSyncSessionByWallet = new Map<string, SyncSessionEntry>()
 const syncOwnerByWallet = new Map<string, SyncOwner>()
@@ -275,6 +274,14 @@ function assertCurrentSyncOwner(walletId: string, owner: SyncOwner): void {
   const current = syncOwnerByWallet.get(walletId)
   if (current && current.ownerId !== owner.ownerId) {
     throw new Error('STALE_WALLET_RPC: sync session owner changed')
+  }
+}
+
+function assertActiveRecoveryOwner(walletId: string, owner: SyncOwner): void {
+  assertCurrentSyncOwner(walletId, owner)
+  const active = activeSyncSessionByWallet.get(walletId)
+  if (active?.ownerId !== owner.ownerId || active.ownerStartedAt !== owner.ownerStartedAt) {
+    throw new Error('STALE_WALLET_RPC: active sync session required for Zcash recovery')
   }
 }
 
@@ -1517,6 +1524,79 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
+  if (rpcMessage.method === 'wallet.getRecoveryCapabilities') {
+    void zcashWorkerClient
+      .requestToWorker('wallet.getRecoveryCapabilities', {})
+      .then(result => sendResponse({ result }))
+      .catch(() => sendResponse({ error: 'Could not determine Zcash recovery capabilities' }))
+    return true
+  }
+
+  if (
+    rpcMessage.method === 'wallet.enhanceTransaction' ||
+    rpcMessage.method === 'wallet.rescanRange'
+  ) {
+    const method = rpcMessage.method
+    const { walletId, txid, startHeight, endExclusive } = rpcMessage.payload
+    if (typeof walletId !== 'string' || !walletId) {
+      sendResponse({ error: 'Missing sync wallet ID' })
+      return true
+    }
+
+    const generation = getWalletGeneration(walletId)
+    let owner: SyncOwner
+    let request: Promise<RPCSchema[typeof method]['response']>
+    try {
+      owner = parseSyncOwner(rpcMessage.payload)
+      assertActiveRecoveryOwner(walletId, owner)
+      if (isWalletDirty(walletId)) throw new Error('WALLET_DIRTY: in-memory wallet is stale')
+      if (isSyncBatchActive(walletId) || getWalletLane(walletId)?.state === 'reload') {
+        throw new Error('SYNC_BUSY: wallet operation in progress')
+      }
+      if (method === 'wallet.enhanceTransaction') {
+        if (typeof txid !== 'string') throw new Error('Invalid Zcash transaction ID')
+        request = zcashWorkerClient.requestToWorker(method, { ...owner, walletId, txid })
+      } else {
+        if (typeof startHeight !== 'number' || typeof endExclusive !== 'number') {
+          throw new Error('Invalid Zcash recovery range')
+        }
+        request = zcashWorkerClient.requestToWorker(method, {
+          ...owner,
+          walletId,
+          startHeight,
+          endExclusive
+        })
+      }
+    } catch (error) {
+      sendResponse({
+        error: error instanceof Error ? error.message : 'Invalid Zcash recovery request'
+      })
+      return true
+    }
+
+    const operation = request
+      .then(result => {
+        assertWalletGeneration(walletId, generation)
+        assertActiveRecoveryOwner(walletId, owner)
+        sendResponse({ result })
+      })
+      .catch(error => {
+        if (error instanceof TimeoutError) {
+          if (getWalletGeneration(walletId) === generation) markWalletDirty(walletId)
+          sendResponse(encodeWorkerRpcError(error))
+        } else {
+          sendResponse({ error: error instanceof Error ? error.message : 'Zcash recovery failed' })
+        }
+      })
+      .finally(() => {
+        if (activeSyncBatchByWallet.get(walletId) === operation) {
+          activeSyncBatchByWallet.delete(walletId)
+        }
+      })
+    activeSyncBatchByWallet.set(walletId, operation)
+    return true
+  }
+
   if (message.method === 'wallet.syncSessionSetup') {
     const walletId = message.payload?.walletId as string | undefined
     if (!walletId) {
@@ -1554,6 +1634,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       assertCurrentSyncOwner(walletId, parseSyncOwner(message.payload))
       if (activeSyncSessionByWallet.get(walletId)?.ownerId !== message.payload.ownerId) {
         throw new Error('STALE_WALLET_RPC: sync session owner changed')
+      }
+      if (isSyncBatchActive(walletId)) {
+        throw new Error('SYNC_BUSY: wallet operation in progress')
       }
     } catch (error) {
       sendResponse({ error: error instanceof Error ? error.message : String(error) })

@@ -177,7 +177,9 @@ export type SyncBlocksOptions = {
   force?: boolean
   priority?: 'foreground' | 'background'
   waitForTipAdvance?: boolean
+  settlementHeight?: number | null
   maxDurationMs?: number
+  routine?: boolean
 }
 
 /**
@@ -350,6 +352,7 @@ export class BackgroundZcashWalletRuntime {
   private activeRestoreAbort: AbortController | null = null
   private activeRestoreWalletId: string | null = null
   private reloadMutexByWallet = new Map<string, Promise<void>>()
+  private recoveryCheckpointByWallet = new Map<string, Promise<void>>()
   private activeSyncWalletIds = new Set<string>()
   private syncPreflightWalletIds = new Set<string>()
   private walletRuntimeGeneration = new Map<string, number>()
@@ -1046,6 +1049,11 @@ export class BackgroundZcashWalletRuntime {
       lightwalletdUrl?: string
     }
   ): Promise<void> {
+    let recovery = this.recoveryCheckpointByWallet.get(walletId)
+    while (recovery) {
+      await recovery
+      recovery = this.recoveryCheckpointByWallet.get(walletId)
+    }
     const existing = this.reloadMutexByWallet.get(walletId)
     if (existing) {
       await existing
@@ -2927,7 +2935,11 @@ export class BackgroundZcashWalletRuntime {
     }
   }
 
-  async refreshTransactionHistoryFromWasm(walletId: string, accountId: string): Promise<void> {
+  async refreshTransactionHistoryFromWasm(
+    walletId: string,
+    accountId: string,
+    options?: { localOnly?: boolean; canApply?: () => boolean }
+  ): Promise<void> {
     if (this.isWalletActivelySyncing(walletId)) return
     const core = this.walletCores.get(walletId)
     if (!core?.hasAccount()) return
@@ -2941,6 +2953,7 @@ export class BackgroundZcashWalletRuntime {
     const revision = (this.historyRefreshRevisions.get(historyScope) ?? 0) + 1
     this.historyRefreshRevisions.set(historyScope, revision)
     const canApplyStatus = () =>
+      (options?.canApply?.() ?? true) &&
       this.network === network &&
       this.walletCores.get(walletId) === core &&
       (this.walletRuntimeGeneration.get(walletId) ?? 0) === runtimeGeneration &&
@@ -2952,6 +2965,7 @@ export class BackgroundZcashWalletRuntime {
       if (wasmAccountId == null) return
 
       const entries = await core.getTransactionHistory(wasmAccountId)
+      if (!canApplyStatus()) return
       const cacheKey = this.transactionHistoryCacheKey(walletId, accountId)
       this.wasmTxHistoryCache.set(cacheKey, entries)
       const accountKey = buildAccountKey(this.network, walletId, accountId)
@@ -2989,30 +3003,39 @@ export class BackgroundZcashWalletRuntime {
       let transparentReceiveTransactions: Transaction[] = []
       let transparentHistoryFailed = false
 
-      try {
-        transparentReceiveTransactions = await fetchTransparentReceiveTransactions(
-          account,
-          this.network,
-          {
-            baseUrl: getNetworkConfig(this.network).nodeRpcUrl,
-            cacheKey: accountKey,
-            walletCreatedTxids,
-            confirmationHints
-          }
-        )
-      } catch {
-        transparentHistoryFailed = true
-        logger.warn('transparent receive history fetch failed', walletId, accountId)
+      if (!options?.localOnly) {
+        try {
+          transparentReceiveTransactions = await fetchTransparentReceiveTransactions(
+            account,
+            network,
+            {
+              baseUrl: getNetworkConfig(network).nodeRpcUrl,
+              cacheKey: accountKey,
+              walletCreatedTxids,
+              confirmationHints
+            }
+          )
+        } catch {
+          transparentHistoryFailed = true
+          logger.warn('transparent receive history fetch failed', walletId, accountId)
+        }
       }
 
+      if (!canApplyStatus()) return
       const { transactions: persistedTransactions, newWasmTransactionCount } =
-        await writeLocalActivity('legacy-zcash', accountKey, {
-          kind: 'history',
-          wasm: wasmTransactions,
-          receipts: transparentReceiveTransactions,
-          addresses: account.addresses
-        })
-      if (canApplyStatus()) {
+        await writeLocalActivity(
+          'legacy-zcash',
+          accountKey,
+          {
+            kind: 'history',
+            wasm: wasmTransactions,
+            receipts: transparentReceiveTransactions,
+            addresses: account.addresses
+          },
+          { isActive: canApplyStatus }
+        )
+      if (!canApplyStatus()) return
+      if (!options?.localOnly) {
         if (transparentHistoryFailed) this.historyRefreshFailures.add(historyScope)
         else this.historyRefreshFailures.delete(historyScope)
       }
@@ -3048,12 +3071,20 @@ export class BackgroundZcashWalletRuntime {
     }
   }
 
-  async refreshWalletTransactionHistoriesFromWasm(walletId: string): Promise<void> {
+  async refreshWalletTransactionHistoriesFromWasm(
+    walletId: string,
+    signal?: AbortSignal
+  ): Promise<void> {
     const wallet = this.store.getWallet(walletId)
     if (!wallet) return
 
     for (const account of wallet.accounts) {
-      await this.refreshTransactionHistoryFromWasm(walletId, account.id)
+      if (signal?.aborted) return
+      await this.refreshTransactionHistoryFromWasm(
+        walletId,
+        account.id,
+        signal ? { localOnly: true, canApply: () => !signal.aborted } : undefined
+      )
     }
   }
 
@@ -3118,6 +3149,82 @@ export class BackgroundZcashWalletRuntime {
 
   getWalletScannedHeight(walletId: string): number {
     return this.accountDataStore.getWalletSyncState(this.network, walletId).currentHeight ?? 0
+  }
+
+  async runRecoveryMutation<Result>(
+    walletId: string,
+    accountId: string,
+    assertScope: () => Promise<void>,
+    mutate: (core: ZcashWalletCore) => Promise<Result>
+  ): Promise<Result> {
+    const network = this.network
+    const dbKey = `${network}_${walletId}`
+    await assertScope()
+    await this.ensureWalletReadyForSync(walletId, accountId)
+    if (!(await hasWalletDb(dbKey))) throw new Error('Sync Zcash before requesting recovery.')
+    let reload = this.reloadMutexByWallet.get(walletId)
+    while (reload) {
+      await reload
+      reload = this.reloadMutexByWallet.get(walletId)
+    }
+    let releaseCheckpoint!: () => void
+    const checkpoint = new Promise<void>(resolve => {
+      releaseCheckpoint = resolve
+    })
+    this.recoveryCheckpointByWallet.set(walletId, checkpoint)
+    const core = this.getOrCreateWalletCore(walletId)
+    let shouldReload = false
+    try {
+      await clearSyncAbort(walletId)
+      await assertScope()
+      await core.beginSyncSession()
+      let committing = false
+      try {
+        const manifest = await getJournalManifest(network, walletId)
+        if (manifest && manifest.nextSeq > (manifest.baseSnapshotSeq ?? 0)) {
+          await core.replayJournalEntries(network, walletId)
+          await assertScope()
+          await core.persistDb(dbKey, { allowDuringSyncSession: true, requireWrite: true })
+          await clearJournalEntries(network, walletId, manifest.nextSeq - 1)
+        }
+        await assertScope()
+        const result = await mutate(core)
+        await assertScope()
+        if (this.purgingWalletIds.has(walletId)) throw new Error('Wallet is being removed')
+        committing = true
+        await core.persistDb(dbKey, { allowDuringSyncSession: true, requireWrite: true })
+        this.clearWalletSummaryCache(walletId)
+        return result
+      } catch {
+        shouldReload = true
+        throw new Error(
+          committing
+            ? 'Zcash recovery could not be saved. Try again.'
+            : 'Zcash recovery failed. Try again.'
+        )
+      } finally {
+        await core.endSyncSession().catch(() => {})
+        if (shouldReload) await core.markDirty().catch(() => {})
+      }
+    } finally {
+      this.recoveryCheckpointByWallet.delete(walletId)
+      releaseCheckpoint()
+      if (shouldReload) {
+        await this.reloadWalletRuntime(walletId, { mode: 'dirty', dbKey }).catch(() => {})
+      }
+    }
+  }
+
+  async hasRecoveryTransaction(
+    walletId: string,
+    accountId: string,
+    txid: string
+  ): Promise<boolean> {
+    const core = this.getOrCreateWalletCore(walletId)
+    const wasmAccountId = await this.resolveWasmAccountId(walletId, accountId, core)
+    if (wasmAccountId == null) return false
+    const entries = await core.getTransactionHistory(wasmAccountId)
+    return entries.some(entry => wasmTxidToHex(entry.txid) === txid)
   }
 
   async prepareForTxCatchUp(
@@ -4573,14 +4680,18 @@ export class BackgroundZcashWalletRuntime {
         }
       }
 
-      const pendingZcashTxPre = await hasPendingZcashTxForWallet(syncWalletId!)
+      const pendingZcashTxPre =
+        !options?.routine && (await hasPendingZcashTxForWallet(syncWalletId!))
       syncNeedsSettlement =
         !!options?.waitForTipAdvance ||
+        options?.settlementHeight !== undefined ||
         pendingZcashTxPre ||
         (await this.hasPendingJournal(syncWalletId))
 
       if (fullyScannedHeight >= latestHeight) {
-        const shouldCatchUp = options?.waitForTipAdvance || pendingZcashTxPre
+        const shouldCatchUp =
+          options?.settlementHeight === undefined &&
+          (options?.waitForTipAdvance || pendingZcashTxPre)
 
         if (shouldCatchUp) {
           const baselineTip = latestHeight
@@ -4620,7 +4731,7 @@ export class BackgroundZcashWalletRuntime {
           return { status: 'partial' }
         }
 
-        if (!syncNeedsSettlement) {
+        if (!options?.routine && !syncNeedsSettlement) {
           try {
             const tipSummary = await core.getWalletSummary()
             syncNeedsSettlement = this.summaryHasPendingBalance(tipSummary)
@@ -4678,6 +4789,7 @@ export class BackgroundZcashWalletRuntime {
         })
       }
 
+      if (isAborted?.()) return finishAborted()
       await core.beginSyncSession()
       syncSessionActive = true
 
@@ -4686,8 +4798,10 @@ export class BackgroundZcashWalletRuntime {
       // skip those round-trips; on failure we fall back to per-batch refresh.
       let sessionSetupDone = false
       try {
-        await core.syncSessionSetup()
-        sessionSetupDone = true
+        if (!options?.routine && !isAborted?.()) {
+          await core.syncSessionSetup()
+          sessionSetupDone = true
+        }
       } catch (e) {
         if (!isAborted?.()) {
           logger.warn(
@@ -4753,7 +4867,9 @@ export class BackgroundZcashWalletRuntime {
       const syncLogPrefix = logger.getSyncPrefix(syncWalletId, syncAccountId)
 
       const isCurrentWallet = syncWalletId === this.currentWalletId
-      let batchSize = getSyncBatchSize(totalRange, isCurrentWallet)
+      let batchSize = options?.routine
+        ? WALLET_CONFIG.SYNC.ROUTINE_BATCH_MAX_BLOCKS
+        : getSyncBatchSize(totalRange, isCurrentWallet)
 
       await syncJobStore.markRunning(
         syncWalletId,
@@ -4797,6 +4913,7 @@ export class BackgroundZcashWalletRuntime {
       // Refresh when queued ranges end before this session's captured target.
       let forceRefreshNext = false
       let lastPrepareWasRefresh = false
+      let routineBatchDispatched = false
 
       while (hasMore) {
         if (isAborted?.()) {
@@ -4804,9 +4921,14 @@ export class BackgroundZcashWalletRuntime {
           aborted = true
           break
         }
-        if (hasScannedBatch && backgroundBudgetReached()) {
+        if (
+          routineBatchDispatched ||
+          ((options?.routine || hasScannedBatch) && backgroundBudgetReached())
+        ) {
           budgetExhausted = true
-          logger.info('Background sync budget reached; saving partial progress', syncWalletId)
+          if (!routineBatchDispatched) {
+            logger.info('Background sync budget reached; saving partial progress', syncWalletId)
+          }
           break
         }
 
@@ -4886,6 +5008,15 @@ export class BackgroundZcashWalletRuntime {
             syncLogPrefix,
             `preparing batch ${preparingBatch} (size ${batchSize}${refreshBatch ? ', refresh' : ''})...`
           )
+          if (isAborted?.()) {
+            aborted = true
+            break
+          }
+          if (options?.routine && backgroundBudgetReached()) {
+            budgetExhausted = true
+            break
+          }
+          routineBatchDispatched = options?.routine === true
           batchResult = await core.prepareSyncBatchWithJournal(
             batchSize,
             syncNetwork,
@@ -4907,14 +5038,27 @@ export class BackgroundZcashWalletRuntime {
           }
           consecutiveErrors = 0
         } catch (batchErr: any) {
+          const errMsg = batchErr?.message || String(batchErr)
+          const isRpcTimeout =
+            errMsg.includes('Offscreen RPC timeout') || errMsg.includes('Worker RPC timeout')
           if (isAborted?.() || options?.signal?.aborted) {
+            if (isRpcTimeout) {
+              snapshotFailed = true
+              await core.markDirty().catch(() => {})
+            }
             aborted = true
             break
           }
           consecutiveErrors++
-          const errMsg = batchErr?.message || String(batchErr)
-          const isRpcTimeout =
-            errMsg.includes('Offscreen RPC timeout') || errMsg.includes('Worker RPC timeout')
+          if (options?.routine) {
+            if (isRpcTimeout) {
+              snapshotFailed = true
+              await core.markDirty().catch(() => {})
+            }
+            partialReason = 'network_error'
+            if (isRpcEndpointError(batchErr)) rpcFailureCount = consecutiveErrors
+            throw batchErr
+          }
           if (isRpcTimeout && consecutiveErrors <= 2) {
             logger.warn(
               `Batch RPC timeout (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}), reinitializing worker: ${errMsg}`,
@@ -5102,6 +5246,11 @@ export class BackgroundZcashWalletRuntime {
             Math.min(lastSummaryHeight, latestHeight, lastDisplayHeight)
           )
           const noRangeSummary = wasmProgress.summary
+
+          if (options?.routine) {
+            budgetExhausted = wasmProgress.dirty || wasmProgress.fullyScanned < syncTargetHeight
+            break
+          }
 
           if (!wasmProgress.dirty && wasmProgress.fullyScanned >= syncTargetHeight) {
             const atTipWithPending =
@@ -5392,7 +5541,7 @@ export class BackgroundZcashWalletRuntime {
           })
         }
 
-        if (hasMore) {
+        if (hasMore && !options?.routine) {
           batchSize = getSyncBatchSize(remainingBlocks, isCurrentWallet)
 
           const journalBatches = await this.getJournalBatchCount(syncWalletId)
@@ -5454,11 +5603,12 @@ export class BackgroundZcashWalletRuntime {
         }
       }
 
-      if (aborted) {
+      if (aborted || (options?.routine && isAborted?.())) {
         const abortHeight = Math.min(Math.max(lastSummaryHeight, syncBase), latestHeight)
-        const journalBatches = await this.getJournalBatchCount(syncWalletId)
-        let persistedOnAbort = false
-        if (hasScannedBatch && !snapshotFailed && !flushFailed) {
+        const durableRoutineProgress = options?.routine && !snapshotFailed && !flushFailed
+        let persistedOnAbort = durableRoutineProgress
+        if (hasScannedBatch && !persistedOnAbort && !snapshotFailed && !flushFailed) {
+          const journalBatches = await this.getJournalBatchCount(syncWalletId)
           try {
             await withTimeout(
               this.persistWalletDbDuringSync(syncWalletId),
@@ -5492,7 +5642,8 @@ export class BackgroundZcashWalletRuntime {
           .upsert(syncWalletId, syncNetwork, {
             lastPersistedHeight: abortHeight,
             status: 'interrupted',
-            batchCount
+            batchCount,
+            ...(options?.routine ? { resumeOnStartup: false } : {})
           })
           .catch(() => {})
         this.updateSyncProgressForWallet(syncWalletId, {

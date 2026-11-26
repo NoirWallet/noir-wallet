@@ -56,6 +56,7 @@ import type { AssetPriceReadModel } from '@/core/prices'
 import { summarizePortfolioFiat } from '@/popup/services/portfolio-prices'
 import { useActiveAccountNetworks } from '../hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '../hooks/useHomePortfolio'
+import { useHomeZcashTipProbe } from '../hooks/useHomeZcashTipProbe'
 import { useHomeScrollPosition } from '../hooks/useHomeScrollPosition'
 import { getAssetDomainRaw } from '../services/asset-domains'
 import { useSettingsStore } from '@/store/settings-store'
@@ -265,6 +266,15 @@ export function Home() {
           accountDisplayNames
         )
       : 'Account 1')
+  useHomeZcashTipProbe(
+    storageV2Account?.active &&
+      homeCapabilities.hasZcash &&
+      effectiveWalletId &&
+      effectiveAccountId &&
+      !accountContextChanging
+      ? modeScopeKey
+      : null
+  )
   const requestedAssetDomain = resolveHomeAssetDomain(location.search)
   const showShield = homeCapabilities.hasZcash || homeCapabilities.confidentialHome
   const routeAssetDomain =

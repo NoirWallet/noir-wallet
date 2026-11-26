@@ -1385,6 +1385,25 @@ export class WebWallet {
     return takeObject(ret)
   }
   /**
+   * Attempts to enhance the given transaction immediately, and reports any failure to the
+   * caller.
+   *
+   * Ordinary syncing retries a queued request by itself; this is for a user who knows about a
+   * transaction (for example from an exchange) that the wallet has not picked up yet.
+   *
+   * # Arguments
+   *
+   * * `txid` - The transaction id in canonical (byte-reversed) hexadecimal.
+   * @param {string} txid
+   * @returns {Promise<void>}
+   */
+  enhance_transaction(txid) {
+    const ptr0 = passStringToWasm0(txid, wasm.__wbindgen_export, wasm.__wbindgen_export2)
+    const len0 = WASM_VECTOR_LEN
+    const ret = wasm.webwallet_enhance_transaction(this.__wbg_ptr, ptr0, len0)
+    return takeObject(ret)
+  }
+  /**
    * @param {number} account_id
    * @param {string} to_address
    * @param {Uint8Array | null | undefined} memo
@@ -1741,6 +1760,43 @@ export class WebWallet {
    */
   get_next_shielded_address(account_id) {
     const ret = wasm.webwallet_get_next_shielded_address(this.__wbg_ptr, account_id)
+    return takeObject(ret)
+  }
+  /**
+   * Reports the transactions whose enhancement has not completed, so that a caller can tell the
+   * user that some transaction data still needs refreshing instead of showing a stale history.
+   *
+   * The list is derived from the wallet's persistent request queue, so it survives a snapshot
+   * restore; the per-transaction failure details are remembered only for this instance.
+   *
+   * # Returns
+   *
+   * `{ deferredEnhancements: [{ txid, kind?, attempts }] }`, where `txid` is canonical
+   * (byte-reversed) hexadecimal and `kind` is `"fetch"` when the transaction could not be
+   * downloaded or `"decode"` when its bytes were unusable.
+   *
+   * A failure while writing the wallet is reported by the sync itself, not here, because the
+   * wallet may hold a partial update that a caller must not build on.
+   *
+   * `transparentHistoryIncomplete` is set while the wallet knows of transparent address history
+   * it has not read yet, so an output on one of those addresses may already have been spent.
+   * It does not mean transparent payments are unavailable: a build is only refused when it
+   * would draw on one of the addresses still being read, and it succeeds again once that
+   * history is read.
+   *
+   * That refusal is thrown as an `Error` whose `name` is `"TransparentHistoryIncomplete"`; the
+   * message carries the reason. Only errors a caller is expected to handle carry a name this
+   * way (`"TransparentHistoryIncomplete"`, `"TransactionNotFound"` with a `txId` property, and
+   * `"TransactionSubmissionUnknown"`); everything else arrives as a plain `Error` whose message
+   * describes what went wrong.
+   *
+   * A transaction that keeps failing is retried less often as `attempts` grows, so a stuck
+   * request cannot cost an attempt on every sync; it is never dropped, and
+   * `enhance_transaction` retries it immediately on request.
+   * @returns {Promise<any>}
+   */
+  get_sync_diagnostics() {
+    const ret = wasm.webwallet_get_sync_diagnostics(this.__wbg_ptr)
     return takeObject(ret)
   }
   /**
@@ -2356,6 +2412,20 @@ export class WebWallet {
     return takeObject(ret)
   }
   /**
+   * Scans the pending blocks within the requested range and commits the results together.
+   *
+   * The range is half-open and is clamped to the wallet birthday and known chain tip.
+   * The wallet needs an account and a known chain tip. An already scanned or empty range
+   * requires no sync. If the call fails, the wallet keeps its prior scan results.
+   * @param {number} start_height
+   * @param {number} end_height
+   * @returns {Promise<void>}
+   */
+  rescan_range(start_height, end_height) {
+    const ret = wasm.webwallet_rescan_range(this.__wbg_ptr, start_height, end_height)
+    return takeObject(ret)
+  }
+  /**
    * Scan a journal entry for recovery (replay from base snapshot + journal).
    * Returns true if more scan ranges remain.
    * @param {Uint8Array} journal_data
@@ -2968,6 +3038,13 @@ function __wbg_get_imports(memory) {
       const ret = Number(getObject(arg0))
       return ret
     },
+    __wbg_String_8564e559799eccda: function (arg0, arg1) {
+      const ret = String(getObject(arg1))
+      const ptr1 = passStringToWasm0(ret, wasm.__wbindgen_export, wasm.__wbindgen_export2)
+      const len1 = WASM_VECTOR_LEN
+      getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true)
+      getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true)
+    },
     __wbg___wbindgen_bigint_get_as_i64_38130e98eecd467d: function (arg0, arg1) {
       const v = getObject(arg1)
       const ret = typeof v === 'bigint' ? v : undefined
@@ -3459,7 +3536,7 @@ function __wbg_get_imports(memory) {
           const a = state0.a
           state0.a = 0
           try {
-            return __wasm_bindgen_func_elem_16580(a, state0.b, arg0, arg1)
+            return __wasm_bindgen_func_elem_16668(a, state0.b, arg0, arg1)
           } finally {
             state0.a = a
           }
@@ -3499,7 +3576,7 @@ function __wbg_get_imports(memory) {
           const a = state0.a
           state0.a = 0
           try {
-            return __wasm_bindgen_func_elem_16580(a, state0.b, arg0, arg1)
+            return __wasm_bindgen_func_elem_16668(a, state0.b, arg0, arg1)
           } finally {
             state0.a = a
           }
@@ -3795,23 +3872,23 @@ function __wbg_get_imports(memory) {
       console.warn(getObject(arg0), getObject(arg1), getObject(arg2), getObject(arg3))
     },
     __wbindgen_cast_0000000000000001: function (arg0, arg1) {
-      // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 4196, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-      const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_12470)
+      // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 4209, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+      const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_12558)
       return addHeapObject(ret)
     },
     __wbindgen_cast_0000000000000002: function (arg0, arg1) {
-      // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 5409, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-      const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_16563)
+      // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 5422, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+      const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_16651)
       return addHeapObject(ret)
     },
     __wbindgen_cast_0000000000000003: function (arg0, arg1) {
-      // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 5411, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-      const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_16565)
+      // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 5424, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+      const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_16653)
       return addHeapObject(ret)
     },
     __wbindgen_cast_0000000000000004: function (arg0, arg1) {
-      // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 4167, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-      const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_12393)
+      // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 4180, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+      const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_12481)
       return addHeapObject(ret)
     },
     __wbindgen_cast_0000000000000005: function (arg0) {
@@ -3878,22 +3955,22 @@ function __wbg_get_imports(memory) {
   }
 }
 
-function __wasm_bindgen_func_elem_12393(arg0, arg1) {
-  wasm.__wasm_bindgen_func_elem_12393(arg0, arg1)
+function __wasm_bindgen_func_elem_12481(arg0, arg1) {
+  wasm.__wasm_bindgen_func_elem_12481(arg0, arg1)
 }
 
-function __wasm_bindgen_func_elem_12470(arg0, arg1, arg2) {
-  wasm.__wasm_bindgen_func_elem_12470(arg0, arg1, addHeapObject(arg2))
+function __wasm_bindgen_func_elem_12558(arg0, arg1, arg2) {
+  wasm.__wasm_bindgen_func_elem_12558(arg0, arg1, addHeapObject(arg2))
 }
 
-function __wasm_bindgen_func_elem_16565(arg0, arg1, arg2) {
-  wasm.__wasm_bindgen_func_elem_16565(arg0, arg1, addHeapObject(arg2))
+function __wasm_bindgen_func_elem_16653(arg0, arg1, arg2) {
+  wasm.__wasm_bindgen_func_elem_16653(arg0, arg1, addHeapObject(arg2))
 }
 
-function __wasm_bindgen_func_elem_16563(arg0, arg1, arg2) {
+function __wasm_bindgen_func_elem_16651(arg0, arg1, arg2) {
   try {
     const retptr = wasm.__wbindgen_add_to_stack_pointer(-16)
-    wasm.__wasm_bindgen_func_elem_16563(retptr, arg0, arg1, addHeapObject(arg2))
+    wasm.__wasm_bindgen_func_elem_16651(retptr, arg0, arg1, addHeapObject(arg2))
     var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true)
     var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true)
     if (r1) {
@@ -3904,8 +3981,8 @@ function __wasm_bindgen_func_elem_16563(arg0, arg1, arg2) {
   }
 }
 
-function __wasm_bindgen_func_elem_16580(arg0, arg1, arg2, arg3) {
-  wasm.__wasm_bindgen_func_elem_16580(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3))
+function __wasm_bindgen_func_elem_16668(arg0, arg1, arg2, arg3) {
+  wasm.__wasm_bindgen_func_elem_16668(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3))
 }
 
 const __wbindgen_enum_ReadableStreamType = ['bytes']

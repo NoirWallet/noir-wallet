@@ -250,11 +250,6 @@ export class TransactionMonitor {
     await this.runCheck()
   }
 
-  async hasPendingTransactions(): Promise<boolean> {
-    await this.loadFromStorage()
-    return this.pendingTransactions.size > 0
-  }
-
   async handleAlarm() {
     await this.loadFromStorage()
     if (this.pendingTransactions.size === 0) {
