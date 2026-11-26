@@ -1,6 +1,7 @@
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import { getNearNetworkConfigs } from '@/config/networks'
-import { readBoundedResponseText } from '@/lib/fetch-utils'
+import { FetchResponseTooLargeError, FetchTimeoutError } from '@/lib/fetch-utils'
+import { fetchJsonRpcResponse, type JsonRpcTransport } from '../json-rpc-failover-fetch'
 import { parseChainId } from '@/core/chains/registry'
 
 import {
@@ -46,8 +47,6 @@ export {
   type NearRpcErrorCode,
   type NearTransactionStatus
 } from './near-rpc-types'
-
-type FetchImplementation = (input: string, init: RequestInit) => Promise<Response>
 
 const DEFAULT_MAXIMUM_RESPONSE_BYTES = 1024 * 1024
 const MAXIMUM_TIMEOUT_MS = 60_000
@@ -158,17 +157,10 @@ function mapHttpError(status: number): NearRpcError {
   return new NearRpcError('network-unavailable', 'NEAR RPC endpoint is unavailable')
 }
 
-async function readResponseText(response: Response, maximumBytes: number): Promise<string> {
-  return readBoundedResponseText(
-    response,
-    maximumBytes,
-    () => new NearRpcError('invalid-response', 'NEAR RPC response exceeds the allowed size')
-  )
-}
-
 export function createNearRpcClient(
   config: NearRpcClientConfig,
-  fetchImplementation: FetchImplementation = fetch
+  fetchImplementation?: typeof fetch,
+  transport?: JsonRpcTransport
 ): NearReadRpc & NearBroadcastRpc & NearCommitBroadcastRpc {
   const expectedNetwork = parseExpectedNetwork(config.chainId)
   const rpcUrl = parseRpcUrl(config.rpcUrl)
@@ -203,35 +195,20 @@ export function createNearRpcClient(
     if (externalSignal?.aborted) {
       throw new NearRpcError('cancelled', 'NEAR RPC request was cancelled')
     }
-    const controller = new AbortController()
-    let timedOut = false
-    const onExternalAbort = () => controller.abort()
-    externalSignal?.addEventListener('abort', onExternalAbort, { once: true })
-    const timeout = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, timeoutMs)
     requestId = requestId >= 2_147_483_647 ? 1 : requestId + 1
     const id = requestId
     try {
-      const response = await fetchImplementation(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
-        cache: 'no-store',
-        credentials: 'omit',
-        redirect: 'error',
-        referrerPolicy: 'no-referrer',
-        signal: controller.signal
-      })
+      const response = await (transport ?? fetchJsonRpcResponse)(
+        rpcUrl,
+        { jsonrpc: '2.0', id, method, params },
+        { timeoutMs, maxBytes: maximumResponseBytes, signal: externalSignal },
+        fetchImplementation
+      )
       if (!response.ok) throw mapHttpError(response.status)
-      const text = await readResponseText(response, maximumResponseBytes)
-      let decoded: unknown
-      try {
-        decoded = JSON.parse(text)
-      } catch {
+      if (!response.validJson) {
         throw new NearRpcError('invalid-response', 'NEAR RPC response is not valid JSON')
       }
+      const decoded = response.body
       if (!isRecord(decoded) || decoded.jsonrpc !== '2.0' || decoded.id !== id) {
         throw new NearRpcError('invalid-response', 'Invalid NEAR RPC response envelope')
       }
@@ -247,16 +224,16 @@ export function createNearRpcClient(
       return decoded.result
     } catch (error) {
       if (error instanceof NearRpcError) throw error
-      if (controller.signal.aborted) {
+      if (externalSignal?.aborted || error instanceof FetchTimeoutError) {
         throw new NearRpcError(
-          timedOut ? 'timeout' : 'cancelled',
-          timedOut ? 'NEAR RPC request timed out' : 'NEAR RPC request was cancelled'
+          externalSignal?.aborted ? 'cancelled' : 'timeout',
+          externalSignal?.aborted ? 'NEAR RPC request was cancelled' : 'NEAR RPC request timed out'
         )
       }
+      if (error instanceof FetchResponseTooLargeError) {
+        throw new NearRpcError('invalid-response', 'NEAR RPC response exceeds the allowed size')
+      }
       throw new NearRpcError('network-unavailable', 'NEAR RPC request failed')
-    } finally {
-      clearTimeout(timeout)
-      externalSignal?.removeEventListener('abort', onExternalAbort)
     }
   }
 

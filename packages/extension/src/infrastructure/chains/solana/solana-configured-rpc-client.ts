@@ -19,10 +19,13 @@ export function createConfiguredSolanaRpcClient(
   if (!cluster) throw new Error('Unsupported Solana chain')
   const endpoints = resolveSolanaRpcEndpointOptions(cluster).slice(0, 5)
   const failoverFetch = createJsonRpcFailoverFetch(endpoints, async (url, signal) => {
-    await createSolanaRpcClient(
-      { chainId: network.chainId, rpcUrl: url },
-      fetch
-    ).assertExpectedChain(signal)
+    await createSolanaRpcClient({ chainId: network.chainId, rpcUrl: url }).assertExpectedChain(
+      signal
+    )
   })
-  return createSolanaRpcClient({ chainId: network.chainId, rpcUrl: network.rpcUrl }, failoverFetch)
+  return createSolanaRpcClient(
+    { chainId: network.chainId, rpcUrl: network.rpcUrl },
+    undefined,
+    failoverFetch
+  )
 }

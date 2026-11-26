@@ -2,6 +2,7 @@ import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import type { ChainRegistry } from '@/core/chains/registry'
 import { parseAssetDisplayMetadata } from '@/core/chains/registry'
 import { normalizeUserEvmAssetIdentity } from '@/core/chains/user-assets'
+import { FetchResponseTooLargeError, fetchWithTimeout, jsonRequestInit } from '@/lib/fetch-utils'
 
 const MAXIMUM_RESPONSE_BYTES = 2 * 1024 * 1024
 const MAXIMUM_DISCOVERED_TOKEN_COUNT = 512
@@ -36,12 +37,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export class EvmTokenDiscoveryClient implements EvmTokenDiscoverySource {
   private readonly origin: string
-  private readonly fetcher: typeof fetch
 
   constructor(private readonly options: EvmTokenDiscoveryClientOptions) {
     this.origin = options.origin ?? __EVM_HISTORY_API_ORIGIN__
-    const fetcher = options.fetch ?? globalThis.fetch.bind(globalThis)
-    this.fetcher = (input, init) => fetcher(input, init)
   }
 
   get available(): boolean {
@@ -68,25 +66,16 @@ export class EvmTokenDiscoveryClient implements EvmTokenDiscoverySource {
     const url = new URL('/balances', `${this.origin}/`)
     url.searchParams.set('address', address.toLowerCase())
     url.searchParams.set('chainIds', numericChainIds.join(','))
-    const controller = new AbortController()
-    const abort = () => controller.abort(signal?.reason)
-    signal?.addEventListener('abort', abort, { once: true })
-    const timeout = setTimeout(() => controller.abort(), DEFAULT_REQUEST_TIMEOUT_MS)
     try {
-      const response = await this.fetcher(url, {
-        headers: { Accept: 'application/json' },
-        signal: controller.signal
+      const response = await fetchWithTimeout(url, {
+        ...jsonRequestInit({ signal }),
+        timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+        maxBytes: MAXIMUM_RESPONSE_BYTES,
+        fetcher: this.options.fetch,
+        acceptHttpErrors: 'status-only'
       })
       if (!response.ok) throw new Error(`Token discovery request failed (${response.status})`)
-      const contentLength = Number(response.headers.get('content-length') ?? 0)
-      if (Number.isFinite(contentLength) && contentLength > MAXIMUM_RESPONSE_BYTES) {
-        throw new Error('Token discovery response is too large')
-      }
-      const text = await response.text()
-      if (new TextEncoder().encode(text).byteLength > MAXIMUM_RESPONSE_BYTES) {
-        throw new Error('Token discovery response is too large')
-      }
-      const value: unknown = JSON.parse(text)
+      const value: unknown = await response.json()
       if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.assets)) {
         throw new Error('Invalid token discovery response')
       }
@@ -135,9 +124,11 @@ export class EvmTokenDiscoveryClient implements EvmTokenDiscoverySource {
         throw new Error('Duplicate detected EVM Token')
       }
       return Object.freeze(assets)
-    } finally {
-      clearTimeout(timeout)
-      signal?.removeEventListener('abort', abort)
+    } catch (error) {
+      if (error instanceof FetchResponseTooLargeError) {
+        throw new Error('Token discovery response is too large')
+      }
+      throw error
     }
   }
 }

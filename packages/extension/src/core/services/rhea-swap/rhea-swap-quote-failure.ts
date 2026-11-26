@@ -1,4 +1,3 @@
-import { readBoundedResponseText } from '@/lib/fetch-utils'
 import { getRheaSwapMinimumAmountMessage, RheaSwapHttpError } from './rhea-swap-error'
 
 const MAXIMUM_QUOTE_ERROR_BYTES = 64 * 1024
@@ -47,46 +46,29 @@ function readAggregateQuoteFailure(
 }
 
 /** Preserve the provider's fixed quote failure categories without exposing its payload. */
-export function createRheaSwapFetch(fetchImplementation: typeof fetch): typeof fetch {
-  return async (input, init) => {
-    const response = await fetchImplementation(input, init)
-    const url = input instanceof Request ? input.url : String(input)
-    const pathname = new URL(url).pathname
-    if (
-      (pathname !== '/crosschain/swap/quote' && pathname !== '/api/swap/quote') ||
-      response.status === 401 ||
-      response.status === 403 ||
-      response.status === 429
-    ) {
-      return response
-    }
-    let payload: unknown
-    try {
-      payload = JSON.parse(
-        await readBoundedResponseText(
-          response.clone(),
-          MAXIMUM_QUOTE_ERROR_BYTES,
-          () => new Error('RHEA quote error response is too large')
-        )
-      )
-    } catch {
-      return response
-    }
-    if (!isRecord(payload) || typeof payload.code !== 'number' || payload.code === 0) {
-      return response
-    }
-    if (typeof payload.msg === 'string' && getRheaSwapMinimumAmountMessage(payload.msg)) {
-      return response
-    }
-    const failure = readQuoteFailure(payload) ?? readAggregateQuoteFailure(payload)
-    if (!failure) return response
-    // Only fixed categories cross the error boundary; provider payloads remain private.
-    void response.body?.cancel().catch(() => {})
-    throw new RheaSwapHttpError(
-      failure === 'timeout' ? 'REQUEST_TIMEOUT' : 'ROUTE_NOT_FOUND',
-      'quote',
-      failure === 'timeout' ? 'quote_timeout' : 'no route',
-      failure === 'timeout'
-    )
+export function classifyRheaQuoteFailure(
+  payload: unknown,
+  status: number,
+  byteLength: number
+): RheaSwapHttpError | undefined {
+  if (
+    byteLength > MAXIMUM_QUOTE_ERROR_BYTES ||
+    status === 401 ||
+    status === 403 ||
+    status === 429 ||
+    !isRecord(payload) ||
+    typeof payload.code !== 'number' ||
+    payload.code === 0 ||
+    (typeof payload.msg === 'string' && getRheaSwapMinimumAmountMessage(payload.msg))
+  ) {
+    return undefined
   }
+  const failure = readQuoteFailure(payload) ?? readAggregateQuoteFailure(payload)
+  if (!failure) return undefined
+  return new RheaSwapHttpError(
+    failure === 'timeout' ? 'REQUEST_TIMEOUT' : 'ROUTE_NOT_FOUND',
+    'quote',
+    failure === 'timeout' ? 'quote_timeout' : 'no route',
+    failure === 'timeout'
+  )
 }

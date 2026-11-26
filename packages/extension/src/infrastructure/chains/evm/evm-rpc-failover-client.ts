@@ -33,11 +33,9 @@ interface EndpointState {
   attested: boolean
 }
 
-type FetchImplementation = (input: string, init: RequestInit) => Promise<Response>
-
 function parseEndpoints(
   config: EvmRpcFailoverClientConfig,
-  fetchImplementation: FetchImplementation,
+  fetchImplementation: typeof fetch | undefined,
   previous: ReadonlyMap<string, EndpointState>
 ): EndpointState[] {
   const options = typeof config.endpoints === 'function' ? config.endpoints() : config.endpoints
@@ -98,7 +96,7 @@ function isRetryableEndpointFailure(error: unknown): error is EvmRpcError {
 
 export function createEvmRpcFailoverClient(
   config: EvmRpcFailoverClientConfig,
-  fetchImplementation: FetchImplementation = fetch
+  fetchImplementation?: typeof fetch
 ): EvmRpc & EvmNonceQueueEndpointSelector {
   let endpointStates = parseEndpoints(config, fetchImplementation, new Map())
   let activeKey = endpointStates[0].key

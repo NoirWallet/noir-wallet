@@ -20,9 +20,11 @@ export function createConfiguredNearRpcClient(network: {
   if (!nearNetwork) throw new Error('Unsupported NEAR chain')
   const endpoints = resolveNearRpcEndpointOptions(nearNetwork).slice(0, 5)
   const failoverFetch = createJsonRpcFailoverFetch(endpoints, async (url, signal) => {
-    await createNearRpcClient({ chainId: network.chainId, rpcUrl: url }, fetch).assertExpectedChain(
-      signal
-    )
+    await createNearRpcClient({ chainId: network.chainId, rpcUrl: url }).assertExpectedChain(signal)
   })
-  return createNearRpcClient({ chainId: network.chainId, rpcUrl: network.rpcUrl }, failoverFetch)
+  return createNearRpcClient(
+    { chainId: network.chainId, rpcUrl: network.rpcUrl },
+    undefined,
+    failoverFetch
+  )
 }

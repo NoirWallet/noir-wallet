@@ -4,7 +4,7 @@ import {
   fetchWithTimeout,
   jsonRequestInit
 } from '@/lib/fetch-utils'
-import { createRheaSwapFetch } from './rhea-swap-fetch'
+import { classifyRheaQuoteFailure } from './rhea-swap-quote-failure'
 import {
   getRheaSwapMinimumAmountMessage,
   RheaSwapHttpError,
@@ -43,11 +43,8 @@ function safeProviderMessage(value: unknown): string | null {
 
 export class RheaSwapApi {
   private readonly baseUrl: string
-  private readonly fetch: typeof fetch
-
   constructor(private readonly config: RheaSwapApiConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '')
-    this.fetch = createRheaSwapFetch(config.fetch ?? globalThis.fetch)
   }
 
   quote(body: unknown, signal?: AbortSignal): Promise<unknown> {
@@ -160,15 +157,16 @@ export class RheaSwapApi {
           'Content-Type': 'application/json',
           ...(this.config.apiKey ? { Authorization: `Bearer ${this.config.apiKey}` } : {})
         }),
-        fetcher: this.fetch,
+        fetcher: this.config.fetch,
         timeoutMs,
         maxBytes:
           stage === 'tokens' ? MAXIMUM_TOKEN_CATALOG_RESPONSE_BYTES : MAXIMUM_RESPONSE_BYTES,
         acceptHttpErrors: true
       })
       let payload: unknown
+      const bytes = await response.arrayBuffer()
       try {
-        payload = await response.json()
+        payload = JSON.parse(new TextDecoder().decode(bytes))
       } catch {
         if (response.ok) {
           throw new RheaSwapHttpError(
@@ -177,6 +175,10 @@ export class RheaSwapApi {
             'RHEA Swap returned invalid JSON'
           )
         }
+      }
+      if (stage === 'quote') {
+        const failure = classifyRheaQuoteFailure(payload, response.status, bytes.byteLength)
+        if (failure) throw failure
       }
       const minimum = safeProviderMessage(payload)
       if (!response.ok) {

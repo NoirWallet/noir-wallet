@@ -1,4 +1,4 @@
-import { readBoundedResponseText } from '@/lib/fetch-utils'
+import { fetchJsonWithTimeout, jsonRequestInit } from '@/lib/fetch-utils'
 import { DedupPromise } from '@/lib/async-utils'
 
 const ORIGIN = 'https://four.meme'
@@ -106,7 +106,7 @@ function readQuoteAsset(value: unknown, symbol: string): QuoteAsset | null {
 }
 
 export class FourMemeMarketClient {
-  private readonly fetcher: typeof fetch
+  private readonly fetcher?: typeof fetch
   private readonly now: () => number
   private readonly cache = new Map<string, { value: FourMemeToken | null; expiresAt: number }>()
   private readonly pending = new Map<string, DedupPromise<FourMemeToken | null>>()
@@ -114,7 +114,7 @@ export class FourMemeMarketClient {
   private readonly configGate = new DedupPromise<unknown>()
 
   constructor(options: { fetch?: typeof fetch; now?: () => number } = {}) {
-    this.fetcher = options.fetch ?? globalThis.fetch.bind(globalThis)
+    this.fetcher = options.fetch
     this.now = options.now ?? Date.now
   }
 
@@ -156,28 +156,18 @@ export class FourMemeMarketClient {
     }
   }
 
-  private async readJson(path: string, maximumBytes: number): Promise<unknown> {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-    try {
-      const response = await this.fetcher(new URL(path, ORIGIN), {
+  private readJson(path: string, maximumBytes: number): Promise<unknown> {
+    return fetchJsonWithTimeout(new URL(path, ORIGIN), {
+      ...jsonRequestInit({
         method: 'GET',
-        headers: { Accept: 'application/json' },
         credentials: 'omit',
         referrerPolicy: 'no-referrer',
-        redirect: 'error',
-        signal: controller.signal
-      })
-      if (!response.ok) throw new Error('Four.Meme endpoint unavailable')
-      const body = await readBoundedResponseText(
-        response,
-        maximumBytes,
-        () => new Error('Four.Meme response exceeds the allowed size')
-      )
-      return JSON.parse(body) as unknown
-    } finally {
-      clearTimeout(timeout)
-    }
+        redirect: 'error'
+      }),
+      fetcher: this.fetcher,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      maxBytes: maximumBytes
+    })
   }
 
   private async readConfig(): Promise<unknown> {

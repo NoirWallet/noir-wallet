@@ -7,6 +7,7 @@ declare const __APP_VERSION__: string
 
 import { GA_CONFIG } from '@/config/analytics'
 import { DedupPromise } from '@/lib/async-utils'
+import { fetchWithTimeout, jsonRequestInit } from '@/lib/fetch-utils'
 import { sanitizeAnalyticsMetadata } from './payload'
 import { getAnalyticsCountry, stopAnalyticsCountryLookup } from './geo'
 import { isGoogleAnalyticsEnabled } from './preferences'
@@ -22,6 +23,7 @@ let cachedSessionState: AnalyticsSessionState | null | undefined
 let sessionQueue: Promise<unknown> = Promise.resolve()
 const activeRequests = new Set<AbortController>()
 const GA_FETCH_TIMEOUT_MS = 10_000
+const GA_RESPONSE_MAX_BYTES = 16 * 1024
 let reportingGeneration = 0
 const SESSION_STATE_STORAGE_KEY = 'ga_session_state'
 const LEGACY_SESSION_STORAGE_KEY = 'ga_session_id'
@@ -176,7 +178,6 @@ export async function sendGaEvent(
 ): Promise<void> {
   const currentGeneration = reportingGeneration
   let abortController: AbortController | null = null
-  let timeout: ReturnType<typeof setTimeout> | null = null
   try {
     if (!GA_CONFIG.apiSecret) return
     if (!(await isGoogleAnalyticsEnabled())) return
@@ -213,21 +214,19 @@ export async function sendGaEvent(
 
     abortController = new AbortController()
     activeRequests.add(abortController)
-    const requestController = abortController
-    timeout = setTimeout(() => requestController.abort(), GA_FETCH_TIMEOUT_MS)
-    await fetch(
+    await fetchWithTimeout(
       `${GA_CONFIG.endpoint}?measurement_id=${GA_CONFIG.measurementId}&api_secret=${GA_CONFIG.apiSecret}`,
       {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: abortController.signal
+        ...jsonRequestInit({ method: 'POST' }, body),
+        signal: abortController.signal,
+        timeoutMs: GA_FETCH_TIMEOUT_MS,
+        maxBytes: GA_RESPONSE_MAX_BYTES,
+        acceptHttpErrors: 'status-only'
       }
     )
   } catch {
     // Silently ignore analytics errors
   } finally {
-    if (timeout) clearTimeout(timeout)
     if (abortController) {
       activeRequests.delete(abortController)
     }

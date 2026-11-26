@@ -1,6 +1,6 @@
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import { getBitcoinChainId, parseChainId } from '@/core/chains/registry'
-import { readBoundedResponseText } from '@/lib/fetch-utils'
+import { FetchResponseTooLargeError, FetchTimeoutError, fetchWithTimeout } from '@/lib/fetch-utils'
 import type { ChainId } from '@/core/chains/domain'
 import type {
   BitcoinAddressActivity,
@@ -74,8 +74,6 @@ export interface BitcoinActivityHistoryRpc {
     signal?: AbortSignal
   ) => Promise<readonly BitcoinHistoryTransaction[]>
 }
-
-type FetchImplementation = (input: string, init: RequestInit) => Promise<Response>
 
 const DEFAULT_MAXIMUM_RESPONSE_BYTES = 2 * 1024 * 1024
 const MAXIMUM_TIMEOUT_MS = 60_000
@@ -283,14 +281,6 @@ function mapHttpError(response: Response): BitcoinRpcError {
   return new BitcoinRpcError('network-unavailable', 'Bitcoin RPC endpoint is unavailable')
 }
 
-async function readResponseText(response: Response, maximumBytes: number): Promise<string> {
-  return readBoundedResponseText(
-    response,
-    maximumBytes,
-    () => new BitcoinRpcError('invalid-response', 'Bitcoin RPC response exceeds the allowed size')
-  )
-}
-
 function parseJson(text: string): unknown {
   try {
     return JSON.parse(text)
@@ -301,7 +291,7 @@ function parseJson(text: string): unknown {
 
 export function createBitcoinEsploraClient(
   config: BitcoinEsploraClientConfig,
-  fetchImplementation: FetchImplementation = fetch
+  fetchImplementation?: typeof fetch
 ): BitcoinDiscoveryRpc & BitcoinTransactionRpc & BitcoinActivityHistoryRpc {
   const network = parseExpectedNetwork(config.chainId)
   const baseUrl = parseBaseUrl(config.baseUrl)
@@ -326,37 +316,38 @@ export function createBitcoinEsploraClient(
     if (externalSignal?.aborted) {
       throw new BitcoinRpcError('cancelled', 'Bitcoin RPC request was cancelled')
     }
-    const controller = new AbortController()
-    let timedOut = false
-    const onExternalAbort = () => controller.abort()
-    externalSignal?.addEventListener('abort', onExternalAbort, { once: true })
-    const timeout = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, timeoutMs)
     try {
-      const response = await fetchImplementation(new URL(path, baseUrl).toString(), {
+      const response = await fetchWithTimeout(new URL(path, baseUrl).toString(), {
         ...init,
         cache: 'no-store',
         credentials: 'omit',
         redirect: 'error',
         referrerPolicy: 'no-referrer',
-        signal: controller.signal
+        signal: externalSignal,
+        timeoutMs,
+        maxBytes: maximumResponseBytes,
+        fetcher: fetchImplementation,
+        acceptHttpErrors: 'status-only'
       })
       if (!response.ok) throw mapHttpError(response)
-      return await readResponseText(response, maximumResponseBytes)
+      return await response.text()
     } catch (error) {
       if (error instanceof BitcoinRpcError) throw error
-      if (controller.signal.aborted) {
+      if (externalSignal?.aborted || error instanceof FetchTimeoutError) {
         throw new BitcoinRpcError(
-          timedOut ? 'timeout' : 'cancelled',
-          timedOut ? 'Bitcoin RPC request timed out' : 'Bitcoin RPC request was cancelled'
+          externalSignal?.aborted ? 'cancelled' : 'timeout',
+          externalSignal?.aborted
+            ? 'Bitcoin RPC request was cancelled'
+            : 'Bitcoin RPC request timed out'
+        )
+      }
+      if (error instanceof FetchResponseTooLargeError) {
+        throw new BitcoinRpcError(
+          'invalid-response',
+          'Bitcoin RPC response exceeds the allowed size'
         )
       }
       throw new BitcoinRpcError('network-unavailable', 'Bitcoin RPC request failed')
-    } finally {
-      clearTimeout(timeout)
-      externalSignal?.removeEventListener('abort', onExternalAbort)
     }
   }
 

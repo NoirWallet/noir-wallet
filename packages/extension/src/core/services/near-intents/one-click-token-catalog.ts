@@ -1,6 +1,6 @@
 import { ONE_CLICK_TOKEN_CATALOG_URL } from '@/config/intents'
 import { DedupPromise } from '@/lib/async-utils'
-import { FetchResponseTooLargeError, fetchWithTimeout } from '@/lib/fetch-utils'
+import { FetchResponseTooLargeError, fetchArrayBufferWithTimeout } from '@/lib/fetch-utils'
 
 const MAXIMUM_CATALOG_BYTES = 8 * 1024 * 1024
 
@@ -18,7 +18,7 @@ interface CatalogResponse {
 const catalogRequest = new DedupPromise<CatalogResponse>()
 
 async function requestCatalog(options: RequestOptions): Promise<CatalogResponse> {
-  const response = await fetchWithTimeout(ONE_CLICK_TOKEN_CATALOG_URL, {
+  const bytes = await fetchArrayBufferWithTimeout(ONE_CLICK_TOKEN_CATALOG_URL, {
     method: 'GET',
     fetcher: options.fetcher,
     timeoutMs: options.timeoutMs,
@@ -28,7 +28,6 @@ async function requestCatalog(options: RequestOptions): Promise<CatalogResponse>
     redirect: 'error',
     referrerPolicy: 'no-referrer'
   })
-  const bytes = await response.arrayBuffer()
   return { value: JSON.parse(new TextDecoder().decode(bytes)), byteLength: bytes.byteLength }
 }
 

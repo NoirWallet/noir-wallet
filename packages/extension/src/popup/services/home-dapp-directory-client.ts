@@ -4,6 +4,7 @@ import {
   DAPP_DIRECTORY_URL
 } from '@/config/dapp-directory'
 import { DedupPromise } from '@/lib/async-utils'
+import { fetchJsonWithTimeout } from '@/lib/fetch-utils'
 
 const STORAGE_KEY = 'home_dapp_directory_v1'
 const MAX_DAPPS = 20
@@ -124,18 +125,15 @@ export async function refreshHomeDApps(force = false): Promise<readonly HomeDApp
   }
 
   return remoteRead.run(async () => {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), DAPP_DIRECTORY_FETCH_TIMEOUT_MS)
     try {
-      const response = await fetch(DAPP_DIRECTORY_URL, {
+      const document = await fetchJsonWithTimeout(DAPP_DIRECTORY_URL, {
         cache: 'no-store',
         credentials: 'omit',
         redirect: 'error',
         referrerPolicy: 'no-referrer',
-        signal: controller.signal
+        timeoutMs: DAPP_DIRECTORY_FETCH_TIMEOUT_MS
       })
-      if (!response.ok) throw new Error(`DApp directory returned HTTP ${response.status}`)
-      const dapps = parseDirectory(await response.json())
+      const dapps = parseDirectory(document)
       if (!dapps) throw new Error('DApp directory returned an invalid document')
       const fetchedAt = Date.now()
       cachedDirectory = { fetchedAt, dapps }
@@ -159,8 +157,6 @@ export async function refreshHomeDApps(force = false): Promise<readonly HomeDApp
     } catch (error) {
       lastFailedAt = Date.now()
       throw error
-    } finally {
-      clearTimeout(timer)
     }
   })
 }

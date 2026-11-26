@@ -1,4 +1,5 @@
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
+import { FetchResponseTooLargeError, fetchWithTimeout } from '@/lib/fetch-utils'
 import type { Network } from '@/types'
 
 export interface AttestZcashLightwalletdEndpointInput {
@@ -98,48 +99,12 @@ function readGrpcWebDataFrame(body: Uint8Array): Uint8Array {
   throw new Error('Lightwalletd response has no gRPC-Web data frame')
 }
 
-async function readBoundedBody(response: Response): Promise<Uint8Array> {
-  const contentLength = response.headers.get('content-length')
-  if (contentLength !== null && Number(contentLength) > MAXIMUM_RESPONSE_BYTES) {
-    throw new Error('Lightwalletd response exceeds the allowed size')
-  }
-  if (!response.body) return new Uint8Array()
-  const reader = response.body.getReader()
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      size += value.byteLength
-      if (size > MAXIMUM_RESPONSE_BYTES) {
-        await reader.cancel()
-        throw new Error('Lightwalletd response exceeds the allowed size')
-      }
-      chunks.push(value)
-    }
-  } finally {
-    reader.releaseLock()
-  }
-  const result = new Uint8Array(size)
-  let offset = 0
-  for (const chunk of chunks) {
-    result.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return result
-}
-
 export async function attestZcashLightwalletdEndpoint(
   input: AttestZcashLightwalletdEndpointInput
 ): Promise<void> {
   if (input.signal?.aborted) throw new DOMException('Aborted', 'AbortError')
-  const controller = new AbortController()
-  const onAbort = () => controller.abort()
-  input.signal?.addEventListener('abort', onAbort, { once: true })
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_REQUEST_TIMEOUT_MS)
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${parseBaseUrl(input.baseUrl)}/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetLightdInfo`,
       {
         method: 'POST',
@@ -152,18 +117,25 @@ export async function attestZcashLightwalletdEndpoint(
         credentials: 'omit',
         redirect: 'error',
         referrerPolicy: 'no-referrer',
-        signal: controller.signal
+        signal: input.signal,
+        timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+        maxBytes: MAXIMUM_RESPONSE_BYTES,
+        acceptHttpErrors: 'status-only'
       }
     )
     if (!response.ok) throw new Error('Lightwalletd endpoint is unavailable')
     if (!response.headers.get('content-type')?.startsWith('application/grpc-web')) {
       throw new Error('Lightwalletd endpoint returned an invalid content type')
     }
-    const chainName = readChainName(readGrpcWebDataFrame(await readBoundedBody(response)))
+    const chainName = readChainName(
+      readGrpcWebDataFrame(new Uint8Array(await response.arrayBuffer()))
+    )
     const expected = input.network === 'mainnet' ? 'main' : 'test'
     if (chainName !== expected) throw new Error('Lightwalletd endpoint network does not match')
-  } finally {
-    clearTimeout(timeout)
-    input.signal?.removeEventListener('abort', onAbort)
+  } catch (error) {
+    if (error instanceof FetchResponseTooLargeError) {
+      throw new Error('Lightwalletd response exceeds the allowed size')
+    }
+    throw error
   }
 }

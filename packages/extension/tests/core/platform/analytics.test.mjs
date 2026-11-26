@@ -515,7 +515,7 @@ it('sends coarse GA location and device data without replacing the collector ID'
     globalThis.fetch = async (url, options) => {
       if (url === 'https://rpc.zknoir.com/cdn-cgi/trace') return new Response('loc=US\n')
       gaBody = JSON.parse(options.body)
-      return new Response('', { status: 204 })
+      return new Response(null, { status: 204 })
     }
     await sendGaEvent(
       'page_view',
@@ -620,14 +620,9 @@ describe('client: durable delivery and bounded retry', () => {
     const storage = {}
     const requests = []
     const responses = [
-      { ok: true, json: async () => ({ code: 1 }) },
-      {
-        ok: true,
-        json: async () => {
-          throw new SyntaxError('invalid JSON')
-        }
-      },
-      { ok: true, json: async () => ({ code: 0 }) }
+      Response.json({ code: 1 }),
+      new Response('invalid JSON'),
+      Response.json({ code: 0 })
     ]
     globalThis.chrome = {
       storage: {

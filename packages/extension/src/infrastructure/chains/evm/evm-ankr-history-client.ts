@@ -2,7 +2,12 @@ import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import { getEvmAnkrHistoryBlockchain } from '@/config/networks'
 import type { ActivityItem, ActivityScope } from '@/core/activity'
 import { parseAssetId } from '@/core/chains/registry'
-import { readBoundedResponseText } from '@/lib/fetch-utils'
+import {
+  FetchResponseTooLargeError,
+  FetchTimeoutError,
+  fetchWithTimeout,
+  jsonRequestInit
+} from '@/lib/fetch-utils'
 import {
   mapEvmIndexedActivity,
   indexedTransferLogIndex,
@@ -196,7 +201,7 @@ function parseOrigin(value: string): string {
 export function createEvmAnkrHistoryClient(
   originValue: string,
   chains: readonly EvmAnkrHistoryChain[],
-  fetchImplementation: typeof fetch = fetch
+  fetchImplementation?: typeof fetch
 ): EvmAnkrHistoryClient {
   const origin = parseOrigin(originValue)
   const byChainId = new Map(chains.map(chain => [chain.chainId, chain] as const))
@@ -212,39 +217,32 @@ export function createEvmAnkrHistoryClient(
     params: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<unknown> {
-    const controller = new AbortController()
-    let timedOut = false
-    const abort = () => controller.abort()
-    signal?.addEventListener('abort', abort, { once: true })
-    if (signal?.aborted) controller.abort()
-    const timer = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, DEFAULT_REQUEST_TIMEOUT_MS)
     try {
-      const response = await fetchImplementation(origin, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-        cache: 'no-store',
-        credentials: 'omit',
-        redirect: 'error',
-        referrerPolicy: 'no-referrer',
-        signal: controller.signal
+      const response = await fetchWithTimeout(origin, {
+        ...jsonRequestInit(
+          {
+            method: 'POST',
+            cache: 'no-store',
+            credentials: 'omit',
+            redirect: 'error',
+            referrerPolicy: 'no-referrer',
+            signal
+          },
+          { jsonrpc: '2.0', id: 1, method, params }
+        ),
+        timeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+        maxBytes: MAXIMUM_RESPONSE_BYTES,
+        fetcher: fetchImplementation,
+        acceptHttpErrors: 'status-only'
       })
       if (!response.ok) {
         if (response.status === 429)
           throw new EvmRpcError('rate-limited', 'EVM history rate limit exceeded')
         throw new EvmRpcError('network-unavailable', 'EVM history endpoint is unavailable')
       }
-      const body = await readBoundedResponseText(
-        response,
-        MAXIMUM_RESPONSE_BYTES,
-        () => new EvmRpcError('invalid-response', 'EVM history response is too large')
-      )
       let decoded: unknown
       try {
-        decoded = JSON.parse(body)
+        decoded = await response.json()
       } catch {
         invalid('JSON response')
       }
@@ -262,16 +260,16 @@ export function createEvmAnkrHistoryClient(
       return envelope.result
     } catch (error) {
       if (error instanceof EvmRpcError) throw error
-      if (controller.signal.aborted) {
+      if (signal?.aborted || error instanceof FetchTimeoutError) {
         throw new EvmRpcError(
-          timedOut ? 'timeout' : 'cancelled',
-          timedOut ? 'EVM history request timed out' : 'EVM history request was cancelled'
+          signal?.aborted ? 'cancelled' : 'timeout',
+          signal?.aborted ? 'EVM history request was cancelled' : 'EVM history request timed out'
         )
       }
+      if (error instanceof FetchResponseTooLargeError) {
+        throw new EvmRpcError('invalid-response', 'EVM history response is too large')
+      }
       throw new EvmRpcError('network-unavailable', 'EVM history request failed')
-    } finally {
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', abort)
     }
   }
 

@@ -1,6 +1,6 @@
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import Big from 'big.js'
-import { readBoundedResponseText } from '@/lib/fetch-utils'
+import { FetchResponseTooLargeError, fetchWithTimeout } from '@/lib/fetch-utils'
 
 import { parseAssetId } from '@/core/chains/registry'
 import { MAXIMUM_ASSET_PRICE_ITEMS, createMarketAssetId, type MarketAssetId } from '@/core/prices'
@@ -90,14 +90,6 @@ function sourceTimestamp(value: unknown, now: number): number {
   return timestamp
 }
 
-async function readBoundedResponse(response: Response, maximumBytes: number): Promise<string> {
-  return readBoundedResponseText(
-    response,
-    maximumBytes,
-    () => new Error('DefiLlama market response exceeds the allowed size')
-  )
-}
-
 function materialize(
   snapshot: MarketChangeCacheSnapshot | null,
   mappings: readonly DefiLlamaMarketChangeMapping[],
@@ -149,12 +141,9 @@ function remoteCoinId(marketAssetId: MarketAssetId): string {
 
 export class DefiLlamaMarketChangeService {
   private readonly options: Required<
-    Pick<
-      DefiLlamaMarketChangeServiceOptions,
-      'fetch' | 'now' | 'timeoutMs' | 'maximumResponseBytes'
-    >
+    Pick<DefiLlamaMarketChangeServiceOptions, 'now' | 'timeoutMs' | 'maximumResponseBytes'>
   > &
-    Pick<DefiLlamaMarketChangeServiceOptions, 'cache'> & {
+    Pick<DefiLlamaMarketChangeServiceOptions, 'cache' | 'fetch'> & {
       readonly mappings: readonly DefiLlamaMarketChangeMapping[]
     }
   private readonly refreshGate = new DedupPromise<MarketChangeReadModel>()
@@ -188,11 +177,10 @@ export class DefiLlamaMarketChangeService {
     ) {
       throw new Error('Invalid DefiLlama market response limit')
     }
-    const fetchImplementation = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.options = {
       mappings: Object.freeze(mappings),
       cache: options.cache,
-      fetch: (input, init) => fetchImplementation(input, init),
+      fetch: options.fetch,
       now: options.now ?? Date.now,
       timeoutMs,
       maximumResponseBytes
@@ -222,24 +210,25 @@ export class DefiLlamaMarketChangeService {
     marketAssetIds: readonly MarketAssetId[],
     now: number
   ): Promise<ReadonlyMap<MarketAssetId, CoinOutcome>> {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), this.options.timeoutMs)
     try {
       const coinIds = marketAssetIds.map(remoteCoinId).join(',')
       const percentageUrl = new URL(`${DEFI_LLAMA_PERCENTAGE_URL}/${coinIds}`)
       percentageUrl.searchParams.set('period', '24h')
       const currentPriceUrl = new URL(`${DEFI_LLAMA_CURRENT_PRICE_URL}/${coinIds}`)
-      const request: RequestInit = {
+      const request = {
         method: 'GET',
         cache: 'no-store',
         credentials: 'omit',
         redirect: 'error',
         referrerPolicy: 'no-referrer',
-        signal: controller.signal
-      }
+        fetcher: this.options.fetch,
+        timeoutMs: this.options.timeoutMs,
+        maxBytes: this.options.maximumResponseBytes,
+        acceptHttpErrors: 'status-only'
+      } as const
       const [percentageResponse, priceResponse] = await Promise.all([
-        this.options.fetch(percentageUrl, request),
-        this.options.fetch(currentPriceUrl, request)
+        fetchWithTimeout(percentageUrl, request),
+        fetchWithTimeout(currentPriceUrl, request)
       ])
       if (!percentageResponse.ok || !priceResponse.ok) {
         throw new Error(
@@ -247,8 +236,8 @@ export class DefiLlamaMarketChangeService {
         )
       }
       const [percentageDecoded, priceDecoded]: readonly unknown[] = await Promise.all([
-        readBoundedResponse(percentageResponse, this.options.maximumResponseBytes).then(JSON.parse),
-        readBoundedResponse(priceResponse, this.options.maximumResponseBytes).then(JSON.parse)
+        percentageResponse.json(),
+        priceResponse.json()
       ])
       if (
         !isRecord(percentageDecoded) ||
@@ -292,7 +281,11 @@ export class DefiLlamaMarketChangeService {
     } catch (error) {
       console.warn(
         '[Asset Prices] DefiLlama market refresh failed:',
-        error instanceof Error ? error.message : 'Unknown error'
+        error instanceof FetchResponseTooLargeError
+          ? 'DefiLlama market response exceeds the allowed size'
+          : error instanceof Error
+            ? error.message
+            : 'Unknown error'
       )
       return new Map(
         marketAssetIds.map(marketAssetId => [
@@ -300,8 +293,6 @@ export class DefiLlamaMarketChangeService {
           Object.freeze({ status: 'failed' as const })
         ])
       )
-    } finally {
-      clearTimeout(timeout)
     }
   }
 
