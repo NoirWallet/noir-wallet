@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { Tabs, TabsContent } from '../components/ui/tabs'
 import { PageTabsList, PageTabsTrigger } from '../components/common/PageTabs'
+import { NetworkFilterToolbar } from '../components/common/NetworkFilter'
 import { DAppConnectPrompt } from '../components/dapp/DAppConnectPrompt'
 import { ConnectedDAppBar } from '../components/dapp/ConnectedDAppBar'
 import { HomeDAppList } from '../components/dapp/HomeDAppList'
@@ -729,7 +730,14 @@ export function Home() {
   }
 
   const showZcashSyncStatus = supportsZcash && walletMode === 'public'
-  const showInlineSyncProgress = showZcashSyncStatus && isSyncing
+  const syncProgressIndicator = showZcashSyncStatus && isSyncing && (
+    <ZcashSyncProgress
+      syncProgress={syncProgress}
+      currentHeight={currentHeight}
+      latestHeight={latestHeight}
+      etaMs={etaMs}
+    />
+  )
   const syncIssue = showZcashSyncStatus && !isSyncing ? getHomeZcashSyncIssue(syncReason) : null
   const quickShield = useHomeQuickShield({
     active: !accountContextChanging,
@@ -1026,15 +1034,6 @@ export function Home() {
                 </PageTabsTrigger>
                 <PageTabsTrigger value="activity">Activity</PageTabsTrigger>
               </PageTabsList>
-              {showInlineSyncProgress && (
-                <ZcashSyncProgress
-                  className="shrink-0"
-                  syncProgress={syncProgress}
-                  currentHeight={currentHeight}
-                  latestHeight={latestHeight}
-                  etaMs={etaMs}
-                />
-              )}
             </div>
             <div className="flex flex-1 flex-col">
               {syncIssue && activeTab !== 'dapp' && (
@@ -1100,28 +1099,34 @@ export function Home() {
                 className="mt-0 flex flex-col data-[state=inactive]:hidden"
               >
                 {showShieldEmpty ? (
-                  <section className="mx-4 mt-12 rounded-lg bg-wallet-surface px-4 py-6 text-center">
-                    <p className="text-base font-medium">
-                      {quickShield.label
-                        ? `${quickShield.label} available to shield`
-                        : 'Assets available to shield'}
-                    </p>
-                    <p className="mt-1 text-sm text-wallet-secondary">
-                      Move eligible tokens from Public to Shield.
-                    </p>
-                    <Button
-                      size="wallet"
-                      className="mt-4 h-10 gap-1 px-7"
-                      aria-haspopup="dialog"
-                      onClick={event => quickShield.onOpen(event.currentTarget)}
-                    >
-                      Shield tokens now{' '}
-                      <Icon icon="lucide:arrow-right" width={14} aria-hidden="true" />
-                    </Button>
-                  </section>
+                  <>
+                    {syncProgressIndicator && (
+                      <NetworkFilterToolbar>{syncProgressIndicator}</NetworkFilterToolbar>
+                    )}
+                    <section className="mx-4 mt-12 rounded-lg bg-wallet-surface px-4 py-6 text-center">
+                      <p className="text-base font-medium">
+                        {quickShield.label
+                          ? `${quickShield.label} available to shield`
+                          : 'Assets available to shield'}
+                      </p>
+                      <p className="mt-1 text-sm text-wallet-secondary">
+                        Move eligible tokens from Public to Shield.
+                      </p>
+                      <Button
+                        size="wallet"
+                        className="mt-4 h-10 gap-1 px-7"
+                        aria-haspopup="dialog"
+                        onClick={event => quickShield.onOpen(event.currentTarget)}
+                      >
+                        Shield tokens now{' '}
+                        <Icon icon="lucide:arrow-right" width={14} aria-hidden="true" />
+                      </Button>
+                    </section>
+                  </>
                 ) : (
                   <MultichainPortfolioPanel
                     domain={assetDomain}
+                    syncProgress={syncProgressIndicator}
                     activeAccount={storageV2Account}
                     walletId={effectiveWalletId}
                     accountId={effectiveAccountId}

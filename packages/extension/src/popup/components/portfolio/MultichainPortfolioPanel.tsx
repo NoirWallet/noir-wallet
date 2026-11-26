@@ -29,6 +29,7 @@ const FAST_TRANSACTION_RECHECK_INTERVAL_MS = 5_000
 
 export interface MultichainPortfolioPanelProps {
   listHeader?: ComponentProps<typeof PortfolioShell>['listHeader']
+  syncProgress?: ComponentProps<typeof PortfolioShell>['syncProgress']
   domain?: AssetDomain
   walletId: string | null
   accountId: string | null
@@ -69,6 +70,7 @@ function PortfolioState({
 
 export function MultichainPortfolioPanel({
   listHeader,
+  syncProgress,
   domain = 'all',
   walletId,
   accountId,
@@ -222,6 +224,7 @@ export function MultichainPortfolioPanel({
   return (
     <PortfolioShell
       listHeader={listHeader}
+      syncProgress={syncProgress}
       model={domainModel!}
       sourceModel={visibleModel}
       network={network}

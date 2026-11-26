@@ -40,7 +40,7 @@ import { ZcashFundingBadge } from '@/popup/components/zcash/ZcashFundingBadge'
 import { Tooltip } from '@/popup/components/ui/tooltip'
 
 export const portfolioAssetRowClassName =
-  'flex min-h-[72px] w-full min-w-0 items-center gap-[9px] px-4 py-2.5 text-left'
+  'wallet-interactive flex min-h-[72px] w-full min-w-0 items-center gap-[9px] px-4 py-2.5 text-left hover:bg-wallet-selected active:bg-foreground/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary'
 
 function PortfolioAssetActions({
   symbol,
@@ -280,7 +280,8 @@ function PortfolioAssetBalanceRow({
           aria-label={`View ${formatSymbol(entry.asset.metadata.symbol)} details on ${entry.chain.chain.displayName}`}
           onClick={() => onSelectAsset?.(entry.asset.asset.id)}
           className={cn(
-            'wallet-interactive flex min-h-[72px] w-full min-w-0 items-center gap-3 px-4 py-2.5 text-left hover:bg-white/[0.05] active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
+            portfolioAssetRowClassName,
+            'gap-3',
             !balancesHidden && pendingAmount.gt(0) && 'pb-0'
           )}
         >
@@ -408,7 +409,6 @@ export function PortfolioAssetGroupCard({
           }
           className={cn(
             portfolioAssetRowClassName,
-            'wallet-interactive hover:bg-foreground/[0.03] active:bg-foreground/[0.06] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary',
             !balancesHidden && pendingAmount.gt(0) && 'pb-0'
           )}
         >

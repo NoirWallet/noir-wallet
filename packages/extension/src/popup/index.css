@@ -593,14 +593,6 @@ html[data-surface='side-panel'] #root {
   font-weight: 500;
 }
 
-.home-portfolio-tabs [role='tab']::after {
-  height: 2px;
-}
-
-.home-portfolio-tabs [role='tab'][data-state='active']::after {
-  width: min(43px, 100%);
-}
-
 .dapp-connection-bar {
   --dapp-bar-surface: #212128;
   --dapp-bar-control: rgb(255 255 255 / 10%);
@@ -768,28 +760,6 @@ html[data-surface='side-panel'] #root {
     animation: none;
     color: var(--muted);
   }
-}
-
-/* Custom Tabs with short underline */
-.tab-trigger-custom {
-  position: relative;
-  cursor: pointer;
-}
-
-.tab-trigger-custom::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 0;
-  height: 2px;
-  background-color: var(--color-foreground);
-  transition: width 0.2s ease;
-}
-
-.tab-trigger-custom:is([data-state='active'], [aria-selected='true'])::after {
-  width: 60%;
 }
 
 @layer base {

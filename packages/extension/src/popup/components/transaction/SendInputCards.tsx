@@ -230,7 +230,7 @@ function SendAmountRow({
           <TransferMaximumButton {...maximum} />
         </div>
       </div>
-      <div className="flex min-h-14 min-w-0 items-center gap-2 rounded-[10px] border border-white/10 bg-wallet-surface px-4 focus-within:border-white/35">
+      <div className="flex min-h-14 min-w-0 items-center gap-2 rounded-[10px] border border-white/10 bg-wallet-surface px-4 has-[input:focus]:border-ring has-[input[aria-invalid=true]:not(:focus)]:border-destructive">
         <div className="min-w-0 flex-1">
           <SendAmountInput {...amount} />
         </div>
@@ -362,10 +362,10 @@ export function SendRecipientInputCard({
         autoFocus={autoFocus}
         spellCheck={false}
         className={cn(
-          'pr-16 font-mono text-sm shadow-none focus-visible:ring-0',
+          'pr-16 font-mono text-sm shadow-none',
           variant === 'filled'
             ? 'h-[54px] rounded-[10px] border border-white/10 bg-wallet-surface pl-[15px] pr-12 font-sans font-medium leading-[18px]'
-            : 'h-14 rounded-2xl border-white/35 bg-transparent pl-4 focus-visible:border-white/60'
+            : 'h-14 rounded-2xl border-white/35 bg-transparent pl-4'
         )}
         endContent={
           onSelectRecipient ? (
