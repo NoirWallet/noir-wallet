@@ -306,6 +306,7 @@ function MethodCard({
   estimate,
   fee,
   loading,
+  networkFeeLoading = loading,
   disabled,
   unavailableReason,
   onClick
@@ -317,6 +318,7 @@ function MethodCard({
   estimate: BalanceTransferEstimate | null
   fee: ReturnType<typeof formatBalanceTransferFee>
   loading?: boolean
+  networkFeeLoading?: boolean
   disabled?: boolean
   unavailableReason?: string | null
   onClick: () => void
@@ -375,12 +377,16 @@ function MethodCard({
           )}
         </span>
       </span>
-      {fee.networkFee && !loading && (
-        <span className="mt-2 flex justify-between gap-2">
-          <span className="shrink-0 text-muted">Network fee</span>
-          <span className="min-w-0 break-words text-right">{fee.networkFee}</span>
+      <span className="mt-2 flex justify-between gap-2">
+        <span className="shrink-0 text-muted">Network fee</span>
+        <span className="min-w-0 break-words text-right">
+          {networkFeeLoading ? (
+            <Skeleton className="ml-auto h-4 w-16 max-w-full" />
+          ) : (
+            (fee.networkFee ?? '—')
+          )}
         </span>
-      )}
+      </span>
     </button>
   )
 }
@@ -1798,7 +1804,7 @@ function DepositWithdrawForm({
     }
   })
   const clusterQuoted = Boolean(canEstimateMethods && managedAsset && clusterEstimate.value)
-  const clusterNetworkFee = useBalanceTransferEstimate({
+  const clusterNetworkFeeEstimate = useBalanceTransferEstimate({
     enabled: clusterQuoted && Boolean(estimateAmountRaw) && !preparingShield,
     requestKey: `${clusterEstimateKey}:${JSON.stringify(evmMoveFee)}`,
     estimate: () =>
@@ -1806,7 +1812,8 @@ function DepositWithdrawForm({
         ...buildClusterPreviewRequest(estimateAmountRaw!),
         feeSelection: evmMoveFee
       })
-  }).value
+  })
+  const clusterNetworkFee = clusterNetworkFeeEstimate.value
   const clusterEstimateWithFee =
     clusterEstimate.value && clusterNetworkFee
       ? { ...clusterEstimate.value, sourceNetworkFee: clusterNetworkFee }
@@ -2304,7 +2311,11 @@ function DepositWithdrawForm({
         const userMessage =
           message === 'Gas limit is below the estimated gas required'
             ? 'Gas limit is below the estimated gas required. Edit the network fee and try again.'
-            : classifiedMessage
+            : (formatTransferQuoteMinimumError(
+                message,
+                selected.asset.metadata.decimals,
+                formatSymbol(selected.asset.metadata.symbol)
+              ) ?? classifiedMessage)
         setShieldError(userMessage)
         if (replacingReview) throw new Error(userMessage)
       }
@@ -3127,6 +3138,9 @@ function DepositWithdrawForm({
                   unavailableReason={clusterMinimumError}
                   estimate={clusterEstimate.value}
                   loading={canEstimateMethods && clusterEstimate.loading}
+                  networkFeeLoading={
+                    canEstimateMethods && (clusterEstimate.loading || clusterNetworkFeeEstimate.loading)
+                  }
                   fee={formatBalanceTransferFee(clusterEstimateWithFee, selected.asset)}
                   onClick={() => {
                     userPickedMethod.current = true

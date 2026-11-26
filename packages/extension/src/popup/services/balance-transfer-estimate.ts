@@ -13,7 +13,7 @@ import { requiredRheaEvmApproval } from './rhea-evm-approval'
 import { formatIntentsConfirmationTime } from './confirmation-time-format'
 import { readSwapErrorReason } from './swap-quote-error-message'
 
-const BRIDGE_MINIMUM_RAW = /amount is too low for bridge,?\s*try at least ([0-9]+)/i
+const BRIDGE_MINIMUM_RAW = /amount is too low for bridge,?\s*try at least ([1-9][0-9]{0,77})\b/i
 
 export function formatTransferQuoteMinimumError(
   error: string,
@@ -22,7 +22,7 @@ export function formatTransferQuoteMinimumError(
 ): string | null {
   const match = BRIDGE_MINIMUM_RAW.exec(readSwapErrorReason(error))
   if (!match) return null
-  const amount = formatFeeAmount(formatBaseUnitDecimalAmount(match[1]!, decimals))
+  const amount = formatBaseUnitDecimalAmount(match[1]!, decimals)
   return `Minimum transfer amount is ${amount} ${symbol}.`
 }
 

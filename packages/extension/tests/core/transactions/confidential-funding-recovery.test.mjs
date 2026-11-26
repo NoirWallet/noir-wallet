@@ -184,6 +184,8 @@ async function harness(
     monitoring: 0,
     refreshes: 0,
     refreshTargets: [],
+    balances: [],
+    balanceSnapshot: { balances: [], updatedAt: now, known: true },
     statusRequests: [],
     originStatus: 'FAILED',
     statuses: withdraws.map(() => (phase === 'processing' ? 'PROCESSING' : 'PENDING_DEPOSIT')),
@@ -235,7 +237,12 @@ async function harness(
     async deleteSession() {
       state.session = null
     },
-    async putBalances() {},
+    async getBalanceSnapshot() {
+      return state.balanceSnapshot
+    },
+    async putBalances(_network, _wallet, _account, balances, updatedAt) {
+      state.balanceSnapshot = { balances, updatedAt, known: true }
+    },
     async getHistorySession() {
       return state.historyToken
     },
@@ -299,7 +306,7 @@ async function harness(
       }
     },
     async getBalances() {
-      return []
+      return state.balances
     },
     async createAuthPayload() {
       return { payload: 'authorize-session' }
@@ -2433,12 +2440,25 @@ test.describe('confidential funding persisted recovery', () => {
 
   test('recovers one approved Shield withdraw without signing again or expanding the amount', async () => {
     const h = await harness('submitting', true)
+    const tokenId = confidentialPrivateTokenId(h.initial.source.protocolAssetId)
+    h.state.balances = [{ tokenId, available: '1000' }]
+    h.state.balanceSnapshot = { balances: h.state.balances, updatedAt: now, known: true }
     const resumed = await h.restart().continuePlan(h.initial.planId)
     expect(resumed.operation).toBe('withdraw')
     expect(resumed.phase).toBe('processing')
     expect(resumed.withdraws).toHaveLength(1)
     expect(h.state.submissions).toEqual([h.initial.frozenRequest.withdraws[0].signed_payload])
     expect(h.state.intentSignatures).toBe(0)
+    expect(h.state.refreshTargets).toEqual([])
+    h.state.balances = []
+    h.state.now += 60_001
+    h.state.statuses[0] = 'PROCESSING'
+    expect((await h.restart().continuePlan(h.initial.planId)).phase).toBe('processing')
+    expect(h.state.balanceSnapshot.balances).toEqual([])
+    expect(h.state.refreshTargets).toEqual([
+      { ...scope, chainIds: [h.initial.source.chainId], domain: 'confidential', balanceUpdated: true }
+    ])
+    expect(h.state.submissions).toHaveLength(1)
     expect(() =>
       serializeConfidentialFundingPlan({
         ...h.initial,

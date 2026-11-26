@@ -145,6 +145,7 @@ const EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS = 10_000
 const EXTERNAL_DEPOSIT_STATUS_BACKOFF_MAX_MS = 120_000
 const EXTERNAL_DEPOSIT_STATUS_FRESH_MS = 20_000
 const CONFIDENTIAL_FUNDING_MONITOR_DELAY_MINUTES = 20 / 60
+const PENDING_WITHDRAW_BALANCE_REFRESH_MS = 60_000
 export type ClusterRejectionReason = 'APP_FEE_REJECTED_2002' | 'BACKEND_CONFIRMED_REJECTION'
 const TERMINAL_PHASES = new Set<ConfidentialFundingPlan['phase']>([
   'ready',
@@ -3782,13 +3783,14 @@ export class ConfidentialFundingCoordinator {
       }
       plan = await this.signAndFreezeWithdraws(plan)
     }
-    if (plan.phase === 'submitting')
+    const wasSubmitting = plan.phase === 'submitting'
+    if (wasSubmitting)
       plan =
         plan.operation === 'cluster'
           ? await this.recoverOrSubmitCluster(plan)
           : await this.recoverOrSubmit(plan, session.accessToken)
     if (plan.phase === 'processing' || plan.phase === 'partial') {
-      plan = await this.refreshSettlement(plan, session.accessToken)
+      plan = await this.refreshSettlement(plan, session.accessToken, false, wasSubmitting)
     }
     if (!isTerminalPhase(plan.phase) && !needsConfidentialSubmissionCheck(plan)) {
       await this.scheduleMonitoring()
@@ -4922,7 +4924,8 @@ export class ConfidentialFundingCoordinator {
   private async refreshSettlement(
     plan: ConfidentialFundingPlan,
     accessToken?: string,
-    observationOnly = false
+    observationOnly = false,
+    justSubmitted = false
   ): Promise<ConfidentialFundingPlan> {
     const previousPhase = plan.phase
     const previousRows = plan.withdraws
@@ -5096,8 +5099,37 @@ export class ConfidentialFundingCoordinator {
           })
           .catch(() => {})
       }
+    } else if (accessToken && next.operation === 'withdraw' && next.sourceDomain === 'shield') {
+      await this.refreshPendingWithdrawBalance(next, accessToken, justSubmitted).catch(() => {})
     }
     return next
+  }
+
+  private async refreshPendingWithdrawBalance(
+    plan: ConfidentialFundingPlan,
+    accessToken: string,
+    justSubmitted: boolean
+  ): Promise<void> {
+    const previous = await this.options.store.getBalanceSnapshot(
+      plan.network,
+      plan.keyDomainId,
+      plan.accountId
+    )
+    if (!justSubmitted && this.now() - previous.updatedAt < PENDING_WITHDRAW_BALANCE_REFRESH_MS)
+      return
+
+    const balances = await this.readAndCacheBalancesForPlan(plan, accessToken)
+    const available = (items: readonly ConfidentialBalance[]) =>
+      getConfidentialAvailableForAsset(items, plan.source.protocolAssetId) ?? '0'
+    if (previous.known && available(previous.balances) === available(balances)) return
+
+    await this.options.refreshPortfolio?.({
+      keyDomainId: plan.keyDomainId,
+      accountId: plan.accountId,
+      chainIds: [plan.source.chainId],
+      domain: 'confidential',
+      balanceUpdated: true
+    })
   }
 
   private async handleContinuationError(

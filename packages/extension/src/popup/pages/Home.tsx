@@ -755,6 +755,7 @@ export function Home() {
           accountCatalog={accountCatalog}
           publicAccountCatalog={publicAccountCatalog}
           accountCatalogError={accountNetworksError}
+          activeAccountHasIncognitoHoldings={hasIncognitoHoldings && !accountContextChanging}
           defaultEvmMode={walletMode}
           className="min-w-0"
         />

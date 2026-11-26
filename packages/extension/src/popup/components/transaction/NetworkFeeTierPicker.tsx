@@ -367,7 +367,8 @@ function NetworkFeeTierEditContent({
   readonly onSelect: (selection: EvmFeeSelection) => void | Promise<void>
   readonly close: () => void
 }) {
-  const [updating, setUpdating] = useState(false)
+  const [pendingSelection, setPendingSelection] = useState<EvmFeeSelection | null>(null)
+  const updating = pendingSelection !== null
   const [failure, setFailure] = useState<{ message: string; retry?: EvmFeeSelection } | null>(null)
   const tier = selection.kind === 'tier' ? selection.tier : null
   const [draft, setDraft] = useState<ReturnType<typeof evmFeeDraft> | null>(null)
@@ -413,7 +414,7 @@ function NetworkFeeTierEditContent({
   const applySelection = async (next: EvmFeeSelection) => {
     if (pending.current) return
     pending.current = true
-    setUpdating(true)
+    setPendingSelection(next)
     setFailure(null)
     try {
       await onSelect(next)
@@ -427,7 +428,7 @@ function NetworkFeeTierEditContent({
       }
     } finally {
       pending.current = false
-      if (mounted.current) setUpdating(false)
+      if (mounted.current) setPendingSelection(null)
     }
   }
 
@@ -546,7 +547,7 @@ function NetworkFeeTierEditContent({
             fee={currentFee}
           />
           <FeeOptionList
-            value={tier}
+            value={pendingSelection?.kind === 'tier' ? pendingSelection.tier : tier}
             onSelect={next => {
               if (pending.current) return
               if (tier === next) close()
