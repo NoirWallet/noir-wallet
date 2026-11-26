@@ -5,7 +5,6 @@
 import {
   ZEC_ZCASH_ASSET,
   WNEAR_NEAR_ASSET,
-  ONE_CLICK_TOKEN_CATALOG_URL,
   RHEA_TOKEN_ICONS_API,
   NOIR_SWAP_APP_FEES,
   NOIR_SWAP_REFERRAL,
@@ -24,6 +23,7 @@ import { formatUnits } from 'viem'
 import type { QuoteBinding } from '@/types/wallet'
 import { parseOneClickDepositMemo, type OneClickViewer } from './near-intents/one-click-order'
 import { requestOneClickQuote } from './near-intents/one-click-quote'
+import { fetchOneClickTokenCatalog } from './near-intents/one-click-token-catalog'
 
 const COINGECKO_MARKETS_API = 'https://api.coingecko.com/api/v3/coins/markets'
 const WALLET_TOKEN_BLOCKCHAINS = new Set(['sol', 'near'])
@@ -608,8 +608,7 @@ function enrichTokenIcons(tokens: SwapToken[]): SwapToken[] {
 }
 
 async function fetchAllTokens(): Promise<SwapToken[]> {
-  const response = await fetchWithTimeout(ONE_CLICK_TOKEN_CATALOG_URL)
-  const tokens = parseSwapTokenCatalogResponse(await response.json())
+  const tokens = parseSwapTokenCatalogResponse(await fetchOneClickTokenCatalog())
   tokenCache = enrichTokenIcons(tokens)
   tokenCacheTime = Date.now()
   return tokenCache

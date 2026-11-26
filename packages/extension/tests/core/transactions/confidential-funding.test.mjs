@@ -1217,7 +1217,7 @@ test.describe('confidential funding safety rules', () => {
     try {
       await expect(api.getBalances('session')).rejects.toThrow('balance row is invalid')
       expect(request.url).toBe('https://direct.example.test/v0/account/balances')
-      expect(request.init.headers.Authorization).toBe('Bearer session')
+      expect(new Headers(request.init.headers).get('Authorization')).toBe('Bearer session')
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -1486,7 +1486,7 @@ test.describe('confidential funding safety rules', () => {
     let echoCharges = true
     globalThis.fetch = async (url, init) => {
       if (url === 'https://example.test/api/swap/confidential-app-fee') {
-        expect(init.headers.Authorization).toBe('Bearer swap-jwt')
+        expect(new Headers(init.headers).get('Authorization')).toBe('Bearer swap-jwt')
         feeReads += 1
         return Response.json({
           code: 0,
@@ -1881,7 +1881,7 @@ test.describe('confidential funding safety rules', () => {
       ).resolves.toEqual({ orderId: 'order-1' })
       expect(calls).toHaveLength(1)
       expect(calls[0].url).toBe('https://example.test/v3/private/withdraws')
-      expect(calls[0].init.headers.Authorization).toBe('Bearer swap-jwt')
+      expect(new Headers(calls[0].init.headers).get('Authorization')).toBe('Bearer swap-jwt')
       expect(JSON.parse(calls[0].init.body)).toMatchObject({
         signer_chain_family: 'evm',
         withdraws: [{ sequence: 0 }, { sequence: 1 }]
@@ -1942,7 +1942,7 @@ test.describe('confidential funding safety rules', () => {
     let includeUnrelatedDeposit = false
     let requestHeaders
     globalThis.fetch = async (_url, init) => {
-      requestHeaders = init.headers
+      requestHeaders = new Headers(init.headers)
       return new Response(
         JSON.stringify({
           code: 0,
@@ -1976,8 +1976,8 @@ test.describe('confidential funding safety rules', () => {
       ).resolves.toMatchObject({
         orders: [{ transactions: [{ sequence: 0, scheduledAt: 12345, deadline: 99999 }] }]
       })
-      expect(requestHeaders.Authentication).toBe('wallet-jwt')
-      expect(requestHeaders.Authorization).toBeUndefined()
+      expect(requestHeaders.get('Authentication')).toBe('wallet-jwt')
+      expect(requestHeaders.get('Authorization')).toBeNull()
       includeUnrelatedDeposit = true
       const page = await api.getPrivateOrders({ walletToken: 'wallet-jwt', signerId })
       expect(page.orders).toHaveLength(2)

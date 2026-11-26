@@ -22,6 +22,7 @@ import {
 } from '@/core/services/near-intents/one-click-quote'
 import { DedupPromise } from '@/lib/async-utils'
 import { logDevelopmentError } from '@/lib/development-console'
+import { fetchWithTimeout, jsonRequestInit } from '@/lib/fetch-utils'
 import { parseSiweMessage } from 'viem/siwe'
 import { isAddress } from 'viem'
 import type {
@@ -498,24 +499,18 @@ async function readJson(response: Response): Promise<unknown> {
 
 async function requestJson(
   url: string,
-  init: RequestInit = {},
+  { json, ...init }: RequestInit & { json?: unknown } = {},
   accessToken?: string
 ): Promise<unknown> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-  const signal = init.signal
-  const onAbort = () => controller.abort()
-  signal?.addEventListener('abort', onAbort, { once: true })
   try {
-    const response = await fetch(url, {
-      ...init,
-      signal: controller.signal,
-      headers: {
-        Accept: 'application/json',
-        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-        ...init.headers
-      }
+    const response = await fetchWithTimeout(url, {
+      ...jsonRequestInit(
+        init,
+        json,
+        accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined
+      ),
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      acceptHttpErrors: true
     })
     return await readJson(response)
   } catch (error) {
@@ -526,9 +521,6 @@ async function requestJson(
       null,
       true
     )
-  } finally {
-    clearTimeout(timer)
-    signal?.removeEventListener('abort', onAbort)
   }
 }
 
@@ -584,7 +576,7 @@ export class ConfidentialFundingApi {
       this.swapUrl('/v3/private/withdraws'),
       {
         method: 'POST',
-        body: JSON.stringify({ ...request, signer_chain_family: 'evm' })
+        json: { ...request, signer_chain_family: 'evm' }
       },
       this.requireSwapToken()
     )
@@ -646,7 +638,7 @@ export class ConfidentialFundingApi {
     const value = await requestJson(this.swapUrl('/v3/private/orders/details'), {
       method: 'POST',
       headers: { Authentication: input.walletToken.trim() },
-      body: JSON.stringify({ order_ids: input.orderIds })
+      json: { order_ids: input.orderIds }
     })
     if (!isRecord(value)) throw new Error('Private order details are invalid')
     const orders = parsePrivateOrders(value.list)
@@ -676,13 +668,13 @@ export class ConfidentialFundingApi {
       this.swapUrl('/api/swap/history/auth/challenge'),
       {
         method: 'POST',
-        body: JSON.stringify({
+        json: {
           chainFamily: 'evm',
           chainId,
           walletAddress,
           ...(input.identityKey ? { identityKey: input.identityKey } : {}),
           ...(input.mcaAccountId ? { mcaAccountId: input.mcaAccountId } : {})
-        })
+        }
       },
       this.requireSwapToken()
     )
@@ -752,10 +744,10 @@ export class ConfidentialFundingApi {
       this.swapUrl('/api/swap/history/auth/verify'),
       {
         method: 'POST',
-        body: JSON.stringify({
+        json: {
           challengeId: challenge.challengeId,
           proof: { signature: erc191ProofSignature(signed.signature) }
-        })
+        }
       },
       this.requireSwapToken()
     )
@@ -787,7 +779,7 @@ export class ConfidentialFundingApi {
   ): Promise<Readonly<{ standard: 'erc191'; payload: string; expiresAt: number }>> {
     const response = await requestJson(this.nearRpcUrl, {
       method: 'POST',
-      body: JSON.stringify({
+      json: {
         jsonrpc: '2.0',
         id: 'confidential-auth-salt',
         method: 'query',
@@ -798,7 +790,7 @@ export class ConfidentialFundingApi {
           method_name: 'current_salt',
           args_base64: 'e30='
         }
-      })
+      }
     })
     if (
       !isRecord(response) ||
@@ -843,7 +835,7 @@ export class ConfidentialFundingApi {
     return parseSession(
       await requestJson(this.oneClickUrl('/auth/authenticate'), {
         method: 'POST',
-        body: JSON.stringify({ signedData })
+        json: { signedData }
       })
     )
   }
@@ -852,7 +844,7 @@ export class ConfidentialFundingApi {
     return parseSession(
       await requestJson(this.oneClickUrl('/auth/refresh'), {
         method: 'POST',
-        body: JSON.stringify({ refreshToken: session.refreshToken })
+        json: { refreshToken: session.refreshToken }
       }),
       session
     )
@@ -1172,12 +1164,12 @@ export class ConfidentialFundingApi {
   }): Promise<Readonly<{ intent: unknown; correlationId: string }>> {
     const value = await requestJson(this.oneClickUrl('/generate-intent'), {
       method: 'POST',
-      body: JSON.stringify({
+      json: {
         type: 'swap_transfer',
         standard: 'erc191',
         signerId: input.signerId,
         depositAddress: input.depositAddress
-      })
+      }
     })
     if (!isRecord(value) || !value.intent)
       throw new Error('Generated confidential intent is invalid')
@@ -1195,7 +1187,7 @@ export class ConfidentialFundingApi {
       this.oneClickUrl('/submit-intent'),
       {
         method: 'POST',
-        body: JSON.stringify({ type: 'swap_transfer', signedData })
+        json: { type: 'swap_transfer', signedData }
       },
       accessToken
     )

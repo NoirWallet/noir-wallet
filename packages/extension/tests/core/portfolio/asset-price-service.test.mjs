@@ -20,6 +20,7 @@ import {
   mergeAssetMarketChanges
 } from '../../../src/background/asset-prices.ts'
 import { createIntentsWalletAssetCatalog } from '../../../src/core/services/intents-wallet-assets.ts'
+import { refreshSwapTokenCatalog } from '../../../src/core/services/intents-api.ts'
 import {
   hasRetryablePortfolioPriceGap,
   summarizePortfolioFiat
@@ -301,6 +302,37 @@ test('maps release assets to fixed DEX Screener pools without symbol discovery',
       mappings.some(mapping => assets.resolve(mapping.assetId).metadata.symbol === 'USDC')
     ).toBe(false)
   }
+})
+
+test('shares one in-flight token response between Swap and portfolio prices', async context => {
+  const { mappings } = createMappings()
+  const now = Date.now()
+  const catalog = uniqueSourceMappings(mappings).map(mapping => token(mapping, now, 2))
+  const originalFetch = globalThis.fetch
+  let requests = 0
+  context.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  globalThis.fetch = async () => {
+    requests += 1
+    await new Promise(resolve => setImmediate(resolve))
+    return Response.json(catalog)
+  }
+  const service = new OneClickAssetPriceService({
+    mappings,
+    now: () => now,
+    cache: { get: async () => null, put: async () => {} }
+  })
+
+  const [tokens, prices] = await Promise.all([refreshSwapTokenCatalog(), service.refresh()])
+
+  expect(requests).toBe(1)
+  expect(tokens.map(entry => entry.assetId)).toEqual(catalog.map(entry => entry.assetId))
+  expect(prices.quotes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ assetId: mappings[0].assetId, priceUsd: '2' })
+    ])
+  )
 })
 
 test('serves fresh prices, keeps bounded stale cache, and expires old quotes instead of using zero', async () => {
