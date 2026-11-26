@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 
 import { ConfidentialFundingCoordinator } from '../../../src/background/confidential-funding-coordinator.ts'
-import { ConfidentialFundingApiError } from '../../../src/background/confidential-funding-api.ts'
+import { ConfidentialFundingApiError } from '../../../src/infrastructure/near-intents/confidential-funding-api.ts'
 import { serializeConfidentialFundingPlan } from '../../../src/background/confidential-funding-store.ts'
 import {
   createConfidentialFundingGraph,

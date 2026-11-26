@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { decodeFunctionData, erc20Abi } from 'viem'
-import { ConfidentialFundingApi } from '../../../src/background/confidential-funding-api.ts'
+import { ConfidentialFundingApi } from '../../../src/infrastructure/near-intents/confidential-funding-api.ts'
 import { PublicConfidentialTransfer } from '../../../src/background/public-confidential-transfer.ts'
 import { RheaSwapCatalogClient } from '../../../src/core/services/rhea-swap/rhea-swap-catalog-client.ts'
 import {

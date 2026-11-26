@@ -18,7 +18,7 @@ const {
   readNativeZecIntentsSwapStatus
 } = await import('../../../src/background/native-zec-intents-swap.ts')
 const { ConfidentialFundingApi } =
-  await import('../../../src/background/confidential-funding-api.ts')
+  await import('../../../src/infrastructure/near-intents/confidential-funding-api.ts')
 after(() => {
   delete globalThis.chrome
   delete globalThis.location

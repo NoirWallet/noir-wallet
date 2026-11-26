@@ -4,10 +4,10 @@ import { privateKeyToAccount } from 'viem/accounts'
 import {
   ConfidentialFundingApi,
   parseConfidentialOneClickStatus
-} from '../../../src/background/confidential-funding-api.ts'
+} from '../../../src/infrastructure/near-intents/confidential-funding-api.ts'
 import { ConfidentialFundingCoordinator } from '../../../src/background/confidential-funding-coordinator.ts'
 import { ConfidentialFundingSigner } from '../../../src/background/confidential-funding-signer.ts'
-import { createBackgroundConfidentialFundingCoordinator } from '../../../src/background/confidential-funding.ts'
+import { createBackgroundConfidentialFundingRuntime } from '../../../src/background/confidential-funding.ts'
 import { userEvmAssetToDefinition } from '../../../src/core/chains/user-assets/user-evm-asset.ts'
 import { getActiveChainEndpointSettings } from '../../../src/core/chains/chain-endpoint-settings.ts'
 import { InMemoryTransactionRepository } from '../../../src/infrastructure/persistence/repositories/in-memory-transaction-repository.ts'
@@ -419,7 +419,7 @@ test.describe('confidential funding safety rules', () => {
         metadata: { name: 'Tether USD', symbol: 'USDT', decimals }
       })
       const create = (entry, tokens = [token]) =>
-        createBackgroundConfidentialFundingCoordinator(
+        createBackgroundConfidentialFundingRuntime(
           network,
           [],
           [entry],
@@ -427,7 +427,7 @@ test.describe('confidential funding safety rules', () => {
           tokens,
           getActiveChainEndpointSettings(),
           async () => {}
-        )
+        ).coordinator
       const source = { chainId, assetId, protocolAssetId }
       expect(definition.verification).toBe('unverified')
       expect(create(definition).hasExternalDepositAsset(source)).toBe(true)

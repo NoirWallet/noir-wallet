@@ -1,10 +1,15 @@
 import { buildActivityReadModel, type ActivityReadModel, type ActivityScope } from '@/core/activity'
+import type { EvmNetworkConfig } from '@/config/networks'
+import type { AssetRegistry } from '@/core/chains/registry'
 import type { Network } from '@/types'
 import type { TransactionGraph } from '@/core/transactions/domain'
 import type {
   ConfidentialFundingPlan,
+  ConfidentialPortfolioAssetMapping,
   ExternalShieldDeposit
 } from '@/core/services/confidential-funding'
+import type { SwapToken } from '@/core/services/intents-api'
+import { resolveManagedIntentsAssets } from '@/core/services/intents-managed-assets'
 import type { TransactionListQuery } from '@/ports/repositories'
 import {
   collectConfidentialHistoryOrderKeys,
@@ -12,6 +17,12 @@ import {
   projectConfidentialHistoryEntry,
   type ConfidentialHistoryPage
 } from '@/core/services/near-intents/confidential-history'
+import { logDevelopmentError } from '@/lib/development-console'
+import {
+  ConfidentialFundingApiError,
+  type ConfidentialFundingApi,
+  type ConfidentialSession
+} from '@/infrastructure/near-intents/confidential-funding-api'
 
 const MAX_PAGES = 10
 const LOCAL_PAGE_SIZE = 200
@@ -19,12 +30,18 @@ const LOCAL_PAGE_SIZE = 200
 export interface ConfidentialActivitySource {
   readonly network: Network
   readonly canRead: () => Promise<boolean>
-  readonly readPage: (
+  readonly api: Pick<ConfidentialFundingApi, 'getHistory'>
+  readonly readSession: (
     scope: ActivityScope,
-    prevCursor: string | undefined,
-    isCurrent: () => Promise<boolean>
-  ) => Promise<ConfidentialHistoryPage | null>
-  readonly getAssets: () => Parameters<typeof projectConfidentialHistoryEntry>[2]
+    isCurrent: () => Promise<boolean>,
+    rejectedAccessToken?: string
+  ) => Promise<Pick<ConfidentialSession, 'accessToken'> | null>
+  readonly assetCatalog: {
+    readonly assets: Pick<AssetRegistry, 'get'>
+    readonly assetMappings: readonly ConfidentialPortfolioAssetMapping[]
+    readonly evmNetworks: readonly EvmNetworkConfig[]
+    readonly getProtocolTokens: () => readonly SwapToken[]
+  }
   readonly fundingStore: {
     getPlansForTransactions(
       ids: readonly string[]
@@ -161,7 +178,7 @@ export class ConfidentialActivityService {
         keys.add(confidentialHistoryOrderKey(record.depositAddress, record.depositMemo))
       }
     }
-    const assets = source.getAssets()
+    const assets = this.resolveHistoryAssets(source)
     return history.pages.flatMap(page =>
       page.entries.flatMap(entry => {
         if (keys.has(entry.key)) return []
@@ -169,6 +186,48 @@ export class ConfidentialActivityService {
         return [projectConfidentialHistoryEntry(entry, scope, assets)]
       })
     )
+  }
+
+  private resolveHistoryAssets({ network, assetCatalog }: ConfidentialActivitySource) {
+    const assets = new Map<string, { assetId: string; decimals: number }>()
+    const { assetMappings, evmNetworks, getProtocolTokens } = assetCatalog
+    const tokens = getProtocolTokens()
+    try {
+      for (const asset of resolveManagedIntentsAssets(tokens, network, evmNetworks)) {
+        assets.set(asset.protocolAssetId, asset)
+      }
+    } catch (error) {
+      logDevelopmentError('[Confidential Activity] History asset catalog unavailable', error)
+    }
+    for (const { assetId, protocolAssetId } of assetMappings) {
+      const asset = assetCatalog.assets.get(assetId)
+      if (asset) assets.set(protocolAssetId, { assetId, decimals: asset.metadata.decimals })
+    }
+    return assets
+  }
+
+  private async readPage(
+    source: ConfidentialActivitySource,
+    scope: ActivityScope,
+    prevCursor: string | undefined,
+    isCurrent: () => Promise<boolean>
+  ): Promise<ConfidentialHistoryPage | null> {
+    let rejectedAccessToken: string | undefined
+    for (const retry of [false, true]) {
+      if (!(await isCurrent())) return null
+      const session = await source.readSession(scope, isCurrent, rejectedAccessToken)
+      if (!session || !(await isCurrent())) return null
+      try {
+        return await source.api.getHistory(session.accessToken, prevCursor)
+      } catch (error) {
+        if (!(error instanceof ConfidentialFundingApiError)) throw error
+        if (error.status === 403) return null
+        if (error.status !== 401) throw error
+        if (retry) return null
+        rejectedAccessToken = session.accessToken
+      }
+    }
+    return null
   }
 
   private async readHistory(
@@ -216,11 +275,10 @@ export class ConfidentialActivityService {
     }
     try {
       while (pages.length < target) {
-        if (!(await isCurrent())) return EMPTY
         const prevCursor = pages.at(-1)?.prevCursor
         if (pages.length && (!prevCursor || requestedCursors.has(prevCursor))) break
         if (prevCursor) requestedCursors.add(prevCursor)
-        const page = await source.readPage(scope, prevCursor, isCurrent)
+        const page = await this.readPage(source, scope, prevCursor, isCurrent)
         if (!(await isCurrent())) return EMPTY
         if (!page) {
           context.window = EMPTY

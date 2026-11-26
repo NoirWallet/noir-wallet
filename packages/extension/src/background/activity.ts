@@ -237,10 +237,10 @@ export function createBackgroundActivityCoordinator(
   bitcoinCustomRpcUrl?: string,
   endpointSettings?: ChainEndpointSettings,
   onHistoryRead?: (scope: ActivityScope, chainId: string, mode?: 'main' | 'private') => void,
-  confidentialHistory?: Omit<ConfidentialActivitySource, 'network' | 'fundingStore'>
+  confidentialHistory?: ConfidentialActivitySource
 ): ActivityCoordinator {
   const storageRepository = new IndexedDbStorageV2Repository()
-  const fundingStore = new ChromeConfidentialFundingStore()
+  const fundingStore = confidentialHistory?.fundingStore ?? new ChromeConfidentialFundingStore()
   const peaSigner = new EvmMultichainSigningClient({ credentials: credentialSession })
   const historyCache = new ActivityHistoryCache(DEFAULT_NETWORK)
   const accountPreferences = getBitcoinAccountPreferences()
@@ -935,10 +935,6 @@ export function createBackgroundActivityCoordinator(
         }
       : {}),
     filterLocalGraphs,
-    confidentialHistory: confidentialHistory && {
-      ...confidentialHistory,
-      network: DEFAULT_NETWORK,
-      fundingStore
-    }
+    confidentialHistory
   })
 }

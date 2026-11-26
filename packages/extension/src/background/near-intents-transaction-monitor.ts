@@ -19,7 +19,7 @@ import {
 } from '@/infrastructure/persistence/repositories'
 import { getRequiredConfirmations } from '@/lib/transaction-status'
 import { lookupTransaction } from '@/lib/zcash-node-rpc'
-import { parseConfidentialOneClickStatus } from './confidential-funding-api'
+import { parseConfidentialOneClickStatus } from '@/infrastructure/near-intents/confidential-funding-api'
 import { queryOneClickOrderStatus } from './one-click-status'
 
 export const NEAR_INTENTS_TRANSACTION_MONITOR_ALARM = 'near-intents-transaction-monitor-alarm'

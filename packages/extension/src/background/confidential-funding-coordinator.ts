@@ -34,7 +34,6 @@ import {
   resolveIntentsEvmChainId
 } from '@/core/services/intents-evm-assets'
 import { resolveManagedIntentsAssets } from '@/core/services/intents-managed-assets'
-import type { ActivityScope } from '@/core/activity'
 import type { ChainId } from '@/core/chains/domain'
 import { parseAccountId } from '@/core/accounts/domain'
 import { parseKeyDomainId } from '@/core/keyring/domain'
@@ -118,7 +117,7 @@ import {
   type ConfidentialPrivateOrder,
   type ConfidentialSession,
   type ConfidentialStatus
-} from './confidential-funding-api'
+} from '@/infrastructure/near-intents/confidential-funding-api'
 import {
   ConfidentialFundingSigner,
   requireConfidentialPea,
@@ -3017,65 +3016,6 @@ export class ConfidentialFundingCoordinator {
     return Object.freeze({ identity, session })
   }
 
-  async readHistoryPage(
-    scope: ActivityScope,
-    prevCursor: string | undefined,
-    isCurrent: () => Promise<boolean>
-  ) {
-    const { keyDomainId, accountId } = scope
-    const session = await this.readUsableSessionForScope(keyDomainId, accountId, isCurrent)
-    if (!session || !(await isCurrent())) return null
-    try {
-      return await this.options.api.getHistory(session.accessToken, prevCursor)
-    } catch (error) {
-      if (!(error instanceof ConfidentialFundingApiError)) throw error
-      if (error.status === 403) return null
-      if (error.status !== 401 || !(await isCurrent())) throw error
-    }
-    const refreshed = await this.readUsableSessionForScope(
-      keyDomainId,
-      accountId,
-      isCurrent,
-      session.accessToken
-    )
-    if (!refreshed || !(await isCurrent())) return null
-    try {
-      return await this.options.api.getHistory(refreshed.accessToken, prevCursor)
-    } catch (error) {
-      if (
-        error instanceof ConfidentialFundingApiError &&
-        (error.status === 401 || error.status === 403)
-      )
-        return null
-      throw error
-    }
-  }
-
-  getHistoryAssets() {
-    const assets = new Map<string, { assetId: string; decimals: number }>()
-    const tokens = this.options.getProtocolTokens?.() ?? this.options.protocolTokens ?? []
-    try {
-      for (const asset of resolveManagedIntentsAssets(
-        tokens,
-        this.options.network,
-        this.options.evmNetworks
-      )) {
-        assets.set(asset.protocolAssetId, asset)
-      }
-    } catch (error) {
-      logDevelopmentError('[Confidential Funding] History asset catalog unavailable', error)
-    }
-    for (const mapping of this.options.assetMappings) {
-      const asset = this.options.assets.get(mapping.assetId)
-      if (asset)
-        assets.set(mapping.protocolAssetId, {
-          assetId: mapping.assetId,
-          decimals: asset.metadata.decimals
-        })
-    }
-    return assets
-  }
-
   async refreshBalances(
     scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>,
     authorize: boolean
@@ -5105,7 +5045,7 @@ export class ConfidentialFundingCoordinator {
     return this.readUsableSessionForScope(plan.keyDomainId, plan.accountId)
   }
 
-  private async readUsableSessionForScope(
+  async readUsableSessionForScope(
     keyDomainId: string,
     accountId: string,
     isCurrent?: () => Promise<boolean>,

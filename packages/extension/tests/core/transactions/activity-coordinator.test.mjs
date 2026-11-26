@@ -17,6 +17,7 @@ import { parseActivityReadModel } from '../../../src/core/activity/index.ts'
 import { parseConfidentialHistoryPage } from '../../../src/core/services/near-intents/confidential-history.ts'
 import { filterActivityItems } from '../../../src/popup/services/activity-list-model.ts'
 import { createEvmTransferGraph } from '../../../src/infrastructure/chains/evm/index.ts'
+import { ConfidentialFundingApiError } from '../../../src/infrastructure/near-intents/confidential-funding-api.ts'
 import { InMemoryTransactionRepository } from '../../../src/infrastructure/persistence/repositories/index.ts'
 
 const chains = createEvmBitcoinChainRegistry('mainnet')
@@ -170,12 +171,14 @@ function historyRow(overrides = {}) {
 }
 
 function historyCoordinator({
-  readPage,
+  getHistory,
+  readSession = async requestedScope => ({ accessToken: requestedScope.accountId }),
   canRead = async () => true,
   repository = new InMemoryTransactionRepository(),
   readStorage = storage(),
   fundingPlans = new Map()
 }) {
+  const assetId = 'eip155:1/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
   return new ActivityCoordinator({
     storageRepository: readStorage,
     transactionRepository: repository,
@@ -185,19 +188,19 @@ function historyCoordinator({
     confidentialHistory: {
       network: 'mainnet',
       canRead,
-      readPage,
+      api: { getHistory },
+      readSession,
       fundingStore: {
         getPlansForTransactions: async ids =>
           new Map([...fundingPlans].filter(([id]) => ids.includes(id))),
         listExternalDeposits: async () => []
       },
-      getAssets: () =>
-        new Map([
-          [
-            'nep141:usdc',
-            { assetId: 'eip155:1/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', decimals: 6 }
-          ]
-        ])
+      assetCatalog: {
+        assets: new Map([[assetId, { metadata: { decimals: 6 } }]]),
+        assetMappings: [{ assetId, protocolAssetId: 'nep141:usdc' }],
+        evmNetworks: [],
+        getProtocolTokens: () => []
+      }
     }
   })
 }
@@ -205,7 +208,7 @@ function historyCoordinator({
 test.describe('Confidential activity history', () => {
   test('restores read-only Shield records and preserves distinct memos without a local ledger', async () => {
     const coordinator = historyCoordinator({
-      readPage: async () =>
+      getHistory: async () =>
         parseConfidentialHistoryPage({
           items: [
             historyRow(),
@@ -242,14 +245,19 @@ test.describe('Confidential activity history', () => {
     const localGraphs = await repository.list({ scope, limit: 1 })
     const readRepository = { list: async () => localGraphs }
     let denied = false
+    const rejectedTokens = []
     const coordinator = historyCoordinator({
       repository: readRepository,
-      readPage: async () =>
-        denied
-          ? null
-          : parseConfidentialHistoryPage({
-              items: [historyRow(), historyRow({ depositMemo: 'second' })]
-            }),
+      readSession: async (_scope, _isCurrent, rejectedToken) => {
+        if (rejectedToken !== undefined) rejectedTokens.push(rejectedToken)
+        return { accessToken: 'session-token' }
+      },
+      getHistory: async () => {
+        if (denied) throw new ConfidentialFundingApiError('Invite required', 403, false)
+        return parseConfidentialHistoryPage({
+          items: [historyRow(), historyRow({ depositMemo: 'second' })]
+        })
+      },
       fundingPlans: new Map([
         [
           localGraphs[0].root.id,
@@ -267,17 +275,42 @@ test.describe('Confidential activity history', () => {
     const model = await coordinator.readActive(confidentialOptions)
     expect(model.items.map(item => item.source)).toEqual(['confidential-history', 'wallet-v2'])
     expect(model.items[0].id).toContain('second')
-    coordinator.clearConfidentialHistory()
     denied = true
-    await expect(coordinator.readActive(confidentialOptions)).resolves.toMatchObject({
-      items: [{ source: 'wallet-v2' }]
-    })
+    const fallback = await coordinator.readActive(confidentialOptions)
+    expect(fallback.items.map(item => item.source)).toEqual(['wallet-v2'])
+    expect(fallback.confidentialHistoryUnavailable).toBeUndefined()
+    expect(rejectedTokens).toEqual([])
+  })
+
+  test('retries a 401 exactly once with the renewed account session', async () => {
+    for (const renewedSessionAccepted of [true, false]) {
+      const rejectedTokens = []
+      const historyTokens = []
+      const coordinator = historyCoordinator({
+        readSession: async (_scope, _isCurrent, rejectedToken) => {
+          if (rejectedToken !== undefined) rejectedTokens.push(rejectedToken)
+          return { accessToken: rejectedToken ? 'renewed-token' : 'expired-token' }
+        },
+        getHistory: async token => {
+          historyTokens.push(token)
+          if (token === 'expired-token' || !renewedSessionAccepted) {
+            throw new ConfidentialFundingApiError('Unauthorized', 401, false)
+          }
+          return parseConfidentialHistoryPage({ items: [historyRow()] })
+        }
+      })
+      const model = await coordinator.readActive(confidentialOptions)
+      expect(model.items).toHaveLength(renewedSessionAccepted ? 1 : 0)
+      expect(model.confidentialHistoryUnavailable).toBeUndefined()
+      expect(rejectedTokens).toEqual(['expired-token'])
+      expect(historyTokens).toEqual(['expired-token', 'renewed-token'])
+    }
   })
 
   test('retries the same older cursor after failure and keeps cached rows visible', async () => {
     const cursors = []
     const coordinator = historyCoordinator({
-      readPage: async (_scope, cursor) => {
+      getHistory: async (_token, cursor) => {
         cursors.push(cursor)
         if (cursors.length === 2) throw new Error('Temporary failure')
         return parseConfidentialHistoryPage(
@@ -310,7 +343,7 @@ test.describe('Confidential activity history', () => {
   test('keeps history after a failed refresh and updates it on retry from the latest page', async () => {
     const cursors = []
     const coordinator = historyCoordinator({
-      readPage: async (_scope, cursor) => {
+      getHistory: async (_token, cursor) => {
         cursors.push(cursor)
         if (cursors.length === 2) throw new Error('Temporary failure')
         return parseConfidentialHistoryPage({
@@ -339,8 +372,8 @@ test.describe('Confidential activity history', () => {
           manifest: { ...snapshot.manifest, activeAccount }
         })
       }),
-      readPage: async requestedScope => {
-        if (requestedScope.accountId !== scope.accountId) return { entries: [] }
+      getHistory: async token => {
+        if (token !== scope.accountId) return { entries: [] }
         started.resolve()
         return response.promise
       }
@@ -355,6 +388,46 @@ test.describe('Confidential activity history', () => {
     })
     response.resolve(parseConfidentialHistoryPage({ items: [historyRow()] }))
     await expect(old).resolves.toBeNull()
+  })
+
+  test('discards a late session renewal without retrying history for the old account', async () => {
+    let activeAccount = scope
+    const renewing = Promise.withResolvers()
+    const renewal = Promise.withResolvers()
+    const historyTokens = []
+    const coordinator = historyCoordinator({
+      readStorage: storage({
+        getSnapshot: async () => ({
+          ...snapshot,
+          manifest: { ...snapshot.manifest, activeAccount }
+        })
+      }),
+      readSession: async (requestedScope, _isCurrent, rejectedToken) => {
+        if (rejectedToken !== undefined) {
+          renewing.resolve()
+          return renewal.promise
+        }
+        return { accessToken: requestedScope.accountId }
+      },
+      getHistory: async token => {
+        historyTokens.push(token)
+        if (token === scope.accountId) {
+          throw new ConfidentialFundingApiError('Unauthorized', 401, false)
+        }
+        return { entries: [] }
+      }
+    })
+    const old = coordinator.readActive(confidentialOptions)
+    await renewing.promise
+    activeAccount = { ...scope, accountId: 'account:other' }
+    coordinator.clearConfidentialHistory()
+    await expect(coordinator.readActive(confidentialOptions)).resolves.toMatchObject({
+      scope: activeAccount,
+      items: []
+    })
+    renewal.resolve({ accessToken: 'renewed-token' })
+    await expect(old).resolves.toBeNull()
+    expect(historyTokens).toEqual([scope.accountId, activeAccount.accountId])
   })
 })
 

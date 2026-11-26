@@ -1472,23 +1472,6 @@ async function reloadMultichainRuntime(
     }
   )
   activityCoordinator?.clearConfidentialHistory()
-  activityCoordinator = createBackgroundActivityCoordinator(
-    bitcoinRpcUrl,
-    settings,
-    (scope, chainId, mode) =>
-      activityNotifications.historyRead({ ...scope, network: DEFAULT_NETWORK }, chainId, mode),
-    {
-      canRead: async () =>
-        !networkRestartRequired &&
-        !walletLockCleanupPending &&
-        confidentialFundingCoordinator !== null &&
-        (await credentialSession.hasUnlockSession()),
-      readPage: (scope, cursor, isCurrent) =>
-        confidentialFundingCoordinator?.readHistoryPage(scope, cursor, isCurrent) ??
-        Promise.resolve(null),
-      getAssets: () => confidentialFundingCoordinator?.getHistoryAssets() ?? new Map()
-    }
-  )
   additionalReceiveTargetsCoordinator =
     createBackgroundAdditionalReceiveTargetsCoordinator(customEvmNetworks)
   accountNetworksCoordinator = createBackgroundAccountNetworksCoordinator(
@@ -1520,7 +1503,7 @@ async function reloadMultichainRuntime(
       : null
   evmTransferController = evmTransferRuntime?.activeController ?? null
   evmTransferRouter = evmTransferRuntime?.router ?? null
-  confidentialFundingCoordinator = evmFeatureRuntimePolicy.newOperationsEnabled
+  const shieldFunding = evmFeatureRuntimePolicy.newOperationsEnabled
     ? createBackgroundShieldFundingRuntime({
         evmNetworks: catalog,
         customEvmNetworks,
@@ -1529,9 +1512,18 @@ async function reloadMultichainRuntime(
         protocolTokens: intentsFullCatalogTokens,
         endpointSettings: settings,
         store: confidentialFundingStore,
-        getPortfolioCoordinator: () => portfolioCoordinator
+        getPortfolioCoordinator: () => portfolioCoordinator,
+        isActivityAvailable: () => !networkRestartRequired && !walletLockCleanupPending
       })
     : null
+  confidentialFundingCoordinator = shieldFunding?.coordinator ?? null
+  activityCoordinator = createBackgroundActivityCoordinator(
+    bitcoinRpcUrl,
+    settings,
+    (scope, chainId, mode) =>
+      activityNotifications.historyRead({ ...scope, network: DEFAULT_NETWORK }, chainId, mode),
+    shieldFunding?.confidentialActivity
+  )
   attachShieldFundingRuntime(confidentialFundingCoordinator, {
     transactionMonitor,
     resumeRecovery: !isRuntimeReconfiguration

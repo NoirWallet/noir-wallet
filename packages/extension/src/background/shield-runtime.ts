@@ -12,7 +12,7 @@ import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { rehydrateWalletStore, useWalletStore } from '@/store/wallet-store'
 import { accountContextTransition } from './account-context-transition'
-import { createBackgroundConfidentialFundingCoordinator } from './confidential-funding'
+import { createBackgroundConfidentialFundingRuntime } from './confidential-funding'
 import type {
   ConfidentialFundingCoordinator,
   PrepareConfidentialFundingInput
@@ -36,8 +36,9 @@ export function createBackgroundShieldFundingRuntime(deps: {
   readonly endpointSettings: ChainEndpointSettings
   readonly store: ChromeConfidentialFundingStore
   readonly getPortfolioCoordinator: () => BackgroundPortfolioCoordinator | null
-}): ConfidentialFundingCoordinator | null {
-  return createBackgroundConfidentialFundingCoordinator(
+  readonly isActivityAvailable: () => boolean
+}) {
+  const runtime = createBackgroundConfidentialFundingRuntime(
     deps.evmNetworks,
     deps.customEvmNetworks,
     deps.userEvmAssets,
@@ -105,6 +106,15 @@ export function createBackgroundShieldFundingRuntime(deps: {
       }
     }
   )
+  if (!runtime) return null
+  return {
+    coordinator: runtime.coordinator,
+    confidentialActivity: {
+      ...runtime.confidentialActivity,
+      canRead: async () =>
+        deps.isActivityAvailable() && (await credentialSession.hasUnlockSession())
+    }
+  }
 }
 
 export function attachShieldFundingRuntime(

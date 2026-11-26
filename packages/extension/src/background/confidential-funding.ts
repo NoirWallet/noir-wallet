@@ -14,7 +14,9 @@ import {
 } from '@/core/chains/registry'
 import { getCachedTokens, type SwapToken } from '@/core/services/intents-api'
 import { resolveIntentsEvmAssets } from '@/core/services/intents-evm-assets'
+import type { ConfidentialActivitySource } from '@/infrastructure/activity/confidential-activity-service'
 import { loadActiveEvmPortfolioContext } from '@/infrastructure/chains/evm'
+import { ConfidentialFundingApi } from '@/infrastructure/near-intents/confidential-funding-api'
 import { EvmMultichainSigningClient } from '@/infrastructure/keyring/multichain/evm-signing-client'
 import { HardwareEvmSigningContextResolver } from '@/infrastructure/keyring/hardware-evm-signing-context'
 import {
@@ -24,7 +26,6 @@ import {
 } from '@/infrastructure/persistence/repositories'
 import { credentialSession } from './credential-session'
 import { accountContextTransition } from './account-context-transition'
-import { ConfidentialFundingApi } from './confidential-funding-api'
 import {
   CONFIDENTIAL_FUNDING_MONITOR_ALARM,
   ConfidentialFundingCoordinator,
@@ -39,7 +40,7 @@ import {
 } from './keystone-evm-message-signing'
 import { queryOneClickOrderStatus } from './one-click-status'
 
-export function createBackgroundConfidentialFundingCoordinator(
+export function createBackgroundConfidentialFundingRuntime(
   evmNetworks: readonly EvmNetworkConfig[],
   customEvmNetworks: readonly EvmNetworkConfig[],
   userEvmAssets: readonly AssetDefinitionInput[],
@@ -54,7 +55,10 @@ export function createBackgroundConfidentialFundingCoordinator(
       'getNativeZecActiveAccount' | 'broadcastZcashShieldDeposit'
     >
   >
-): ConfidentialFundingCoordinator | null {
+): {
+  readonly coordinator: ConfidentialFundingCoordinator
+  readonly confidentialActivity: Omit<ConfidentialActivitySource, 'canRead'>
+} | null {
   const config = getConfidentialFundingNetworkConfig(DEFAULT_NETWORK)
   if (!config) return null
   const chains = createInitialProductChainRegistry(DEFAULT_NETWORK, customEvmNetworks)
@@ -123,9 +127,15 @@ export function createBackgroundConfidentialFundingCoordinator(
       }))
     ].map(mapping => [mapping.assetId, Object.freeze(mapping)])
   )
-  return new ConfidentialFundingCoordinator({
+  const api = new ConfidentialFundingApi(config, near.rpcUrl, __RHEA_SWAP_ACCESS_TOKEN__)
+  const assetMappings = Object.freeze([...mappings.values()])
+  const getProtocolTokens = () => {
+    const cached = getCachedTokens()
+    return cached.length > 0 ? cached : protocolTokens
+  }
+  const coordinator = new ConfidentialFundingCoordinator({
     network: DEFAULT_NETWORK,
-    api: new ConfidentialFundingApi(config, near.rpcUrl, __RHEA_SWAP_ACCESS_TOKEN__),
+    api,
     queryOneClickOrderStatus,
     store,
     signer: new ConfidentialFundingSigner(
@@ -156,12 +166,9 @@ export function createBackgroundConfidentialFundingCoordinator(
     assets,
     evmNetworks,
     protocolTokens,
-    getProtocolTokens: () => {
-      const cached = getCachedTokens()
-      return cached.length > 0 ? cached : protocolTokens
-    },
+    getProtocolTokens,
     ...nativeZecFunding,
-    assetMappings: Object.freeze([...mappings.values()]),
+    assetMappings,
     scheduleMonitoring: async (delayInMinutes = 0.1) => {
       const alarm = await chrome.alarms.get(CONFIDENTIAL_FUNDING_MONITOR_ALARM)
       if (
@@ -180,6 +187,22 @@ export function createBackgroundConfidentialFundingCoordinator(
     },
     refreshPortfolio
   })
+  return {
+    coordinator,
+    confidentialActivity: {
+      network: DEFAULT_NETWORK,
+      api,
+      readSession: (scope, isCurrent, rejectedAccessToken) =>
+        coordinator.readUsableSessionForScope(
+          scope.keyDomainId,
+          scope.accountId,
+          isCurrent,
+          rejectedAccessToken
+        ),
+      fundingStore: store,
+      assetCatalog: { assets, assetMappings, evmNetworks, getProtocolTokens }
+    }
+  }
 }
 
 export {

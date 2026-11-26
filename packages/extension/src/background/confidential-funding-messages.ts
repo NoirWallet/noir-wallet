@@ -9,7 +9,7 @@ import type {
   PrepareConfidentialFundingInput
 } from './confidential-funding-coordinator'
 import { CONFIDENTIAL_SESSION_REQUIRED_ERROR } from '@/core/services/confidential-funding'
-import { ConfidentialFundingApiError } from './confidential-funding-api'
+import { ConfidentialFundingApiError } from '@/infrastructure/near-intents/confidential-funding-api'
 import { useWalletStore } from '@/store/wallet-store'
 import { readNativeZecIntentsSwapStatus } from './native-zec-intents-swap'
 
