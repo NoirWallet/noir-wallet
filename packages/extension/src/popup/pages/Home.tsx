@@ -37,6 +37,7 @@ import { HomeShieldProviders } from '../components/portfolio/ShieldProviderGrid'
 import { resolveConfidentialDetailAssetId } from '../services/near-confidential-holdings'
 import { getHomeZcashSyncIssue } from '../services/home-zcash-sync-issue'
 import { MultichainActivityPanel } from '../components/transaction/MultichainActivityPanel'
+import { EvmActivityRecovery } from '../components/evm/EvmActivityRecovery'
 import { MultichainActivityDetail } from '../components/transaction/MultichainActivityDetail'
 import type { ActivityItem } from '@/core/activity'
 import { resolveEvmFeatureRuntimePolicy } from '@/core/chains/feature-runtime-policy'
@@ -1210,6 +1211,27 @@ export function Home() {
                   filterDomain={activityDomain}
                   showToolbar={!activityFilterAssetId}
                   showStatusFilter={isShieldView}
+                  toolbarAction={
+                    !activityFilterAssetId &&
+                    !accountContextChanging &&
+                    storageV2Account?.active &&
+                    storageV2Account.walletId === effectiveWalletId &&
+                    storageV2Account.accountId === effectiveAccountId &&
+                    (activityDomain === 'public' ||
+                      (activityDomain === 'private' && supportsIncognito)) && (
+                      <EvmActivityRecovery
+                        key={JSON.stringify([modeScopeKey, activityDomain])}
+                        scope={{
+                          keyDomainId: storageV2Account.walletId,
+                          accountId: storageV2Account.accountId
+                        }}
+                        network={network}
+                        executionMode={activityDomain === 'private' ? 'private' : 'main'}
+                        accountNetworks={storageV2Account.networks}
+                        onItemClick={handleMultichainActivityClick}
+                      />
+                    )
+                  }
                   focusTransactionId={focusTransactionId}
                   onItemClick={handleMultichainActivityClick}
                 />

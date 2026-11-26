@@ -69,6 +69,7 @@ interface MultichainActivityPanelProps {
   readonly shieldProvider?: 'near-confidential' | 'zcash-shield'
   readonly showToolbar?: boolean
   readonly showStatusFilter?: boolean
+  readonly toolbarAction?: ReactNode
   readonly maxItems?: number
   readonly pageSize?: number
   readonly localPagination?: boolean
@@ -135,6 +136,7 @@ export function MultichainActivityPanel({
   shieldProvider,
   showToolbar = true,
   showStatusFilter = false,
+  toolbarAction,
   maxItems,
   pageSize = ACTIVITY_DISPLAY_PAGE_SIZE,
   localPagination = false,
@@ -675,6 +677,7 @@ export function MultichainActivityPanel({
         }
       />
       {statusControl}
+      {toolbarAction}
     </NetworkFilterToolbar>
   ) : statusControl ? (
     <div className="shrink-0 px-4 py-3">{statusControl}</div>
