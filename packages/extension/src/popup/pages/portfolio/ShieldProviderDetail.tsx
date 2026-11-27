@@ -183,7 +183,16 @@ function ShieldProviderContent() {
     provider === 'near-confidential' &&
     near.status === 'ready' &&
     near.entries.every(entry => Big(entry.asset.availableRaw).eq(0))
-  const showNearEmptyState = nearBalanceEmpty && !connecting && !connectionError
+  const nearBalanceAction =
+    provider === 'near-confidential' && canManageNear
+      ? connectionErrorCode === 'authorization_required'
+        ? 'Connect'
+        : near.status === 'ready'
+          ? 'Refresh Shield balance'
+          : connectionError
+            ? 'Retry'
+            : null
+      : null
   const networks = model?.chains.filter(chain => chain.chain.family === 'zcash') ?? []
   const nearSupport = useMemo(
     () => nearConfidentialVaultSupport(directoryTokens),
@@ -368,7 +377,7 @@ function ShieldProviderContent() {
                   <span>
                     {provider === 'near-confidential' ? 'Total balance' : 'Shield balance'}
                   </span>
-                  {provider === 'near-confidential' && near.status === 'ready' && canManageNear && (
+                  {nearBalanceAction === 'Refresh Shield balance' && (
                     <button
                       type="button"
                       title="Refresh Shield balance"
@@ -386,23 +395,15 @@ function ShieldProviderContent() {
                     </button>
                   )}
                 </div>
-                {provider === 'near-confidential' &&
-                  connectionError &&
-                  canManageNear &&
-                  !connecting && (
-                    <button
-                      type="button"
-                      onClick={() => void refreshShieldBalances()}
-                      disabled={connecting}
-                      className="wallet-interactive mt-2 rounded-md text-sm font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
-                    >
-                      {connectionErrorCode === 'authorization_required' ? 'Connect' : 'Retry'}
-                    </button>
-                  )}
-                {connectionError && (
-                  <p role="alert" className="px-4 pt-2 text-xs text-warning">
-                    {connectionError}
-                  </p>
+                {(nearBalanceAction === 'Connect' || nearBalanceAction === 'Retry') && (
+                  <button
+                    type="button"
+                    onClick={() => void refreshShieldBalances()}
+                    disabled={connecting}
+                    className="wallet-interactive mt-2 rounded-md text-sm font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+                  >
+                    {nearBalanceAction}
+                  </button>
                 )}
               </div>
               {provider === 'near-confidential' && near.entries.length > 0 && !nearBalanceEmpty ? (
@@ -446,12 +447,12 @@ function ShieldProviderContent() {
                     />
                   ))}
                 </div>
-              ) : nearBalanceEmpty ||
+              ) : provider === 'near-confidential' ||
                 providerLoading ||
                 (provider === 'zcash-shield' && group?.fiat === '0') ? null : (
                 <p className="px-4 py-5 text-center text-sm text-muted">Balance unavailable</p>
               )}
-              {showNearEmptyState && (
+              {nearBalanceEmpty && (
                 <p className="px-4 pb-6 pt-7 text-center text-sm text-muted">
                   No shielded assets yet.
                 </p>

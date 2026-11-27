@@ -33,6 +33,7 @@ import type {
   RPCSchema,
   HardwarePcztPair,
   LedgerPcztSignatures,
+  WasmUnifiedAddresses,
   ZcashCredentialCapsule
 } from './types'
 import type { Network } from '../../types'
@@ -197,6 +198,42 @@ interface WalletEntry {
 const wallets = new Map<string, WalletEntry>()
 const accountIdsByHdIndex = new Map<string, Map<number, number>>()
 const feeQuotes = new FeeQuoteRegistry()
+
+async function recoverLedgerUfvkAccount(
+  entry: WalletEntry,
+  accountName: string,
+  ufvk: string,
+  fingerprint: Uint8Array,
+  accountHdIndex: number,
+  birthdayHeight: number
+): Promise<number | null> {
+  const wallet = entry.instance
+  const accountId = await wallet.get_account_id_by_name(accountName)
+  if ((await wallet.get_account_hd_index(accountId)) !== accountHdIndex) return null
+
+  const probe = new WebWallet(entry.network === 'mainnet' ? 'main' : 'test', entry.lightwalletdUrl)
+  try {
+    const probeId = await probe.create_account_ufvk(
+      accountName,
+      ufvk,
+      fingerprint,
+      accountHdIndex,
+      birthdayHeight,
+      'ledger'
+    )
+    const [expected, retained]: WasmUnifiedAddresses[] = await Promise.all([
+      probe.get_unified_addresses(probeId),
+      wallet.get_unified_addresses(accountId)
+    ])
+    return expected?.unified &&
+      retained?.unified === expected.unified &&
+      retained.transparent === expected.transparent
+      ? accountId
+      : null
+  } finally {
+    probe.free()
+  }
+}
 
 function feeQuoteContext(walletId: string, accountId: number): FeeQuoteContext {
   const entry = wallets.get(walletId)
@@ -1406,14 +1443,38 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
             console.log(`[Worker] Using safe new-wallet UFVK birthday: ${effectiveBirthdayHeight}`)
           }
 
-          const newAccountId = await w.create_account_ufvk(
-            accountName,
-            ufvk,
-            hexToBytes(seedFingerprintHex),
-            accountHdIndex,
-            effectiveBirthdayHeight,
-            keySource
-          )
+          const fingerprint = hexToBytes(seedFingerprintHex)
+          let newAccountId: number
+          try {
+            newAccountId = await w.create_account_ufvk(
+              accountName,
+              ufvk,
+              fingerprint,
+              accountHdIndex,
+              effectiveBirthdayHeight,
+              keySource
+            )
+          } catch (error) {
+            const entry = wallets.get(walletId)
+            if (
+              !entry ||
+              keySource !== 'ledger' ||
+              !walletId.startsWith('wallet:ledger-v3:') ||
+              !/account with name .+ already exists/i.test(String(error))
+            ) {
+              throw error
+            }
+            const retained = await recoverLedgerUfvkAccount(
+              entry,
+              accountName,
+              ufvk,
+              fingerprint,
+              accountHdIndex,
+              effectiveBirthdayHeight
+            )
+            if (retained === null) throw error
+            newAccountId = retained
+          }
           blankInstances.delete(walletId)
           accountIdsByHdIndex.get(walletId)?.set(accountHdIndex, newAccountId)
           return newAccountId
