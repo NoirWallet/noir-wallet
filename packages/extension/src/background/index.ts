@@ -2300,6 +2300,16 @@ enqueueExtensionDisplayModeUpdate(initializeExtensionDisplayMode).catch(error =>
 // Network-bound services start only after the persisted global mode is resolved.
 const multichainStartupReady = runtimeNetworkReady.then(async () => {
   await prepareWalletStoreForUse()
+  await accountContextTransition
+    .runActiveOperation(() => credentialLifecycle.reconcileNativeWalletDeletions())
+    .catch(error => {
+      logger.error(
+        '[Wallet] Reimported wallet metadata recovery failed',
+        undefined,
+        undefined,
+        error
+      )
+    })
   if (DEFAULT_NETWORK === 'mainnet')
     await hydrateBackgroundRheaSwapCatalog({
       direction: 'from',
