@@ -23,7 +23,7 @@ import Big from 'big.js'
 import { formatUnits } from 'viem'
 import type { QuoteBinding } from '@/types/wallet'
 import { parseOneClickDepositMemo, type OneClickViewer } from './near-intents/one-click-order'
-import { requestOneClickQuote } from './near-intents/one-click-quote'
+import { matchesOneClickQuoteViewer, requestOneClickQuote } from './near-intents/one-click-quote'
 
 const COINGECKO_MARKETS_API = 'https://api.coingecko.com/api/v3/coins/markets'
 const WALLET_TOKEN_BLOCKCHAINS = new Set(['sol', 'near'])
@@ -54,7 +54,7 @@ export interface QuoteParams {
   recipient: string
   slippageTolerance?: number
   validateQuoteRequest?: boolean
-  viewer?: OneClickViewer
+  viewer: OneClickViewer | null
   signal?: AbortSignal
 }
 
@@ -755,6 +755,7 @@ export async function fetchQuote(params: QuoteParams): Promise<QuoteResult> {
           ].some(key => echoed[key] !== requestBody[key as keyof typeof requestBody]) ||
           !sameAddress(echoed.refundTo, requestBody.refundTo) ||
           !sameAddress(echoed.recipient, requestBody.recipient) ||
+          !matchesOneClickQuoteViewer(echoed, params.viewer) ||
           Number(echoed.slippageTolerance) !== requestBody.slippageTolerance
         ) {
           throw new Error('Near Intents quote changed its request')
