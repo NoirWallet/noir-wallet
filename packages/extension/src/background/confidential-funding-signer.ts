@@ -18,9 +18,9 @@ import {
 import { parseSigningCommandId } from '@/core/keyring/ports'
 import { EvmMultichainSigningClient } from '@/infrastructure/keyring/multichain/evm-signing-client'
 import type { HardwareEvmSigningContextResolver } from '@/infrastructure/keyring/hardware-evm-signing-context'
-import type { LedgerSigningBinding } from '@/infrastructure/keyring/multichain/ledger-signing-bridge'
 import type { LedgerEvmSigningRequest, LedgerEvmSigningResponse } from '@/lib/ledger/evm'
 import { digestLedgerPayload, ledgerEvmPersonalSummary } from './ledger-evm-dapp-review'
+import type { LedgerSigningBinding } from './ledger-signing-coordinator'
 
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 
@@ -77,6 +77,11 @@ type ShieldDeviceRequest = Extract<
   LedgerEvmSigningRequest,
   { kind: 'personal-sign' | 'transaction' }
 >
+
+export interface ConfidentialHardwareMessageReview {
+  readonly purpose: NonNullable<LedgerSigningBinding['purpose']>
+  readonly validate: () => Promise<void>
+}
 
 type DeviceSigner = Readonly<{
   resolve: HardwareEvmSigningContextResolver['resolve']
@@ -166,6 +171,7 @@ export class ConfidentialFundingSigner {
     readonly chainId: ChainId
     readonly payload: string
     readonly expiresAt?: number
+    readonly hardwareReview?: ConfidentialHardwareMessageReview
   }): Promise<ConfidentialSignedPayload> {
     if (input.identity.context.keyDomainSource.kind === 'hardware') {
       const signature = await this.signHardwarePersonalMessage(input)
@@ -382,6 +388,7 @@ export class ConfidentialFundingSigner {
     readonly chainId: ChainId
     readonly payload: string
     readonly expiresAt?: number
+    readonly hardwareReview?: ConfidentialHardwareMessageReview
   }): Promise<Uint8Array> {
     const bytes = new TextEncoder().encode(input.payload)
     const messageHex = toHex(bytes)
@@ -391,7 +398,8 @@ export class ConfidentialFundingSigner {
       { kind: 'personal-sign', messageHex },
       await ledgerEvmPersonalSummary(input.chainId, input.identity.address, bytes),
       await digestLedgerPayload(bytes),
-      Math.min(input.expiresAt ?? Infinity, Date.now() + 5 * 60_000)
+      Math.min(input.expiresAt ?? Infinity, Date.now() + 5 * 60_000),
+      input.hardwareReview
     )
     const signature = parseSignature(signatureHex)
     const messageHash = hashMessage({ raw: messageHex })
@@ -417,13 +425,15 @@ export class ConfidentialFundingSigner {
         >,
     summary: LedgerSigningBinding['summary'],
     digestHex: string,
-    expiresAt: number
+    expiresAt: number,
+    review?: ConfidentialHardwareMessageReview
   ): Promise<string> {
     const device = this.device
     const source = identity.context.keyDomainSource
     if (!device || source.kind !== 'hardware') throw new Error('Confidential device is unavailable')
-    const loadBinding = () =>
-      this.runActiveOperation(async () => {
+    const loadBinding = async () => {
+      await review?.validate()
+      return this.runActiveOperation(async () => {
         if (!Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()) {
           throw new Error('Confidential hardware signing request expired')
         }
@@ -434,6 +444,7 @@ export class ConfidentialFundingSigner {
         }
         return binding
       })
+    }
     const binding = await loadBinding()
     const fingerprint = 'masterFingerprintHex' in binding ? binding.masterFingerprintHex : undefined
     const validate = async () => {
@@ -455,6 +466,7 @@ export class ConfidentialFundingSigner {
         payloadFingerprint: { algorithm: 'sha256', digestHex },
         expiresAt,
         summary,
+        ...(review && { purpose: review.purpose }),
         validate
       },
       fingerprint

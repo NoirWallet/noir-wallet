@@ -122,6 +122,7 @@ import {
 import {
   ConfidentialFundingSigner,
   requireConfidentialPea,
+  type ConfidentialHardwareMessageReview,
   type ConfidentialSigningIdentity
 } from './confidential-funding-signer'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
@@ -809,7 +810,8 @@ export class ConfidentialFundingCoordinator {
       amount?: string
       fundingSource?: string
       expiresAt: number
-    }>
+    }>,
+    validateReview: () => Promise<void>
   ): Promise<void> {
     const review = await this.nativeZecIntents.get(input.binding.quoteHandle ?? '')
     const viewer = review.quoteBinding.oneClickOrder?.viewer
@@ -839,7 +841,11 @@ export class ConfidentialFundingCoordinator {
     )
       throw new Error('Native ZEC Confidential account changed')
 
-    await this.ensureSession(identity, true, expiresAt)
+    await this.ensureSession(identity, true, expiresAt, {
+      purpose: 'confidential-session',
+      validate: validateReview
+    })
+    await validateReview()
     await authorizeOneClickOrderOwner(
       {
         network: this.options.network,
@@ -852,7 +858,8 @@ export class ConfidentialFundingCoordinator {
           identity,
           chainId: chainAccount.scope.chainId,
           payload: challenge.message,
-          expiresAt: Math.min(expiresAt, challenge.expiresAt)
+          expiresAt: Math.min(expiresAt, challenge.expiresAt),
+          hardwareReview: { purpose: 'confidential-order-status', validate: validateReview }
         })
         signature[64] += 27
         return { signature: toHex(signature) }
@@ -5207,7 +5214,8 @@ export class ConfidentialFundingCoordinator {
   private async ensureSession(
     identity: ConfidentialSigningIdentity,
     authenticate: boolean,
-    expiresAt?: number
+    expiresAt?: number,
+    hardwareReview?: ConfidentialHardwareMessageReview
   ) {
     const session = await this.readUsableSession(identity)
     if (session || !authenticate) return session
@@ -5220,7 +5228,7 @@ export class ConfidentialFundingCoordinator {
     ])
     const pending = this.authenticating.get(key)
     if (pending) return pending
-    const operation = this.authenticateSession(identity, expiresAt)
+    const operation = this.authenticateSession(identity, expiresAt, hardwareReview)
     this.authenticating.set(key, operation)
     try {
       return await operation
@@ -5229,13 +5237,18 @@ export class ConfidentialFundingCoordinator {
     }
   }
 
-  private async authenticateSession(identity: ConfidentialSigningIdentity, expiresAt?: number) {
+  private async authenticateSession(
+    identity: ConfidentialSigningIdentity,
+    expiresAt?: number,
+    hardwareReview?: ConfidentialHardwareMessageReview
+  ) {
     const unsigned = await this.options.api.createAuthPayload(identity.address)
     const signed = await this.options.signer.signMessage({
       identity,
       chainId: identity.context.chainAccount.scope.chainId,
       payload: unsigned.payload,
-      expiresAt: Math.min(unsigned.expiresAt ?? Infinity, expiresAt ?? Infinity)
+      expiresAt: Math.min(unsigned.expiresAt ?? Infinity, expiresAt ?? Infinity),
+      hardwareReview
     })
     const authenticated = await this.options.api.authenticate(signed)
     const scope = identity.context.chainAccount.scope

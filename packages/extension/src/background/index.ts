@@ -107,7 +107,7 @@ import { getRetryableWalletRpcUserMessage } from '@/core/zcash/wallet-rpc-errors
 import {
   clearPreparedHardwareSignRequest,
   consumePreparedHardwareSignRequest,
-  HARDWARE_SIGN_REQUEST_TTL_MS,
+  hardwareSignRequestDeadline,
   isHardwareDAppAuthorizationCurrent,
   isHardwareSignRequestFresh,
   readHardwareSignRequest,
@@ -6289,6 +6289,11 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     }
     void readMatchingRequest()
       .then(async request => {
+        const validateReview = async () => {
+          const current = await readMatchingRequest()
+          if (JSON.stringify(current) !== JSON.stringify(request))
+            throw new Error('Hardware signing request changed. Review again.')
+        }
         if (
           request.quoteBinding?.provider === 'near-intents' &&
           request.quoteBinding.recipientType === 'CONFIDENTIAL_INTENTS'
@@ -6296,16 +6301,17 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
           const coordinator = confidentialFundingCoordinator
           if (!coordinator || request.kind !== 'swap' || request.dappRequestId)
             throw new Error('Native ZEC Confidential swap is unavailable')
-          await coordinator.authorizeNativeZecHardwareSpend({
-            ...request,
-            binding: request.quoteBinding,
-            expiresAt: request.createdAt + HARDWARE_SIGN_REQUEST_TTL_MS
-          })
+          await coordinator.authorizeNativeZecHardwareSpend(
+            {
+              ...request,
+              binding: request.quoteBinding,
+              expiresAt: hardwareSignRequestDeadline(request)
+            },
+            validateReview
+          )
         }
         return accountContextTransition.runActiveOperation(async () => {
-          const current = await readMatchingRequest()
-          if (JSON.stringify(current) !== JSON.stringify(request))
-            throw new Error('Hardware signing request changed. Review again.')
+          await validateReview()
           await clearPreparedHardwareSignRequest(message.requestId)
           if (request.dappRequestId) await assertHardwareDAppBinding(request)
           const built = await handleHardwarePcztBuild(message, Boolean(request.dappRequestId))
