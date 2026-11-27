@@ -221,6 +221,7 @@ import { getSafeRheaSwapRuntimeErrorMessage } from '@/core/services/rhea-swap/rh
 import {
   assertPrivateQuoteRoute,
   getPrivateWithdrawAsset,
+  isPrivateWithdrawPurpose,
   RHEA_SWAP_CHAIN_CATALOG,
   parseRheaSwapQuoteRequest,
   toRheaSwapProtocolRequest,
@@ -637,7 +638,10 @@ const assetPriceRefreshes = new Map<
   { service: typeof assetPriceService; operation: ReturnType<typeof assetPriceService.refresh> }
 >()
 let assetMarketHistoryService = createBackgroundAssetMarketHistoryService()
-const rheaSwapService = DEFAULT_NETWORK === 'mainnet' ? createBackgroundRheaSwapService() : null
+const rheaSwapService =
+  DEFAULT_NETWORK === 'mainnet'
+    ? createBackgroundRheaSwapService(resolvePrivateWithdrawRefundAddress)
+    : null
 const combinedSwapRepository = new IndexedDbTransactionRepository()
 const combinedEvmSwap = new CombinedEvmSwap({
   router: () => evmTransferRouter,
@@ -717,6 +721,17 @@ let additionalReceiveTargetsCoordinator!: ReturnType<
 >
 let accountNetworksCoordinator!: ReturnType<typeof createBackgroundAccountNetworksCoordinator>
 
+async function resolvePrivateWithdrawRefundAddress(scope: {
+  readonly walletId: string
+  readonly accountId: string
+}) {
+  if (!confidentialFundingCoordinator) throw new Error('Shield refund account is unavailable')
+  return confidentialFundingCoordinator.resolveShieldAccountAddress({
+    keyDomainId: scope.walletId,
+    accountId: scope.accountId
+  })
+}
+
 async function requireCurrentPrivateSwapQuote(
   quoteHandle: string,
   executionMode?: 'main' | 'private',
@@ -762,7 +777,7 @@ async function requireCurrentPrivateSwapQuote(
   if (binding) {
     const isCrossChainWithdraw = quote.scope.purpose === 'private-cross-chain-withdraw'
     const isSameChainWithdraw = quote.scope.purpose === 'private-transfer'
-    const isWithdraw = isCrossChainWithdraw || isSameChainWithdraw
+    const isWithdraw = isPrivateWithdrawPurpose(quote.scope.purpose)
     if (
       binding.quoteHandle !== quoteHandle ||
       binding.sender.toLowerCase() !== quote.request.sender.toLowerCase() ||
@@ -792,7 +807,19 @@ async function requireCurrentPrivateSwapQuote(
     ) {
       throw new Error('Private quote execution does not match its reviewed route.')
     }
-    return isWithdraw ? Object.freeze({ ...binding, balanceTransfer: 'withdraw' }) : binding
+    if (!isWithdraw) return binding
+    const build = await rheaSwapService.readPreparedBuild(quoteHandle)
+    const viewer = build.deposit?.viewer
+    const refundAddress = await resolvePrivateWithdrawRefundAddress(quote.scope)
+    if (
+      build.executionId !== binding.executionId ||
+      viewer?.chainFamily !== 'evm' ||
+      viewer.signingMode !== 'public' ||
+      viewer.walletAddress.toLowerCase() !== refundAddress.toLowerCase()
+    ) {
+      throw new Error('Withdraw refund account changed. Get a new quote.')
+    }
+    return Object.freeze({ ...binding, balanceTransfer: 'withdraw', refundDomain: 'shield' })
   }
 }
 const bitcoinAddressBalancesCoordinator = createBackgroundBitcoinAddressBalancesCoordinator()

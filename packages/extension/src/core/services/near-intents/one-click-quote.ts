@@ -1,13 +1,43 @@
+import type { IntentsAppFee, NoirIntentsReferral } from '@/config/intents'
 import type { OneClickViewer } from './one-click-order'
+
+export interface OneClickQuoteRequest {
+  readonly dry: boolean
+  readonly swapType: 'EXACT_INPUT' | 'EXACT_OUTPUT' | 'FLEX_INPUT'
+  readonly slippageTolerance: number
+  readonly originAsset: string
+  readonly depositType: 'ORIGIN_CHAIN' | 'CONFIDENTIAL_INTENTS'
+  readonly destinationAsset: string
+  readonly amount: string
+  readonly refundTo: string
+  readonly refundType: 'ORIGIN_CHAIN' | 'CONFIDENTIAL_INTENTS'
+  readonly recipient: string
+  readonly recipientType: 'DESTINATION_CHAIN' | 'CONFIDENTIAL_INTENTS'
+  readonly referral: NoirIntentsReferral
+  readonly confidentiality?: 'basic'
+  readonly appFees?: readonly IntentsAppFee[]
+  readonly deadline: string
+  readonly quoteWaitingTimeMs: number
+}
 
 export interface OneClickQuoteOptions {
   readonly viewer: OneClickViewer | null
   readonly signal?: AbortSignal
 }
 
+export function createOneClickQuoteRequest(
+  input: Omit<OneClickQuoteRequest, 'deadline' | 'quoteWaitingTimeMs'>
+): OneClickQuoteRequest {
+  return {
+    ...input,
+    deadline: new Date(Date.now() + 60 * 60_000).toISOString(),
+    quoteWaitingTimeMs: input.confidentiality === 'basic' ? 0 : 3_000
+  }
+}
+
 export function requestOneClickQuote<Result>(
   endpoint: string,
-  quote: Readonly<{ dry: boolean } & Record<string, unknown>>,
+  quote: OneClickQuoteRequest,
   request: (url: string, init: RequestInit) => Promise<Result>,
   options: OneClickQuoteOptions
 ): Promise<Result> {
