@@ -1,6 +1,8 @@
 const SHA = /^[0-9a-f]{40}$/
 const REPOSITORY = /^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/
+const STABLE_VERSION = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/
 const MAX_API_COMMITS = 100
+const MAX_COMPARE_COMMITS = 250
 const MAX_RELEASE_COMMITS = 20
 const MAX_SUBJECT_LENGTH = 200
 const EXCLUDED_TYPE =
@@ -66,12 +68,53 @@ export function validateReleaseCommits(value) {
   return value
 }
 
-export async function collectReleaseCommits({ sourceSha, request }) {
+function compareVersions(left, right) {
+  return left.localeCompare(right, 'en', { numeric: true })
+}
+
+async function readProductionRange({ sourceSha, version, request }) {
+  if (typeof version !== 'string' || !STABLE_VERSION.test(version)) {
+    throw new Error('Invalid production release version')
+  }
+  const releases = await request('releases?per_page=100')
+  if (!Array.isArray(releases)) throw new Error('GitHub releases response must be an array')
+  const tags = releases
+    .filter(
+      release =>
+        release?.draft === false &&
+        release.prerelease === false &&
+        typeof release.tag_name === 'string' &&
+        release.tag_name.startsWith('v') &&
+        STABLE_VERSION.test(release.tag_name.slice(1)) &&
+        compareVersions(release.tag_name.slice(1), version) < 0
+    )
+    .map(release => release.tag_name)
+    .sort((left, right) => compareVersions(right, left))
+  for (const tag of tags) {
+    const comparison = await request(`compare/${tag}...${sourceSha}`, { allowNotFound: true })
+    if (!comparison) continue
+    if (comparison.status === 'identical' || comparison.status === 'behind') return []
+    if (comparison.status === 'ahead' || comparison.status === 'diverged') {
+      if (!Array.isArray(comparison.commits)) {
+        throw new Error('GitHub comparison commits must be an array')
+      }
+      return [...comparison.commits].reverse()
+    }
+    throw new Error('Invalid GitHub release comparison status')
+  }
+  return []
+}
+
+export async function collectReleaseCommits({ sourceSha, productionVersion, request }) {
   requireSha(sourceSha, 'Source SHA')
   if (typeof request !== 'function') throw new Error('GitHub request function is required')
-  const response = await request(`commits?sha=${sourceSha}&per_page=${MAX_API_COMMITS}`)
-  if (!Array.isArray(response) || response.length > MAX_API_COMMITS) {
-    throw new Error(`GitHub commit response must be an array of at most ${MAX_API_COMMITS} entries`)
+  const maxCommits = productionVersion === undefined ? MAX_API_COMMITS : MAX_COMPARE_COMMITS
+  const response =
+    productionVersion === undefined
+      ? await request(`commits?sha=${sourceSha}&per_page=${MAX_API_COMMITS}`)
+      : await readProductionRange({ sourceSha, version: productionVersion, request })
+  if (!Array.isArray(response) || response.length > maxCommits) {
+    throw new Error(`GitHub commit response must be an array of at most ${maxCommits} entries`)
   }
 
   const seen = new Set()
@@ -120,7 +163,7 @@ export function formatReleaseCommitLog(repository, commits) {
           ({ sha, subject }) =>
             `- [\`${sha.slice(0, 7)}\`](https://github.com/${repository}/commit/${sha}) ${escapeMarkdown(subject)}`
         )
-      : ['Infrastructure changes only.']),
+      : ['No eligible commits to list.']),
     '',
     '</details>'
   ]
