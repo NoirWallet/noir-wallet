@@ -1,6 +1,12 @@
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { backgroundZcashWalletRuntime } from './zcash-wallet-runtime'
-import { connectionAuthorizesAccount, dappManager } from '../core/dapp/dapp-manager'
+import {
+  connectionAuthorizesAccount,
+  connectionHasEvmAuthorization,
+  dappManager,
+  getConnectionAccountRefs,
+  getConnectionChainAuthorization
+} from '../core/dapp/dapp-manager'
 import { shouldAutoConnectDApp } from '@/core/dapp/first-party-policy'
 import {
   mergeShieldSiteGrants,
@@ -60,7 +66,7 @@ import { credentialSession } from './credential-session'
 import { accountContextTransition } from './account-context-transition'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { isStoredAccountNetworkEnabled } from '@/lib/wallet-metadata-storage'
-import { getZcashChainId } from '@/core/chains/registry'
+import { getBitcoinChainId, getZcashChainId } from '@/core/chains/registry'
 import { getActiveChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
 import { resolveNearRuntimeNetworkConfig } from '@/core/chains/solana-near-runtime-config'
 import { Caip25ProviderError } from '@/core/dapp/caip25'
@@ -258,21 +264,40 @@ export class DAppHandler {
   }
 
   async removeAccountReferences(walletId: string, accountId?: string): Promise<void> {
+    const zcashOrigins = new Set(
+      (await dappManager.getAllConnections())
+        .filter(dapp =>
+          getConnectionAccountRefs(dapp).some(
+            ref =>
+              ref.walletId === walletId && (accountId === undefined || ref.accountId === accountId)
+          )
+        )
+        .map(dapp => dapp.origin)
+    )
     const result = await dappManager.removeAccountReferences(walletId, accountId)
     await Promise.all(
-      result.affectedOrigins.map(async origin => {
-        this.permissions.delete(origin)
-        await this.broadcastEvent(origin, 'accountsChanged', null).catch(() => {})
-      })
+      result.affectedOrigins
+        .filter(origin => zcashOrigins.has(origin))
+        .map(async origin => {
+          this.permissions.delete(origin)
+          await this.broadcastEvent(origin, 'accountsChanged', null).catch(() => {})
+        })
     )
   }
 
   async clearConnections(): Promise<void> {
+    const zcashOrigins = new Set(
+      (await dappManager.getAllConnections())
+        .filter(dapp => getConnectionAccountRefs(dapp).length > 0)
+        .map(dapp => dapp.origin)
+    )
     const origins = await dappManager.clearConnections()
     await new ChromeConfidentialFundingStore().clearShieldSiteGrants()
     this.permissions.clear()
     await Promise.all(
-      origins.map(origin => this.broadcastEvent(origin, 'accountsChanged', null).catch(() => {}))
+      origins
+        .filter(origin => zcashOrigins.has(origin))
+        .map(origin => this.broadcastEvent(origin, 'accountsChanged', null).catch(() => {}))
     )
   }
 
@@ -2552,11 +2577,14 @@ export class DAppHandler {
   }
 
   async revokePermission(origin: string): Promise<void> {
+    const connection = await dappManager.getConnection(origin)
     await dappManager.removeLegacyAuthorization(origin)
     await dappManager.removeChainAuthorization(origin, getZcashChainId(DEFAULT_NETWORK))
     this.permissions.delete(origin)
     this.cancelPendingApprovals(origin, 'zcash')
-    await this.broadcastEvent(origin, 'accountsChanged', null).catch(() => {})
+    if (connection && getConnectionAccountRefs(connection).length > 0) {
+      await this.broadcastEvent(origin, 'accountsChanged', null).catch(() => {})
+    }
     this.trackDisconnected()
   }
 
@@ -2564,15 +2592,24 @@ export class DAppHandler {
     origin: string,
     initiatedBy: 'wallet' | 'site' = 'wallet'
   ): Promise<void> {
+    const connection = await dappManager.getConnection(origin)
     await dappManager.removeConnection(origin, initiatedBy)
     await new ChromeConfidentialFundingStore().deleteShieldSiteGrantsByOrigin(origin)
     this.permissions.delete(origin)
     pendingRequestsManager.cancelOrigin(origin)
-    await Promise.allSettled([
-      this.broadcastEvent(origin, 'accountsChanged', null),
-      this.broadcastEvent(origin, 'accountsChanged', [], 'evm'),
-      this.broadcastEvent(origin, 'accountsChanged', [], 'bitcoin')
-    ])
+    if (connection) {
+      const events: Promise<void>[] = []
+      if (getConnectionAccountRefs(connection).length > 0) {
+        events.push(this.broadcastEvent(origin, 'accountsChanged', null))
+      }
+      if (connectionHasEvmAuthorization(connection)) {
+        events.push(this.broadcastEvent(origin, 'accountsChanged', [], 'evm'))
+      }
+      if (getConnectionChainAuthorization(connection, getBitcoinChainId(DEFAULT_NETWORK))) {
+        events.push(this.broadcastEvent(origin, 'accountsChanged', [], 'bitcoin'))
+      }
+      await Promise.allSettled(events)
+    }
     this.trackDisconnected()
   }
 
@@ -2643,7 +2680,9 @@ export class DAppHandler {
   async notifyAccountsChanged(
     accounts: { transparent: string; shielded: string } | [] | null
   ): Promise<void> {
-    const connectedDApps = await dappManager.getAllConnections()
+    const connectedDApps = (await dappManager.getAllConnections()).filter(
+      dapp => getConnectionAccountRefs(dapp).length > 0
+    )
     const isLock =
       Array.isArray(accounts) &&
       accounts.length === 0 &&
