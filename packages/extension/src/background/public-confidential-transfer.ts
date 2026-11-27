@@ -87,7 +87,7 @@ export class PublicConfidentialTransfer {
       request,
       origin.assetId,
       destination.assetId,
-      true,
+      { dry: true },
       signal
     )
     return {
@@ -150,9 +150,8 @@ export class PublicConfidentialTransfer {
       },
       origin.assetId,
       destination.assetId,
-      false,
-      signal,
-      viewer
+      { dry: false, viewer: viewer ?? null },
+      signal
     )
     const { amountIn, amountOut, minAmountOut, depositAddress, depositMemo, timeEstimate } =
       result.quote
@@ -173,7 +172,11 @@ export class PublicConfidentialTransfer {
       amountIn,
       estimatedOut: amountOut,
       minAmountOut,
-      deposit: { depositAddress, ...(viewer === undefined ? {} : { viewer }), timeEstimate },
+      deposit: {
+        depositAddress,
+        ...(result.oneClickOrder?.viewer ? { viewer: result.oneClickOrder.viewer } : {}),
+        timeEstimate
+      },
       tx
     }
   }
@@ -205,9 +208,8 @@ export class PublicConfidentialTransfer {
     request: QuoteRequest,
     originAsset: string,
     destinationAsset: string,
-    dry: boolean,
-    signal?: AbortSignal,
-    viewer?: OneClickViewer
+    ownership: { dry: true } | { dry: false; viewer: OneClickViewer | null },
+    signal?: AbortSignal
   ) {
     const referral = request.extensions?.referral
     if (
@@ -232,9 +234,8 @@ export class PublicConfidentialTransfer {
         refundType: 'ORIGIN_CHAIN',
         recipientType: 'DESTINATION_CHAIN',
         slippageBps: request.slippageBps,
-        dry,
-        ...(referral === NOIR_SWAP_REFERRAL ? { settlement: 'onchain-transfer' as const } : {}),
-        ...(viewer === undefined ? {} : { viewer })
+        ...ownership,
+        ...(referral === NOIR_SWAP_REFERRAL ? { settlement: 'onchain-transfer' as const } : {})
       },
       signal
     )

@@ -18,7 +18,8 @@ import {
 } from '@/core/services/near-intents/one-click-order'
 import {
   matchesOneClickQuoteViewer,
-  requestOneClickQuote
+  requestOneClickQuote,
+  type OneClickQuoteOptions
 } from '@/core/services/near-intents/one-click-quote'
 import { DedupPromise } from '@/lib/async-utils'
 import { logDevelopmentError } from '@/lib/development-console'
@@ -404,7 +405,7 @@ function base64Encode(value: Uint8Array): string {
   return btoa(binary)
 }
 
-function parseQuote(value: unknown, viewer?: OneClickViewer): ConfidentialQuote {
+function parseQuote(value: unknown, viewer: OneClickViewer | null = null): ConfidentialQuote {
   if (!isRecord(value) || !isRecord(value.quote) || !isRecord(value.quoteRequest)) {
     throw new Error('Confidential quote response is invalid')
   }
@@ -893,10 +894,20 @@ export class ConfidentialFundingApi {
       readonly refundType: 'ORIGIN_CHAIN' | 'CONFIDENTIAL_INTENTS'
       readonly recipientType: 'CONFIDENTIAL_INTENTS' | 'DESTINATION_CHAIN'
       readonly slippageBps: number
-      readonly dry: boolean
       readonly settlement?: 'cluster' | 'onchain-transfer'
-      readonly viewer?: OneClickViewer
-    },
+    } & (
+      | { readonly dry: true; readonly viewer?: never }
+      | {
+          readonly dry: false
+          readonly refundType: 'CONFIDENTIAL_INTENTS'
+          readonly viewer?: never
+        }
+      | {
+          readonly dry: false
+          readonly refundType: 'ORIGIN_CHAIN'
+          readonly viewer: OneClickViewer | null
+        }
+    ),
     signal?: AbortSignal
   ): Promise<ConfidentialQuote> {
     const isWithdrawal =
@@ -976,11 +987,10 @@ export class ConfidentialFundingApi {
       providerFees = baseline.fees
     }
     const viewer = input.dry
-      ? undefined
-      : (input.viewer ??
-        (input.refundType === 'CONFIDENTIAL_INTENTS'
-          ? ({ chainFamily: 'evm', walletAddress: input.signerId, signingMode: 'public' } as const)
-          : undefined))
+      ? null
+      : input.refundType === 'CONFIDENTIAL_INTENTS'
+        ? ({ chainFamily: 'evm', walletAddress: input.signerId, signingMode: 'public' } as const)
+        : input.viewer
     const quote = await this.requestQuoteWithFees(request, appFees, providerFees, {
       viewer,
       signal
@@ -997,7 +1007,7 @@ export class ConfidentialFundingApi {
     readonly signerId: string
     readonly refundTo: string
     readonly slippageBps: number
-    readonly viewer?: OneClickViewer
+    readonly viewer: OneClickViewer
   }): Promise<ConfidentialQuote> {
     const request = {
       dry: true,
@@ -1031,7 +1041,9 @@ export class ConfidentialFundingApi {
     let minimumInputRaw: string
     try {
       const quote = parseQuote(
-        await requestOneClickQuote(this.config.oneClickApiUrl, request, requestJson)
+        await requestOneClickQuote(this.config.oneClickApiUrl, request, requestJson, {
+          viewer: null
+        })
       )
       assertFlexibleExternalDepositQuoteBinding(quote, binding, Date.now(), true)
       minimumInputRaw = quote.quote.minAmountIn!
@@ -1069,7 +1081,7 @@ export class ConfidentialFundingApi {
     readonly sender: string
     readonly recipient: string
     readonly slippageBps: number
-    readonly viewer?: OneClickViewer
+    readonly viewer: OneClickViewer
   }): Promise<ConfidentialExactOutputQuote> {
     const request = {
       dry: false,
@@ -1132,7 +1144,7 @@ export class ConfidentialFundingApi {
     request: ConfidentialQuoteRequest,
     appFees: readonly IntentsAppFee[],
     providerFees: readonly IntentsAppFee[],
-    options: { viewer?: OneClickViewer; signal?: AbortSignal }
+    options: OneClickQuoteOptions
   ): Promise<ConfidentialQuote> {
     if (appFees.some(appFee => providerFees.some(fee => fee.recipient === appFee.recipient))) {
       throw new Error('Confidential provider fee quote already includes the wallet fee recipient')
@@ -1153,7 +1165,10 @@ export class ConfidentialFundingApi {
   private async quoteProviderFees(request: ConfidentialQuoteRequest, signal?: AbortSignal) {
     const baseline = { ...request, dry: true }
     const quote = parseQuote(
-      await requestOneClickQuote(this.config.oneClickApiUrl, baseline, requestJson, { signal })
+      await requestOneClickQuote(this.config.oneClickApiUrl, baseline, requestJson, {
+        viewer: null,
+        signal
+      })
     )
     const fees = readConfidentialQuoteAppFees(quote)
     if (

@@ -91,7 +91,7 @@ test('uses the 1Click route and refund owner for all basic confidential quotes a
       recipientType: 'DESTINATION_CHAIN',
       confidentiality: 'basic'
     })
-    if (body.dry || referral === 'noir_swap') {
+    if (body.dry) {
       expect(body.user).toBeUndefined()
       expect(body.userChainFamily).toBeUndefined()
     } else {

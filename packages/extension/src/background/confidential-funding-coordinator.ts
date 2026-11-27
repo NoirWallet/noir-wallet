@@ -2293,11 +2293,15 @@ export class ConfidentialFundingCoordinator {
         : input.destination.protocolAssetId,
       amountRaw: input.source.amountRaw,
       signerId: sourceIdentity.address,
-      ...(isDeposit ? { refundTo: sourceAddress } : {}),
-      ...(isDeposit ? { viewer: evmRefundViewer(sourceAddress, sourceIdentity) } : {}),
+      ...(isDeposit
+        ? {
+            refundTo: sourceAddress,
+            refundType: 'ORIGIN_CHAIN' as const,
+            viewer: evmRefundViewer(sourceAddress, sourceIdentity)
+          }
+        : { refundType: 'CONFIDENTIAL_INTENTS' as const }),
       recipient: isDeposit ? sourceIdentity.address : destinationAddress,
       depositType: isDeposit ? 'ORIGIN_CHAIN' : 'CONFIDENTIAL_INTENTS',
-      refundType: isDeposit ? 'ORIGIN_CHAIN' : 'CONFIDENTIAL_INTENTS',
       recipientType:
         isDeposit || isSwap || isConfidentialTransfer
           ? 'CONFIDENTIAL_INTENTS'
