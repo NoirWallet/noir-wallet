@@ -333,6 +333,7 @@ export interface ConfidentialFundingCoordinatorOptions {
   readonly queryOneClickOrderStatus: typeof queryOneClickOrderStatus
   readonly store: ChromeConfidentialFundingStore
   readonly signer: ConfidentialFundingSigner
+  readonly getActiveGenerationId?: () => Promise<string | null>
   readonly repository: TransactionRepository
   readonly assets: AssetRegistry
   readonly evmNetworks: readonly EvmNetworkConfig[]
@@ -2175,7 +2176,7 @@ export class ConfidentialFundingCoordinator {
       createdAt,
       updatedAt: createdAt
     })
-    await this.options.store.putPlan(plan)
+    await this.savePreparedReview(plan, sourceIdentity)
     return reviewFromPlan(plan, this.options.assets)
   }
 
@@ -2417,7 +2418,7 @@ export class ConfidentialFundingCoordinator {
       ...draft,
       approvalFingerprint: await fingerprintDirectConfidentialApproval(directApprovalIntent(draft))
     })
-    await this.options.store.putPlan(plan)
+    await this.savePreparedReview(plan, sourceIdentity)
     return reviewFromPlan(plan, this.options.assets)
   }
 
@@ -2575,8 +2576,29 @@ export class ConfidentialFundingCoordinator {
       ...draft,
       approvalFingerprint: await fingerprintDirectConfidentialApproval(directApprovalIntent(draft))
     })
-    await this.options.store.putPlan(plan)
+    await this.savePreparedReview(plan, sourceIdentity)
     return reviewFromPlan(plan, this.options.assets)
+  }
+
+  private async savePreparedReview(
+    plan: ConfidentialFundingPlan,
+    identity: ConfidentialSigningIdentity
+  ): Promise<void> {
+    const readGeneration = this.options.getActiveGenerationId
+    try {
+      await this.options.store.putPlan(plan, async () => {
+        if (readGeneration && (await readGeneration()) !== identity.context.generationId) {
+          throw new Error('Account changed. Review the transfer again.')
+        }
+      })
+    } catch (error) {
+      if (plan.preparedDeposit) {
+        await this.options.signer
+          .cancelTransaction({ identity, commandId: plan.preparedDeposit.commandId })
+          .catch(() => {})
+      }
+      throw error
+    }
   }
 
   private assertUnreservedBalance(
