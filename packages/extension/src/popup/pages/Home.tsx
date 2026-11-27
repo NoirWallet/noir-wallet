@@ -633,6 +633,35 @@ export function Home() {
     navigate.navigate(`/dapp-connections?mode=${privateDAppMode ? 'private' : 'public'}`)
   }
 
+  const returnToDAppSite = async (origin: string) => {
+    try {
+      const url = new URL(origin)
+      if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.origin !== origin) {
+        throw new Error('Unable to open this site')
+      }
+      const tabs = await chrome.tabs.query({})
+      const siteTab = tabs.find(tab => {
+        if (!tab.url) return false
+        try {
+          return new URL(tab.url).origin === origin
+        } catch {
+          return false
+        }
+      })
+      if (siteTab?.id !== undefined) {
+        await chrome.tabs.update(siteTab.id, { active: true })
+        if (siteTab.windowId !== undefined) {
+          await chrome.windows.update(siteTab.windowId, { focused: true })
+        }
+      } else {
+        await chrome.tabs.create({ url: origin })
+      }
+      window.close()
+    } catch {
+      toast.error('Unable to open this site')
+    }
+  }
+
   const handleDAppExecutionModeChange = (mode: DAppExecutionMode) => {
     if (modeSelectionDisabled) return
     const current = dappExecutionMode.state
@@ -801,63 +830,65 @@ export function Home() {
         open={legacyPoolPrivacyNotice.isOpen}
         onDismiss={legacyPoolPrivacyNotice.dismiss}
       />
-      <header className="home-wallet-header flex h-14 shrink-0 items-center justify-between gap-3 px-4">
-        <AccountSwitcher
-          accountName={accountDisplayName}
-          accountIdentity={effectiveAccount}
-          accountCatalog={accountCatalog}
-          publicAccountCatalog={publicAccountCatalog}
-          accountCatalogError={accountNetworksError}
-          defaultEvmMode={walletMode}
-          className="min-w-0"
-        />
-        <div data-testid="home-header-actions" className="flex items-center justify-end">
-          <Popover>
-            <PopoverTrigger asChild>
-              <button
-                type="button"
-                aria-label="Open menu"
-                title="Menu"
-                className="wallet-interactive flex size-7 items-center justify-center rounded-md hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
-              >
-                <Icon icon="lucide:menu" width={21} height={21} />
-              </button>
-            </PopoverTrigger>
-            <PopoverContent align="end" sideOffset={8} className="w-48 border-white/10 p-1">
-              <SidebarModeToggle compact />
-              {(
-                [
-                  ['Accounts', 'lucide:wallet', '/account-list'],
-                  ['DApp connections', 'lucide:plug', '/dapp-connections'],
-                  ['Settings', 'lucide:settings', '/settings']
-                ] as const
-              ).map(([label, icon, path]) => (
-                <button
-                  key={path}
-                  type="button"
-                  onClick={() =>
-                    path === '/dapp-connections' ? void handleDAppClick() : navigate.navigate(path)
-                  }
-                  disabled={
-                    path === '/dapp-connections' && (!modeActionsReady || modeSwitchPending)
-                  }
-                  className="wallet-interactive flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm hover:bg-white/5 active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  <Icon icon={icon} width={16} height={16} />
-                  {label}
-                </button>
-              ))}
-            </PopoverContent>
-          </Popover>
-        </div>
-      </header>
-
       <div
         ref={homeScrollRegion}
         data-testid="home-scroll-container"
         className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain scroll-pt-10 [container-type:size]"
       >
-        <div className="home-balance-header shrink-0 overflow-hidden rounded-b-[20px]">
+        <div className="home-wallet-header shrink-0 overflow-hidden rounded-b-[20px]">
+          <header className="flex h-14 shrink-0 items-center justify-between gap-3 px-4">
+            <AccountSwitcher
+              accountName={accountDisplayName}
+              accountIdentity={effectiveAccount}
+              accountCatalog={accountCatalog}
+              publicAccountCatalog={publicAccountCatalog}
+              accountCatalogError={accountNetworksError}
+              defaultEvmMode={walletMode}
+              className="min-w-0"
+            />
+            <div data-testid="home-header-actions" className="flex items-center justify-end">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Open menu"
+                    title="Menu"
+                    className="wallet-interactive flex size-7 items-center justify-center rounded-md hover:bg-white/10 active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+                  >
+                    <Icon icon="lucide:menu" width={21} height={21} />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="end" sideOffset={8} className="w-48 border-white/10 p-1">
+                  <SidebarModeToggle compact />
+                  {(
+                    [
+                      ['Accounts', 'lucide:wallet', '/account-list'],
+                      ['DApp connections', 'lucide:plug', '/dapp-connections'],
+                      ['Settings', 'lucide:settings', '/settings']
+                    ] as const
+                  ).map(([label, icon, path]) => (
+                    <button
+                      key={path}
+                      type="button"
+                      onClick={() =>
+                        path === '/dapp-connections'
+                          ? void handleDAppClick()
+                          : navigate.navigate(path)
+                      }
+                      disabled={
+                        path === '/dapp-connections' && (!modeActionsReady || modeSwitchPending)
+                      }
+                      className="wallet-interactive flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm hover:bg-white/5 active:bg-white/10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Icon icon={icon} width={16} height={16} />
+                      {label}
+                    </button>
+                  ))}
+                </PopoverContent>
+              </Popover>
+            </div>
+          </header>
+
           <HomeBalanceOverview
             key={modeScopeKey}
             domain={assetDomain}
@@ -1230,11 +1261,12 @@ export function Home() {
           onDisconnect={disconnectDApp}
         />
       )}
-      {connectedDApp && !currentAccountAuthorized && canConnectCurrentAccount && (
+      {connectedDApp && !currentAccountAuthorized && (
         <DAppConnectPrompt
           host={connectedDApp.host}
           favicon={connectedDApp.favicon}
           accountName={accountDisplayName}
+          canConnect={canConnectCurrentAccount}
           executionMode={
             hardwareWallet || !currentDAppUsesEvm || !supportsEvmDAppExecutionMode
               ? 'main'
@@ -1243,6 +1275,7 @@ export function Home() {
           darkPalette={darkDAppBar}
           modeControl={currentDAppUsesEvm ? dappModeControl : undefined}
           onConnect={() => connectCurrentAccount(connectedDApp.origin)}
+          onReturnToSite={() => void returnToDAppSite(connectedDApp.origin)}
         />
       )}
 

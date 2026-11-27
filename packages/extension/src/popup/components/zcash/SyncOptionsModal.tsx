@@ -59,7 +59,9 @@ export function SyncOptionsModal({ onConfirm, initialSelection }: SyncOptionsMod
 
       if (activeRequest.current === controller && !controller.signal.aborted) {
         onConfirm(
-          syncType === 'date' ? { type: 'date', height, date: syncDate } : { type: 'height', height }
+          syncType === 'date'
+            ? { type: 'date', height, date: syncDate }
+            : { type: 'height', height }
         )
       }
     } catch (err) {

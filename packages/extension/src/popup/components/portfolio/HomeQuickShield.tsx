@@ -7,7 +7,7 @@ import { useSwapTokenCatalog } from '@/popup/hooks/useSwapTokenCatalog'
 import { isPortfolioModelForScope } from '@/popup/services/portfolio-cache'
 import {
   getQuickShieldAssets,
-  getQuickShieldTotalUsd,
+  summarizeQuickShieldAssets,
   type QuickShieldAsset
 } from '@/popup/services/quick-shield'
 import { ShieldFundsForm } from '@/popup/pages/transactions/ShieldFunds'
@@ -110,7 +110,7 @@ export function useHomeQuickShield({
         ? 'h-[50dvh]'
         : 'h-[85dvh]'
       : 'h-[85dvh]'
-  const totalUsd = getQuickShieldTotalUsd(assets)
+  const { totalUsd, partial } = summarizeQuickShieldAssets(assets)
   const label =
     assets.length === 0
       ? undefined
@@ -118,7 +118,7 @@ export function useHomeQuickShield({
         ? '••••'
         : totalUsd === null
           ? undefined
-          : formatFiatAmount(totalUsd, { showSign: true })
+          : `${formatFiatAmount(totalUsd, { showSign: true })}${partial ? ' (priced assets)' : ''}`
 
   return {
     eligible: assets.length > 0,

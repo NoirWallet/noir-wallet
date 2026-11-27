@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { decodeFunctionData, erc20Abi } from 'viem'
 import { ConfidentialFundingApi } from '../../../src/background/confidential-funding-api.ts'
+import { parseNearDAppTransactionBatch } from '../../../src/background/near-dapp-codecs.ts'
 import { PublicConfidentialTransfer } from '../../../src/background/public-confidential-transfer.ts'
 import { RheaSwapCatalogClient } from '../../../src/core/services/rhea-swap/rhea-swap-catalog-client.ts'
 import {
@@ -13,7 +14,11 @@ import {
 import { getZcashChainId } from '../../../src/core/chains/registry/index.ts'
 import { parseTrustedExtensionRuntimeMessage } from '../../../src/lib/runtime-message-security.ts'
 import { readRheaDestinationHash } from '../../../src/core/services/rhea-swap/rhea-order-status.ts'
-import { parseRheaSwapReviewView } from '../../../src/core/services/rhea-swap/rhea-swap-runtime.ts'
+import {
+  parseRheaSwapCatalogResult,
+  parseRheaSwapReviewView
+} from '../../../src/core/services/rhea-swap/rhea-swap-runtime.ts'
+import { withNearNativeCatalogToken } from '../../../src/core/services/rhea-swap/rhea-swap-near-wrap.ts'
 import {
   MemoryRheaSwapQuoteSessionStore,
   RHEA_SWAP_CHAIN_CATALOG,
@@ -236,6 +241,119 @@ test('uses the 1Click route and refund owner for all basic confidential quotes a
     await expect(
       service.quote(request, undefined, { ...scope, purpose: 'public-private-move' })
     ).rejects.toThrow('already includes the wallet fee recipient')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('quotes a NEAR public-private move through 1Click and pays the solver deposit address', async () => {
+  const depositAddress = 'cd'.repeat(32)
+  const usdt = {
+    assetId: 'nep141:usdt.tether-token.near',
+    symbol: 'USDT',
+    decimals: 6
+  }
+  const asset = {
+    chain: 'near',
+    address: 'usdt.tether-token.near',
+    symbol: 'USDT',
+    decimals: 6
+  }
+  const request = {
+    fromChain: 'near',
+    toChain: 'near',
+    tokenIn: asset,
+    tokenOut: asset,
+    amountIn: '1000000',
+    slippageBps: 50,
+    sender: 'alice.near',
+    recipient: 'ab'.repeat(32),
+    confidentiality: 'basic'
+  }
+  const config = {
+    oneClickApiUrl: 'https://example.test/1click',
+    oneClickDirectApiUrl: 'https://example.test/1click',
+    rheaSwapApiUrl: 'https://example.test'
+  }
+  const fees = [{ recipient: 'noir_swap.near', fee: 2 }]
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    expect(String(url)).toBe(`${config.oneClickApiUrl}/quote`)
+    const body = JSON.parse(init.body)
+    expect(body).toMatchObject({
+      referral: 'noir_move',
+      originAsset: usdt.assetId,
+      destinationAsset: usdt.assetId,
+      amount: request.amountIn,
+      refundTo: request.sender,
+      recipient: request.recipient,
+      recipientType: 'DESTINATION_CHAIN',
+      confidentiality: 'basic',
+      depositMode: 'SIMPLE'
+    })
+    expect(body.refundTo).toBe(request.sender)
+    expect(body.recipient).toBe(request.recipient)
+    if (body.appFees) expect(body.appFees).toEqual(fees)
+    else expect(body.dry).toBe(true)
+    const appFees = body.appFees ?? []
+    return Response.json({
+      correlationId: 'near-public-confidential-quote',
+      quoteRequest: { ...body, appFees },
+      quote: {
+        amountIn: body.amount,
+        amountOut: body.appFees ? '999800' : '1000000',
+        minAmountOut: '994801',
+        deadline: body.deadline,
+        depositAddress: body.dry ? undefined : depositAddress
+      }
+    })
+  }
+  try {
+    const adapter = new PublicConfidentialTransfer(
+      new ConfidentialFundingApi(config, '', ''),
+      async () => [usdt]
+    )
+    const client = new RheaSwapCatalogClient({
+      baseUrl: config.rheaSwapApiUrl,
+      publicConfidentialTransfer: adapter
+    })
+    const service = new RheaSwapService(client, new MemoryRheaSwapQuoteSessionStore())
+    const quote = await service.quote(request, undefined, {
+      walletId: 'wallet',
+      accountId: 'account',
+      purpose: 'public-private-move'
+    })
+    expect(quote).toMatchObject({ estimatedOut: '999800', minAmountOut: '994801' })
+    await service.prepare(quote.quoteHandle)
+    const plan = await service.readNearTransactionBatchPlan(quote.quoteHandle)
+    expect(plan.transactions).toHaveLength(1)
+    expect(plan.transactions[0].receiverId).toBe('usdt.tether-token.near')
+    const transfer = plan.transactions[0].actions.find(
+      action => action.methodName === 'ft_transfer'
+    )
+    expect(transfer.args).toMatchObject({ receiver_id: depositAddress, amount: request.amountIn })
+    expect(transfer.args).not.toHaveProperty('memo')
+    expect(transfer.args.receiver_id).not.toBe(request.recipient)
+    expect(
+      plan.transactions[0].actions.some(
+        action =>
+          action.methodName === 'storage_deposit' && action.args.account_id === depositAddress
+      )
+    ).toBe(true)
+    const [parsed] = parseNearDAppTransactionBatch([
+      {
+        transactions: plan.transactions.map(transaction => ({
+          receiverId: transaction.receiverId,
+          actions: transaction.actions
+        }))
+      }
+    ])
+    const parsedTransfer = parsed.actions.find(action => action.methodName === 'ft_transfer')
+    expect(parsedTransfer.args).toMatchObject({
+      receiver_id: depositAddress,
+      amount: request.amountIn
+    })
+    expect(parsedTransfer.args).not.toHaveProperty('memo')
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -1140,6 +1258,103 @@ test('catalog loading deduplicates native EVM address aliases after canonicaliza
     assetId: 'nep141:bnb.omdep.near',
     rheaAddress: '0x0000000000000000000000000000000000000000'
   })
+})
+
+test('persists one NEAR wrap row and derives native NEAR only as a from view', async () => {
+  const wrapRow = {
+    chain: 'near',
+    address: 'wrap.near',
+    symbol: 'wNEAR',
+    decimals: 24,
+    tokenListChainId: 900001,
+    blockchain: 'near',
+    assetId: 'nep141:wrap.near',
+    contractAddress: 'wrap.near',
+    coinType: null,
+    name: 'Wrapped NEAR',
+    logoURI: null,
+    price: '5',
+    priceUpdatedAt: null,
+    sources: ['nearintents'],
+    raw: { address: 'wrap.near', assetId: 'nep141:wrap.near' }
+  }
+  const serviceFor = rows =>
+    new RheaSwapService(
+      {
+        async getFromTokens() {
+          return rows
+        },
+        async getCrossChainToTokens() {
+          return rows
+        }
+      },
+      new MemoryRheaSwapQuoteSessionStore()
+    )
+  const persisted = await serviceFor([wrapRow]).listTokens({
+    direction: 'from',
+    tokenListChainIds: [900001]
+  })
+  expect(persisted.tokens).toHaveLength(1)
+  expect(persisted.tokens[0]).toMatchObject({
+    assetId: 'nep141:wrap.near',
+    rheaAddress: 'wrap.near',
+    isNative: false,
+    contractAddress: 'wrap.near',
+    symbol: 'wNEAR',
+    decimals: 24,
+    price: 5,
+    sources: ['nearintents'],
+    tokenListChainId: 900001,
+    rheaChainId: 'near'
+  })
+  expect(parseRheaSwapCatalogResult(persisted).tokens).toHaveLength(1)
+  const presented = withNearNativeCatalogToken(persisted.tokens)
+  expect(presented).toHaveLength(2)
+  expect(presented[0]).toMatchObject({
+    assetId: 'nep141:wrap.near',
+    rheaAddress: 'wrap.near',
+    isNative: true,
+    contractAddress: null,
+    symbol: 'NEAR',
+    decimals: 24,
+    price: 5,
+    sources: ['nearintents'],
+    tokenListChainId: 900001,
+    rheaChainId: 'near'
+  })
+  expect(presented[1]).toBe(persisted.tokens[0])
+  expect(() => parseRheaSwapCatalogResult({ tokens: presented, failedChainIds: [] })).toThrow(
+    'RHEA Swap catalog contains duplicates'
+  )
+
+  const destination = await serviceFor([wrapRow]).listTokens({
+    direction: 'cross-chain-to',
+    tokenListChainIds: [900001]
+  })
+  expect(destination.tokens).toHaveLength(1)
+  expect(destination.tokens[0]).toMatchObject({
+    isNative: false,
+    symbol: 'wNEAR',
+    contractAddress: 'wrap.near',
+    rheaAddress: 'wrap.near'
+  })
+
+  const existing = await serviceFor([
+    wrapRow,
+    { ...wrapRow, symbol: 'NEAR', isNative: true, contractAddress: null }
+  ]).listTokens({ direction: 'from', tokenListChainIds: [900001] })
+  expect(existing.tokens).toHaveLength(2)
+  expect(existing.tokens.map(token => [token.symbol, token.isNative])).toEqual([
+    ['wNEAR', false],
+    ['NEAR', true]
+  ])
+
+  const coarse = await serviceFor([{ ...wrapRow, decimals: 18 }]).listTokens({
+    direction: 'from',
+    tokenListChainIds: [900001]
+  })
+  expect(coarse.tokens).toHaveLength(1)
+  expect(coarse.tokens[0].isNative).toBe(false)
 })
 
 test('prepared BNB swaps accept native address aliases while binding the custom ERC-20 contract', async () => {

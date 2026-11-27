@@ -1,5 +1,6 @@
 import type { Network } from '@/types'
 import { ZEC_ZCASH_ASSET } from '@/config/intents'
+import { parseNearAccountId } from '@/core/chains/near/identifiers'
 import { getZcashChainId } from '@/core/chains/registry'
 import { externalRecipientsMatch, isValidExternalRecipient } from './confidential-funding-recipient'
 import { withMetadataLock, withUndeletedWalletAccountMetadata } from '@/lib/wallet-metadata-storage'
@@ -14,6 +15,18 @@ import type {
   ConfidentialOrderAuthToken,
   ConfidentialSession
 } from './confidential-funding-api'
+
+export function isConfidentialEvmSigner(signerId: string): boolean {
+  return /^0x[0-9a-fA-F]{40}$/.test(signerId)
+}
+
+function canonicalConfidentialSigner(signerId: string): string {
+  return isConfidentialEvmSigner(signerId) ? signerId.toLowerCase() : signerId
+}
+
+function sameConfidentialSigner(left: string, right: string): boolean {
+  return canonicalConfidentialSigner(left) === canonicalConfidentialSigner(right)
+}
 
 const PLAN_PREFIX = 'confidential_funding_plan:'
 const EXTERNAL_DEPOSIT_PREFIX = 'confidential_external_deposit:'
@@ -113,12 +126,21 @@ function isDepositMemo(value: unknown): value is string {
   )
 }
 
+function samePayloadValue(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  return typeof left === 'object' && left !== null && JSON.stringify(left) === JSON.stringify(right)
+}
+
 function isSignedPayload(value: unknown): boolean {
+  if (!isRecord(value) || !isBoundedString(value.signature, 512)) return false
+  if (value.standard === 'erc191') return isBoundedString(value.payload, 16_384)
+  if (value.standard !== 'nep413' || !isRecord(value.payload)) return false
   return (
-    isRecord(value) &&
-    value.standard === 'erc191' &&
-    isBoundedString(value.payload, 16_384) &&
-    isBoundedString(value.signature, 512)
+    isBoundedString(value.payload.message, 16_384) &&
+    isBoundedString(value.payload.recipient, 64) &&
+    isBoundedString(value.payload.nonce, 128) &&
+    isBoundedString(value.public_key, 128) &&
+    value.public_key.startsWith('ed25519:')
   )
 }
 
@@ -134,9 +156,41 @@ function sameSignedPayload(left: unknown, right: unknown): boolean {
     isRecord(left) &&
     isRecord(right) &&
     left.standard === right.standard &&
-    left.payload === right.payload &&
+    samePayloadValue(left.payload, right.payload) &&
+    left.public_key === right.public_key &&
     left.signature === right.signature
   )
+}
+
+function isStoredConfidentialSigner(value: string): boolean {
+  if (/^0x[0-9a-f]{40}$/.test(value)) return true
+  try {
+    return parseNearAccountId(value) === value
+  } catch {
+    return false
+  }
+}
+
+function isStoredFundingAddress(address: string, chainId: string): boolean {
+  if (chainId.startsWith('near:')) {
+    try {
+      return parseNearAccountId(address) === address
+    } catch {
+      return false
+    }
+  }
+  return /^0x[0-9a-f]{40}$/.test(address)
+}
+
+function isStoredConfidentialDestination(address: string, chainId: string): boolean {
+  if (chainId.startsWith('near:')) {
+    try {
+      return parseNearAccountId(address) === address
+    } catch {
+      return false
+    }
+  }
+  return /^0x[0-9a-fA-F]{40}$/.test(address)
 }
 
 function parsePlan(value: unknown): ConfidentialFundingPlan {
@@ -177,10 +231,10 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
     plan.slippageBps < 0 ||
     plan.slippageBps > 10_000 ||
     plan.approvalExpiresAt <= 0 ||
-    !/^0x[0-9a-f]{40}$/.test(plan.signerId) ||
+    !isStoredConfidentialSigner(plan.signerId) ||
     !/^[0-9a-f]{64}$/.test(plan.approvalFingerprint) ||
     (plan.externalRecipient === undefined
-      ? !/^0x[0-9a-fA-F]{40}$/.test(plan.destination.address)
+      ? !isStoredConfidentialDestination(plan.destination.address, plan.destination.chainId)
       : !isValidExternalRecipient(
           plan.destination.address,
           plan.destination.chainId,
@@ -194,7 +248,7 @@ function parsePlan(value: unknown): ConfidentialFundingPlan {
     !isBoundedString(plan.source.chainName, 64) ||
     !isBoundedString(plan.source.assetId) ||
     !isBoundedString(plan.source.protocolAssetId) ||
-    !/^0x[0-9a-f]{40}$/.test(plan.source.address) ||
+    !isStoredFundingAddress(plan.source.address, plan.source.chainId) ||
     !isBoundedString(plan.destination.chainId) ||
     !isBoundedString(plan.destination.chainName, 64) ||
     !isBoundedString(plan.destination.assetId) ||
@@ -472,11 +526,16 @@ function parseSession(value: unknown): ConfidentialSession {
   ) {
     throw new Error('Stored confidential session is invalid')
   }
+  const signerId = value.signerId
+  if (signerId !== undefined && !isBoundedString(signerId, 128)) {
+    throw new Error('Stored confidential session is invalid')
+  }
   return Object.freeze({
     accessToken: value.accessToken,
     refreshToken: value.refreshToken,
     expiresAt: value.expiresAt as number,
-    refreshExpiresAt: value.refreshExpiresAt as number
+    refreshExpiresAt: value.refreshExpiresAt as number,
+    ...(typeof signerId === 'string' ? { signerId: canonicalConfidentialSigner(signerId) } : {})
   })
 }
 
@@ -601,14 +660,22 @@ export class ChromeConfidentialFundingStore {
   }
 
   async deleteBalancesByAccountScope(keyDomainId: string, accountId: string): Promise<void> {
-    await chrome.storage.local.remove([
-      this.balanceKey('mainnet', keyDomainId, accountId),
-      this.balanceKey('testnet', keyDomainId, accountId)
-    ])
+    const stored = await chrome.storage.local.get(null)
+    const keys = (['mainnet', 'testnet'] as const).flatMap(network => {
+      const prefix = this.balanceKey(network, keyDomainId, accountId)
+      return Object.keys(stored).filter(key => key === prefix || key.startsWith(`${prefix}:`))
+    })
+    if (keys.length > 0) await chrome.storage.local.remove(keys)
   }
 
-  private sessionKey(network: Network, keyDomainId: string, accountId: string): string {
-    return `${SESSION_PREFIX}${network}:${encodeURIComponent(keyDomainId)}:${encodeURIComponent(accountId)}`
+  private sessionKey(
+    network: Network,
+    keyDomainId: string,
+    accountId: string,
+    signerId?: string
+  ): string {
+    const base = `${SESSION_PREFIX}${network}:${encodeURIComponent(keyDomainId)}:${encodeURIComponent(accountId)}`
+    return signerId ? `${base}:${encodeURIComponent(canonicalConfidentialSigner(signerId))}` : base
   }
 
   private historySessionKey(network: Network, keyDomainId: string, accountId: string): string {
@@ -667,8 +734,14 @@ export class ChromeConfidentialFundingStore {
     await chrome.storage.session.remove(this.historySessionKey(network, keyDomainId, accountId))
   }
 
-  private balanceKey(network: Network, keyDomainId: string, accountId: string): string {
-    return `${BALANCE_PREFIX}${network}:${encodeURIComponent(keyDomainId)}:${encodeURIComponent(accountId)}`
+  private balanceKey(
+    network: Network,
+    keyDomainId: string,
+    accountId: string,
+    signerId?: string
+  ): string {
+    const base = `${BALANCE_PREFIX}${network}:${encodeURIComponent(keyDomainId)}:${encodeURIComponent(accountId)}`
+    return signerId ? `${base}:${encodeURIComponent(canonicalConfidentialSigner(signerId))}` : base
   }
 
   async getPlan(planId: string): Promise<ConfidentialFundingPlan | null> {
@@ -734,17 +807,21 @@ export class ChromeConfidentialFundingStore {
   async getSession(
     network: Network,
     keyDomainId: string,
-    accountId: string
+    accountId: string,
+    signerId?: string
   ): Promise<ConfidentialSession | null> {
-    const key = this.sessionKey(network, keyDomainId, accountId)
-    const value = (await chrome.storage.session.get(key))[key]
-    if (value === undefined) return null
-    try {
-      return parseSession(value)
-    } catch {
-      await chrome.storage.session.remove(key)
-      return null
+    if (!signerId) return this.readSession(this.sessionKey(network, keyDomainId, accountId))
+    const signer = canonicalConfidentialSigner(signerId)
+    if (!isConfidentialEvmSigner(signer)) {
+      return this.readSession(this.sessionKey(network, keyDomainId, accountId, signer))
     }
+    const scoped = await this.readSession(this.sessionKey(network, keyDomainId, accountId, signer))
+    if (scoped && (!scoped.signerId || sameConfidentialSigner(scoped.signerId, signer)))
+      return scoped
+    const legacy = await this.readSession(this.sessionKey(network, keyDomainId, accountId))
+    if (legacy && (!legacy.signerId || sameConfidentialSigner(legacy.signerId, signer)))
+      return legacy
+    return null
   }
 
   async putSession(
@@ -753,15 +830,38 @@ export class ChromeConfidentialFundingStore {
     accountId: string,
     session: ConfidentialSession
   ): Promise<void> {
+    const parsed = parseSession(session)
+    const legacyKey = this.sessionKey(network, keyDomainId, accountId)
+    const entries: Record<string, ConfidentialSession> =
+      parsed.signerId && !isConfidentialEvmSigner(parsed.signerId)
+        ? { [this.sessionKey(network, keyDomainId, accountId, parsed.signerId)]: parsed }
+        : {
+            [legacyKey]: parsed,
+            ...(parsed.signerId
+              ? { [this.sessionKey(network, keyDomainId, accountId, parsed.signerId)]: parsed }
+              : {})
+          }
     await withUndeletedWalletAccountMetadata(keyDomainId, accountId, network, () =>
-      chrome.storage.session.set({
-        [this.sessionKey(network, keyDomainId, accountId)]: parseSession(session)
-      })
+      chrome.storage.session.set(entries)
     )
   }
 
-  async deleteSession(network: Network, keyDomainId: string, accountId: string): Promise<void> {
-    await chrome.storage.session.remove(this.sessionKey(network, keyDomainId, accountId))
+  async deleteSession(
+    network: Network,
+    keyDomainId: string,
+    accountId: string,
+    signerId?: string
+  ): Promise<void> {
+    const legacyKey = this.sessionKey(network, keyDomainId, accountId)
+    const keys = []
+    if (!signerId || isConfidentialEvmSigner(signerId)) {
+      const legacy = await this.readSession(legacyKey)
+      if (!signerId || !legacy?.signerId || sameConfidentialSigner(legacy.signerId, signerId)) {
+        keys.push(legacyKey)
+      }
+    }
+    if (signerId) keys.push(this.sessionKey(network, keyDomainId, accountId, signerId))
+    if (keys.length > 0) await chrome.storage.session.remove(keys)
   }
 
   private shieldGrantKey(grant: ShieldSiteGrant): string {
@@ -876,12 +976,26 @@ export class ChromeConfidentialFundingStore {
   }
 
   async deleteSessionsByAccountScope(keyDomainId: string, accountId: string): Promise<void> {
-    await chrome.storage.session.remove(
-      (['mainnet', 'testnet'] as const).flatMap(network => [
-        this.sessionKey(network, keyDomainId, accountId),
-        this.historySessionKey(network, keyDomainId, accountId)
-      ])
-    )
+    const stored = await chrome.storage.session.get(null)
+    const keys = (['mainnet', 'testnet'] as const).flatMap(network => {
+      const sessionPrefix = this.sessionKey(network, keyDomainId, accountId)
+      const historyKey = this.historySessionKey(network, keyDomainId, accountId)
+      return Object.keys(stored).filter(
+        key => key === sessionPrefix || key.startsWith(`${sessionPrefix}:`) || key === historyKey
+      )
+    })
+    if (keys.length > 0) await chrome.storage.session.remove(keys)
+  }
+
+  private async readSession(key: string): Promise<ConfidentialSession | null> {
+    const value = (await chrome.storage.session.get(key))[key]
+    if (value === undefined) return null
+    try {
+      return parseSession(value)
+    } catch {
+      await chrome.storage.session.remove(key)
+      return null
+    }
   }
 
   async clearAllSessions(): Promise<void> {
@@ -917,27 +1031,99 @@ export class ChromeConfidentialFundingStore {
   async getBalances(
     network: Network,
     keyDomainId: string,
-    accountId: string
+    accountId: string,
+    signerId?: string
   ): Promise<readonly ConfidentialBalance[]> {
-    const snapshot = await this.getBalanceSnapshot(network, keyDomainId, accountId)
+    const snapshot = await this.getBalanceSnapshot(network, keyDomainId, accountId, signerId)
     return snapshot.fresh ? snapshot.balances : Object.freeze([])
   }
 
   async getBalanceSnapshot(
     network: Network,
     keyDomainId: string,
-    accountId: string
+    accountId: string,
+    signerId?: string
   ): Promise<ConfidentialBalanceSnapshot> {
-    const key = this.balanceKey(network, keyDomainId, accountId)
-    const value = (await chrome.storage.local.get(key))[key]
-    if (value === undefined) {
-      return Object.freeze({
-        balances: Object.freeze([]),
-        updatedAt: 0,
-        fresh: false,
-        known: false
-      })
+    const empty = Object.freeze({
+      balances: Object.freeze([]),
+      updatedAt: 0,
+      fresh: false,
+      known: false
+    })
+    if (signerId && !isConfidentialEvmSigner(signerId)) {
+      return (
+        (await this.readBalanceSnapshot(
+          this.balanceKey(network, keyDomainId, accountId, signerId)
+        )) ?? empty
+      )
     }
+    return (
+      (await this.readBalanceSnapshot(this.balanceKey(network, keyDomainId, accountId))) ?? empty
+    )
+  }
+
+  async listSignerBalanceSnapshots(
+    network: Network,
+    keyDomainId: string,
+    accountId: string
+  ): Promise<readonly Readonly<{ signerId: string; snapshot: ConfidentialBalanceSnapshot }>[]> {
+    const prefix = `${this.balanceKey(network, keyDomainId, accountId)}:`
+    const stored = await chrome.storage.local.get(null)
+    const rows: { signerId: string; snapshot: ConfidentialBalanceSnapshot }[] = []
+    for (const key of Object.keys(stored)) {
+      if (!key.startsWith(prefix)) continue
+      let signerId: string
+      try {
+        signerId = decodeURIComponent(key.slice(prefix.length))
+      } catch {
+        continue
+      }
+      if (!signerId || isConfidentialEvmSigner(signerId)) continue
+      const snapshot = await this.readBalanceSnapshot(key)
+      if (!snapshot?.known) continue
+      rows.push(Object.freeze({ signerId, snapshot }))
+    }
+    return Object.freeze(rows)
+  }
+
+  async putBalances(
+    network: Network,
+    keyDomainId: string,
+    accountId: string,
+    balances: readonly ConfidentialBalance[],
+    requestedAt = this.now(),
+    signerId?: string
+  ): Promise<void> {
+    if (!Number.isSafeInteger(requestedAt) || requestedAt < 0) {
+      throw new Error('Confidential balance request time is invalid')
+    }
+    const snapshot = Object.freeze({
+      schemaVersion: 1,
+      balances: parseBalances(balances),
+      updatedAt: requestedAt
+    })
+    const key = this.balanceKey(
+      network,
+      keyDomainId,
+      accountId,
+      signerId && !isConfidentialEvmSigner(signerId) ? signerId : undefined
+    )
+    await withUndeletedWalletAccountMetadata(keyDomainId, accountId, network, async () => {
+      const current = (await chrome.storage.local.get(key))[key]
+      if (current !== undefined) {
+        try {
+          if (parseBalanceSnapshot(current).updatedAt >= requestedAt) return
+        } catch {
+          // Replace malformed cached data with a valid response.
+        }
+      }
+      await chrome.storage.local.set({ [key]: snapshot })
+    })
+  }
+
+  private async readBalanceSnapshot(key: string): Promise<ConfidentialBalanceSnapshot | null> {
+    const value = (await chrome.storage.local.get(key))[key]
+    if (value === undefined) return null
     try {
       const snapshot = parseBalanceSnapshot(value)
       return Object.freeze({
@@ -957,34 +1143,5 @@ export class ChromeConfidentialFundingStore {
         known: false
       })
     }
-  }
-
-  async putBalances(
-    network: Network,
-    keyDomainId: string,
-    accountId: string,
-    balances: readonly ConfidentialBalance[],
-    requestedAt = this.now()
-  ): Promise<void> {
-    if (!Number.isSafeInteger(requestedAt) || requestedAt < 0) {
-      throw new Error('Confidential balance request time is invalid')
-    }
-    const snapshot = Object.freeze({
-      schemaVersion: 1,
-      balances: parseBalances(balances),
-      updatedAt: requestedAt
-    })
-    await withUndeletedWalletAccountMetadata(keyDomainId, accountId, network, async () => {
-      const key = this.balanceKey(network, keyDomainId, accountId)
-      const current = (await chrome.storage.local.get(key))[key]
-      if (current !== undefined) {
-        try {
-          if (parseBalanceSnapshot(current).updatedAt >= requestedAt) return
-        } catch {
-          // Replace malformed cached data with a valid response.
-        }
-      }
-      await chrome.storage.local.set({ [key]: snapshot })
-    })
   }
 }

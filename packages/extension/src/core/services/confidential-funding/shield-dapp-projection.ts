@@ -266,6 +266,8 @@ export interface ShieldDappOperationReport {
   readonly source?: ShieldDappOperationAsset
   readonly destination?: ShieldDappOperationAsset
   readonly references?: ShieldDappOperationReferences
+  readonly depositAddress?: string
+  readonly depositMemo?: string
 }
 
 const SHIELD_REFUND_IN_PROGRESS = 'PENDING_REFUND'

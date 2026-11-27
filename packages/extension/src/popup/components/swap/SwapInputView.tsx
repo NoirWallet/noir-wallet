@@ -162,6 +162,7 @@ interface SwapAssetCardProps {
   token: SwapToken | null
   fallbackAssetId?: string
   fallbackSymbol?: string
+  displaySymbol?: string
   tokenBadgeBlockchain?: string
   tokenNetworkLabel?: string
   zcashFundingSource?: FundingSource
@@ -245,6 +246,7 @@ export function SwapAssetCard({
   token,
   fallbackAssetId,
   fallbackSymbol,
+  displaySymbol,
   tokenBadgeBlockchain,
   tokenNetworkLabel,
   zcashFundingSource,
@@ -309,7 +311,7 @@ export function SwapAssetCard({
   }, [amount, isReadOnly])
   if (tokenSelectDisabled && !fallbackSymbol) return <SwapAssetCardSkeleton direction={direction} />
   const blockchain = token?.blockchain ?? getSwapCatalogChainForAsset(fallbackAssetId)?.blockchain
-  const symbol = formatSymbol(token?.symbol ?? fallbackSymbol)
+  const symbol = formatSymbol(displaySymbol ?? token?.symbol ?? fallbackSymbol)
 
   return (
     <section className="min-h-[126px] py-3">
@@ -726,10 +728,8 @@ export function SwapInputView({
             token={tokenOut}
             fallbackAssetId={tokenOutAssetId}
             fallbackSymbol={tokenOutSymbol}
+            zcashFundingSource={isZecDestination ? addressType : undefined}
             tokenNetworkLabel={destinationIsConfidential ? 'NEAR Confidential' : undefined}
-            zcashFundingSource={
-              isZecDestination && !destinationIsConfidential ? addressType : undefined
-            }
             amount={estimatedOut}
             fiatValue={toFiat}
             accountAddress={hideAccountDetails ? undefined : destinationAddress}

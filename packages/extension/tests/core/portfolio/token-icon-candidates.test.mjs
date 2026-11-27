@@ -8,6 +8,37 @@ import {
   recordTokenIconUrlFailure
 } from '../../../src/popup/services/token-icon-failure-cache.ts'
 
+test('leaves native assets without metadata images to the neutral placeholder', () => {
+  expect(
+    getTokenIconCandidates({
+      token: {
+        blockchain: 'btc',
+        contractAddress: null,
+        icon: null
+      }
+    })
+  ).toEqual([])
+
+  expect(
+    getTokenIconCandidates({
+      token: {
+        blockchain: 'avax',
+        contractAddress: null,
+        icon: null
+      }
+    })
+  ).toEqual([])
+
+  expect(
+    getTokenIconCandidates({
+      token: {
+        blockchain: 'btc',
+        icon: null
+      }
+    })
+  ).toEqual([])
+})
+
 test('keeps provider and supplied CoinGecko metadata in order', () => {
   expect(
     getTokenIconCandidates({

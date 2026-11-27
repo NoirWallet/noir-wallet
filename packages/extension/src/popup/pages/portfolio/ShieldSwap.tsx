@@ -17,6 +17,7 @@ import type { RheaSwapToken } from '@/core/services/rhea-swap'
 import { confidentialDestinationFormToken } from '@/popup/services/swap-page-model'
 import { formatBaseUnitAmount, formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { classifyError } from '@/lib/errors'
+import { formatShieldSymbol } from '@/lib/format'
 import { formatSymbol } from '@/lib/format'
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
@@ -36,8 +37,8 @@ import {
 } from '@/popup/components/swap/SwapInputView'
 import { estimateSwapOutputFromPrices, getSwapAmountValues } from '@/popup/services/swap-estimate'
 import { AmountDisplay } from '@/popup/components/common/AmountDisplay'
-import { QuoteFeeAmount } from '@/popup/components/transaction/QuoteFeeAmount'
 import { TransactionNotice } from '@/popup/components/transaction/TransactionNotice'
+import { QuoteFeeAmount } from '@/popup/components/transaction/QuoteFeeAmount'
 import { ShieldHardwareTabNotice } from '@/popup/components/transaction/ShieldHardwareTabNotice'
 import { needsShieldHardwareTab } from '@/popup/services/shield-hardware-tab'
 import { getSwapQuoteNotice } from '@/popup/services/swap-quote-error-message'
@@ -91,6 +92,8 @@ import {
   formatShieldSwapPreviewRate,
   matchesShieldSwapReview,
   nativeZecDestinationKey,
+  resolveShieldFormCatalogToken,
+  shieldFormDisplaySymbol,
   shieldSwapFormAmountError,
   shieldSwapFormBalance,
   shieldSwapPickerChain
@@ -343,6 +346,11 @@ function ShieldSwapForm({
         ) ??
         sourceChoices.find(asset => asset.asset.asset.id !== toId) ??
         null)
+  useEffect(() => {
+    if (active && !preferredSourceId && from && displayBalances) {
+      setFromId(from.asset.asset.id)
+    }
+  }, [active, preferredSourceId, from, displayBalances])
   const ethereumUsdcContract = getEvmNetworkConfigs(network)
     .find(config => config.chainId === 'eip155:1')
     ?.usdcContract?.toLowerCase()
@@ -465,12 +473,18 @@ function ShieldSwapForm({
     preview && to
       ? formatBaseUnitDecimalAmount(preview.amountOutRaw, to.asset.metadata.decimals)
       : null
-  const fromToken = tokens.find(token => token.assetId === from?.managed.protocolAssetId) ?? null
-  const toToken = tokens.find(token => token.assetId === to?.managed.protocolAssetId) ?? null
+  const fromToken = resolveShieldFormCatalogToken(tokens, from)
+  const toToken = resolveShieldFormCatalogToken(tokens, to)
+  const fromDisplaySymbol = shieldFormDisplaySymbol(from)
+  const toDisplaySymbol = shieldFormDisplaySymbol(to)
   const rememberToken = (side: 'in' | 'out', asset: ShieldFundingAsset | undefined) => {
     if (!preferenceScope || !asset) return
-    const token = tokens.find(token => token.assetId === asset.managed.protocolAssetId)
-    if (token) useSwapPreferences.getState().setSavedSwapToken(preferenceScope, side, token)
+    const token = resolveShieldFormCatalogToken(tokens, asset)
+    const symbol = shieldFormDisplaySymbol(asset)
+    if (!token) return
+    useSwapPreferences
+      .getState()
+      .setSavedSwapToken(preferenceScope, side, symbol ? { ...token, symbol } : token)
   }
   const switchAssets = () => {
     if (!from || !to || !canReverse) return
@@ -487,8 +501,8 @@ function ShieldSwapForm({
       useSwapPreferences.getState().setSavedTokenSelection(preferenceScope, {
         tokenInId: toToken.assetId,
         tokenOutId: fromToken.assetId,
-        tokenInSymbol: toToken.symbol,
-        tokenOutSymbol: fromToken.symbol
+        tokenInSymbol: toDisplaySymbol ?? toToken.symbol,
+        tokenOutSymbol: fromDisplaySymbol ?? fromToken.symbol
       })
     }
     setAmount('')
@@ -655,12 +669,12 @@ function ShieldSwapForm({
       ? {
           operation: 'swap',
           amount: prepared.amount,
-          symbol: formatSymbol(prepared.from.asset.metadata.symbol),
+          symbol: formatShieldSymbol(prepared.from.asset.metadata.symbol),
           receiveAmount: formatBaseUnitDecimalAmount(
             prepared.review.expectedOutputRaw,
             prepared.to.asset.metadata.decimals
           ),
-          receiveSymbol: formatSymbol(prepared.to.asset.metadata.symbol),
+          receiveSymbol: formatShieldSymbol(prepared.to.asset.metadata.symbol),
           network: prepared.request.externalRecipient
             ? 'NEAR Confidential → Zcash'
             : 'NEAR Confidential',
@@ -1064,7 +1078,7 @@ function ShieldSwapForm({
           title="Confirm Swap"
           asset={{
             assetId: prepared.from.asset.asset.id,
-            symbol: formatSymbol(prepared.from.asset.metadata.symbol),
+            symbol: formatShieldSymbol(prepared.from.asset.metadata.symbol),
             icon: prepared.from.asset.metadata.iconUrl
           }}
           amount={prepared.amount}
@@ -1075,7 +1089,7 @@ function ShieldSwapForm({
             content: (
               <AmountDisplay
                 value={output}
-                symbol={formatSymbol(prepared.to.asset.metadata.symbol)}
+                symbol={formatShieldSymbol(prepared.to.asset.metadata.symbol)}
               />
             )
           }}
@@ -1085,7 +1099,7 @@ function ShieldSwapForm({
               source={{
                 asset: {
                   assetId: prepared.from.asset.asset.id,
-                  symbol: formatSymbol(prepared.from.asset.metadata.symbol),
+                  symbol: formatShieldSymbol(prepared.from.asset.metadata.symbol),
                   icon: prepared.from.asset.metadata.iconUrl,
                   blockchain: shieldSwapPickerChain(prepared.from).badgeBlockchain
                 },
@@ -1094,7 +1108,7 @@ function ShieldSwapForm({
               destination={{
                 asset: {
                   assetId: prepared.to.asset.asset.id,
-                  symbol: formatSymbol(prepared.to.asset.metadata.symbol),
+                  symbol: formatShieldSymbol(prepared.to.asset.metadata.symbol),
                   icon: prepared.to.asset.metadata.iconUrl,
                   blockchain: shieldSwapPickerChain(prepared.to).badgeBlockchain
                 },
@@ -1135,8 +1149,8 @@ function ShieldSwapForm({
               content: (
                 <span className="inline-flex max-w-full flex-col items-end gap-0.5 tabular-nums">
                   <span>
-                    1 {formatSymbol(prepared.from.asset.metadata.symbol)} = {currentRate}{' '}
-                    {formatSymbol(prepared.to.asset.metadata.symbol)}
+                    1 {formatShieldSymbol(prepared.from.asset.metadata.symbol)} = {currentRate}{' '}
+                    {formatShieldSymbol(prepared.to.asset.metadata.symbol)}
                   </span>
                 </span>
               )
@@ -1148,7 +1162,7 @@ function ShieldSwapForm({
               ) : (
                 <AmountDisplay
                   value={minimum}
-                  symbol={formatSymbol(prepared.to.asset.metadata.symbol)}
+                  symbol={formatShieldSymbol(prepared.to.asset.metadata.symbol)}
                 />
               )
             },
@@ -1206,7 +1220,7 @@ function ShieldSwapForm({
                 changes={reviewDescription.changes}
                 output={{
                   decimals: prepared.to.asset.metadata.decimals,
-                  symbol: formatSymbol(prepared.to.asset.metadata.symbol)
+                  symbol: formatShieldSymbol(prepared.to.asset.metadata.symbol)
                 }}
               />
             ) : undefined
@@ -1258,9 +1272,9 @@ function ShieldSwapForm({
           token={fromToken}
           fallbackAssetId={preferredSourceId ?? undefined}
           fallbackSymbol={
-            findSavedSwapToken(tokens, preferredSourceId)?.symbol ??
-            (fromId === null ? sharedPair?.tokenInSymbol : undefined)
+            sharedPair?.tokenInSymbol ?? findSavedSwapToken(tokens, preferredSourceId)?.symbol
           }
+          displaySymbol={fromDisplaySymbol}
           tokenBadgeBlockchain={fromPickerChain?.badgeBlockchain}
           tokenNetworkLabel="NEAR Confidential"
           amount={amount}
@@ -1303,9 +1317,9 @@ function ShieldSwapForm({
           token={toToken}
           fallbackAssetId={preferredDestinationId ?? undefined}
           fallbackSymbol={
-            findSavedSwapToken(tokens, preferredDestinationId)?.symbol ??
-            (toId === null ? sharedPair?.tokenOutSymbol : undefined)
+            sharedPair?.tokenOutSymbol ?? findSavedSwapToken(tokens, preferredDestinationId)?.symbol
           }
+          displaySymbol={toDisplaySymbol}
           tokenBadgeBlockchain={
             nativeDestinationChain?.badgeBlockchain ?? toPickerChain?.badgeBlockchain
           }
@@ -1320,7 +1334,7 @@ function ShieldSwapForm({
           isAmountLoading={previewLoading}
           isEstimatedAmount={previewLoading && Boolean(displayOutput)}
         />
-        {preview && previewRequest && from && to && previewOutput && (
+        {preview && from && to && previewOutput && (
           <SwapProviderCard
             slippage={slippage}
             providerName="near-confidential"
@@ -1329,7 +1343,7 @@ function ShieldSwapForm({
             details={
               preview.appFeeBps !== undefined || preview.timeEstimateSeconds !== undefined ? (
                 <div className="mt-1.5 space-y-1.5 text-muted">
-                  {preview.appFeeBps !== undefined && (
+                  {preview.appFeeBps !== undefined && previewRequest && (
                     <div className="flex items-center justify-between gap-2">
                       <span>Fee</span>
                       <span className="text-right text-foreground">
@@ -1465,7 +1479,7 @@ function ShieldSwapForm({
         {active && picker === 'from' && (
           <ShieldTokenPicker
             rows={fromPickerItems}
-            policy="grouped"
+            policy="grouped-source"
             balancesHidden={hidden}
             loading={!fromPickerReady || status === 'loading'}
             selectedKey={

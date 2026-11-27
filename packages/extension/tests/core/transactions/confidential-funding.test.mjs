@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
+import { isEvmConfidentialDepositIdentity } from '../../../src/background/confidential-funding-adapters.ts'
 import { privateKeyToAccount } from 'viem/accounts'
 import {
   ConfidentialFundingApi,
@@ -490,6 +491,190 @@ test.describe('confidential funding safety rules', () => {
     expect(coordinator.hasExternalDepositAsset(source)).toBe(false)
   })
 
+  test('NEAR Shield receive quotes a NEP-141 deposit and rejects bridged assets', async () => {
+    const usdtProtocol = 'nep141:usdt.tether-token.near'
+    const usdtAssetId = 'near:mainnet/nep141:usdt.tether-token.near'
+    const nearAssetId = 'near:mainnet/slip44:397'
+    const wrapProtocol = 'nep141:wrap.near'
+    const refundAddress = '0x2222222222222222222222222222222222222222'
+    const signer = '0x1111111111111111111111111111111111111111'
+    const now = 1_000_000
+    const records = new Map()
+    const quotes = []
+    const usdtToken = {
+      assetId: usdtProtocol,
+      blockchain: 'near',
+      contractAddress: 'usdt.tether-token.near',
+      decimals: 6,
+      symbol: 'USDT',
+      price: 1
+    }
+    const wrapToken = {
+      assetId: wrapProtocol,
+      blockchain: 'near',
+      contractAddress: 'wrap.near',
+      decimals: 24,
+      symbol: 'wNEAR',
+      price: 1
+    }
+    let catalog = [usdtToken, wrapToken]
+    const assets = {
+      [usdtAssetId]: {
+        asset: { namespace: 'nep141' },
+        metadata: { symbol: 'USDT', decimals: 6 }
+      },
+      [nearAssetId]: {
+        asset: { namespace: 'slip44' },
+        metadata: { symbol: 'NEAR', decimals: 24 }
+      }
+    }
+    const coordinator = new ConfidentialFundingCoordinator({
+      network: 'mainnet',
+      evmNetworks: getEvmNetworkConfigs('mainnet').filter(
+        network => network.chainId === 'eip155:1'
+      ),
+      assets: { get: id => assets[id] },
+      assetMappings: [{ assetId: nearAssetId, protocolAssetId: wrapProtocol }],
+      getProtocolTokens: () => catalog,
+      now: () => now,
+      createId: () => `external-${records.size + 1}`,
+      scheduleMonitoring: async () => {},
+      api: {
+        async quoteFlexibleDeposit(request) {
+          quotes.push(request)
+          return {
+            correlationId: `quote-${quotes.length}`,
+            quoteRequest: {
+              dry: false,
+              swapType: 'FLEX_INPUT',
+              confidentiality: 'basic',
+              originAsset: request.originAsset,
+              destinationAsset: request.originAsset,
+              amount: request.quoteAmountRaw,
+              refundTo: request.refundTo,
+              depositType: 'ORIGIN_CHAIN',
+              refundType: 'ORIGIN_CHAIN',
+              recipient: request.signerId,
+              recipientType: 'CONFIDENTIAL_INTENTS',
+              slippageTolerance: request.slippageBps
+            },
+            quote: {
+              amountIn: request.quoteAmountRaw,
+              minAmountIn: '1',
+              amountOut: request.quoteAmountRaw,
+              minAmountOut: request.quoteAmountRaw,
+              depositAddress:
+                request.originAsset === usdtProtocol ? 'a'.repeat(64) : 'b'.repeat(64),
+              deadline: new Date(now + 60_000).toISOString()
+            }
+          }
+        }
+      },
+      store: {
+        async getSession() {
+          return { accessToken: 'synthetic', expiresAt: now + 1_000_000 }
+        },
+        async listExternalDeposits() {
+          return [...records.values()]
+        },
+        async putExternalDeposit(record) {
+          records.set(record.depositId, record)
+        }
+      },
+      signer: {
+        async resolveIdentity() {
+          return {
+            address: signer,
+            addressIndex: 0,
+            context: {
+              chainAccount: {
+                scope: {
+                  keyDomainId: 'wallet:one',
+                  accountId: 'account:one',
+                  chainId: 'eip155:1'
+                }
+              }
+            }
+          }
+        }
+      }
+    })
+    const usdtSource = {
+      chainId: 'near:mainnet',
+      chainName: 'NEAR',
+      assetId: usdtAssetId,
+      protocolAssetId: usdtProtocol
+    }
+    expect(coordinator.hasExternalDepositAsset(usdtSource)).toBe(true)
+    catalog = [{ ...usdtToken, decimals: 18 }, wrapToken]
+    expect(coordinator.hasExternalDepositAsset(usdtSource)).toBe(false)
+    catalog = [{ ...usdtToken, symbol: 'USDT (DEPRECATED)' }, wrapToken]
+    expect(coordinator.hasExternalDepositAsset(usdtSource)).toBe(false)
+    catalog = [{ ...usdtToken, blockchain: 'eth' }, wrapToken]
+    expect(coordinator.hasExternalDepositAsset(usdtSource)).toBe(false)
+    catalog = [usdtToken, wrapToken]
+    expect(
+      coordinator.hasExternalDepositAsset({
+        chainId: 'near:mainnet',
+        assetId: nearAssetId,
+        protocolAssetId: wrapProtocol
+      })
+    ).toBe(true)
+
+    await expect(
+      coordinator.createExternalDeposit({
+        network: 'mainnet',
+        keyDomainId: 'wallet:one',
+        accountId: 'account:one',
+        refundAddress,
+        requestId: 'omft',
+        source: {
+          chainId: 'near:mainnet',
+          chainName: 'NEAR',
+          assetId: 'near:mainnet/nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near',
+          protocolAssetId: 'nep141:eth-0xdac17f958d2ee523a2206206994597c13d831ec7.omft.near'
+        }
+      })
+    ).rejects.toThrow('External Shield deposit request is invalid')
+    expect(quotes).toEqual([])
+
+    const created = await coordinator.createExternalDeposit({
+      network: 'mainnet',
+      keyDomainId: 'wallet:one',
+      accountId: 'account:one',
+      refundAddress,
+      requestId: 'usdt',
+      source: usdtSource
+    })
+    expect(quotes[0]).toMatchObject({
+      originAsset: usdtProtocol,
+      quoteAmountRaw: '20000000'
+    })
+    expect(created).toMatchObject({
+      source: { protocolAssetId: usdtProtocol, assetId: usdtAssetId },
+      depositAddress: 'a'.repeat(64),
+      sourceSymbol: 'USDT'
+    })
+    expect(created.depositMemo).toBeUndefined()
+
+    const wrapped = await coordinator.createExternalDeposit({
+      network: 'mainnet',
+      keyDomainId: 'wallet:one',
+      accountId: 'account:one',
+      refundAddress,
+      requestId: 'wnear',
+      source: {
+        chainId: 'near:mainnet',
+        chainName: 'NEAR',
+        assetId: nearAssetId,
+        protocolAssetId: wrapProtocol
+      }
+    })
+    expect(quotes[1]).toMatchObject({ originAsset: wrapProtocol })
+    expect(wrapped.source.assetId).toBe(nearAssetId)
+    expect(wrapped.depositAddress).toBe('b'.repeat(64))
+  })
+
   test('external Shield deposit is account-bound, idempotent and recovers from status without local signing', async () => {
     const address = '0x1111111111111111111111111111111111111111'
     const refundAddress = '0x2222222222222222222222222222222222222222'
@@ -616,6 +801,19 @@ test.describe('confidential funding safety rules', () => {
               depositAddress: '0x4444444444444444444444444444444444444444',
               deadline: new Date(now + 60_000).toISOString()
             }
+          }
+        },
+        async getOneClickStatus(_address, memo) {
+          statusCalls += 1
+          expect(memo).toBe('memo-1')
+          return {
+            status: serviceStatus,
+            ...(depositedAmountRaw !== undefined ? { depositedAmountRaw } : {}),
+            ...(serviceStatus === 'SUCCESS' && settledAmountOutRaw !== undefined
+              ? { settledAmountOutRaw }
+              : {}),
+            ...(serviceStatus === 'REFUNDED' ? { transactionHash: refundTransactionHash } : {}),
+            ...(serviceErrorStatus !== undefined ? { errorStatus: serviceErrorStatus } : {})
           }
         },
         async getBalances() {
@@ -1251,6 +1449,19 @@ test.describe('confidential funding safety rules', () => {
     const inactiveAt = new Date(Date.now() + 30_000).toISOString()
     let changeRecipient = false
     globalThis.fetch = async (url, init) => {
+      if (url === `https://example.test/1click/status?depositAddress=${depositAddress}`) {
+        return new Response(
+          JSON.stringify({
+            status: 'SUCCESS',
+            quoteResponse: { quote: { depositAddress } },
+            swapDetails: {
+              amountOut: '1000',
+              destinationChainTxHashes: [{ hash: destinationHash }]
+            }
+          }),
+          { status: 200 }
+        )
+      }
       expect(url).toBe('https://example.test/1click/quote')
       const request = JSON.parse(init.body)
       expect(request.appFees).toBeUndefined()
@@ -1407,14 +1618,18 @@ test.describe('confidential funding safety rules', () => {
         }
       ]) {
         const quote = await api.quote(input)
+        const walletFees =
+          input.referral === 'noir_send' && input.recipientType === 'DESTINATION_CHAIN'
+            ? []
+            : [transferFee]
         expect(quote.quoteRequest).toMatchObject({
           referral: input.referral,
           dry: input.dry,
-          appFees: [transferFee, providerFee]
+          appFees: [...walletFees, providerFee]
         })
         expect(quoteRequests.splice(0).map(request => request.appFees)).toEqual([
           undefined,
-          [transferFee]
+          walletFees.length ? walletFees : undefined
         ])
       }
       const swap = {
@@ -1469,6 +1684,182 @@ test.describe('confidential funding safety rules', () => {
       echoedFees = undefined
       providerFee = { recipient: 'provider.near', fee: 26 }
       await expect(api.quote(withdrawal)).rejects.toThrow('provider fee quote is invalid')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('requests the observed withdraw fee when a noir_send quote omits it', async () => {
+    const originalFetch = globalThis.fetch
+    const observedFee = { recipient: 'cross_confidential.near', fee: 50 }
+    const transferFee = { recipient: 'noir_swap.near', fee: 2 }
+    let providerFee
+    const requests = []
+    globalThis.fetch = async (url, init) => {
+      expect(url).toBe('https://example.test/1click/quote')
+      const request = JSON.parse(init.body)
+      requests.push(request)
+      const echoed = [
+        ...(request.appFees ?? []),
+        ...(providerFee &&
+        !(request.appFees ?? []).some(fee => fee.recipient === providerFee.recipient)
+          ? [providerFee]
+          : [])
+      ]
+      return Response.json({
+        correlationId: 'withdraw-fee',
+        quoteRequest: {
+          ...request,
+          ...(echoed.length > 0 ? { appFees: echoed } : {})
+        },
+        quote: {
+          amountIn: request.amount,
+          amountOut: echoed.length > 0 ? String(BigInt(request.amount) - 1n) : request.amount,
+          deadline: request.deadline
+        }
+      })
+    }
+    try {
+      const api = new ConfidentialFundingApi(apiConfig, 'https://near.example.test', '')
+      const withdrawal = {
+        referral: 'noir_send',
+        originAsset: 'nep141:eth.omft.near',
+        destinationAsset: 'nep141:eth.omft.near',
+        amountRaw: '1000000',
+        signerId: '0x1111111111111111111111111111111111111111',
+        recipient: '0x2222222222222222222222222222222222222222',
+        depositType: 'CONFIDENTIAL_INTENTS',
+        refundType: 'CONFIDENTIAL_INTENTS',
+        recipientType: 'DESTINATION_CHAIN',
+        slippageBps: 50,
+        dry: false
+      }
+      for (const dry of [true, false]) {
+        requests.length = 0
+        const quote = await api.quote({ ...withdrawal, dry })
+        expect(requests.map(request => [request.dry, request.appFees])).toEqual([
+          [true, undefined],
+          [dry, [observedFee]]
+        ])
+        expect(quote.quoteRequest.appFees).toEqual([observedFee])
+        expect(BigInt(quote.quote.amountOut) < BigInt(quote.quote.amountIn)).toBe(true)
+      }
+
+      providerFee = observedFee
+      for (const dry of [true, false]) {
+        requests.length = 0
+        const quote = await api.quote({ ...withdrawal, dry })
+        expect(requests.every(request => request.appFees === undefined)).toBe(true)
+        expect(quote.quoteRequest.appFees).toEqual([observedFee])
+        expect(requests).toHaveLength(dry ? 1 : 2)
+      }
+
+      providerFee = undefined
+      requests.length = 0
+      const deposit = await api.quote({
+        ...withdrawal,
+        referral: 'noir_receive',
+        depositType: 'ORIGIN_CHAIN',
+        refundType: 'ORIGIN_CHAIN',
+        recipientType: 'CONFIDENTIAL_INTENTS',
+        dry: false
+      })
+      expect(requests.map(request => request.appFees)).toEqual([undefined, [transferFee]])
+      expect(deposit.quoteRequest.appFees).toEqual([transferFee])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('binds Cluster quotes to the application fees required by batch submission', async () => {
+    const originalFetch = globalThis.fetch
+    const charges = [
+      { recipient: 'wallet.near', fee: 35 },
+      { recipient: 'platform.near', fee: 50 }
+    ]
+    const requests = []
+    let feeReads = 0
+    let appliedCharges = charges
+    let echoCharges = true
+    globalThis.fetch = async (url, init) => {
+      if (url === 'https://example.test/api/swap/confidential-app-fee') {
+        expect(init.headers.Authorization).toBe('Bearer swap-jwt')
+        feeReads += 1
+        return Response.json({
+          code: 0,
+          data: {
+            confidentialAppFeeBps: appliedCharges[0]?.fee ?? 0,
+            confidentialAppFeeRecipient: appliedCharges[0]?.recipient ?? '',
+            confidentialPlatformFeeBps: appliedCharges[1]?.fee ?? 0,
+            confidentialPlatformFeeRecipient: appliedCharges[1]?.recipient ?? ''
+          }
+        })
+      }
+      expect(url).toBe('https://example.test/1click/quote')
+      const request = JSON.parse(init.body)
+      requests.push(request)
+      return Response.json({
+        correlationId: 'cluster-quote',
+        quoteRequest: { ...request, ...(!echoCharges ? { appFees: [] } : {}) },
+        quote: {
+          amountIn: request.amount,
+          amountOut: '900',
+          ...(!request.dry ? { depositAddress: 'deposit.near' } : {})
+        }
+      })
+    }
+    try {
+      const api = new ConfidentialFundingApi(apiConfig, 'https://near.example.test', 'swap-jwt')
+      const cluster = {
+        referral: 'noir_send',
+        originAsset: 'nep141:eth.omft.near',
+        destinationAsset: 'nep141:eth.omft.near',
+        amountRaw: '1000',
+        signerId: '0x1111111111111111111111111111111111111111',
+        recipient: '0x2222222222222222222222222222222222222222',
+        depositType: 'CONFIDENTIAL_INTENTS',
+        refundType: 'CONFIDENTIAL_INTENTS',
+        recipientType: 'DESTINATION_CHAIN',
+        slippageBps: 50,
+        settlement: 'cluster'
+      }
+      await Promise.all([
+        api.quote({ ...cluster, dry: true }),
+        api.quote({ ...cluster, dry: false })
+      ])
+      expect(feeReads).toBe(1)
+      expect(requests.map(({ dry, appFees }) => ({ dry, appFees }))).toEqual([
+        { dry: true, appFees: charges },
+        { dry: false, appFees: charges }
+      ])
+
+      echoCharges = false
+      await expect(api.quote({ ...cluster, dry: false })).rejects.toThrow('app fees do not match')
+
+      appliedCharges = []
+      echoCharges = true
+      await api.quote({ ...cluster, dry: false })
+      expect(requests.at(-1)).not.toHaveProperty('appFees')
+
+      for (const viewer of [
+        { chainFamily: 'near', walletAddress: 'ab'.repeat(32) },
+        { chainFamily: 'evm', walletAddress: cluster.signerId, signingMode: 'public' }
+      ]) {
+        const quote = await api.quote({
+          ...cluster,
+          originAsset: 'nep141:wrap.near',
+          destinationAsset: 'nep141:wrap.near',
+          signerId: viewer.walletAddress,
+          recipient: 'cd'.repeat(32),
+          dry: false,
+          viewer
+        })
+        expect(requests.at(-1)).toMatchObject({
+          user: viewer.walletAddress,
+          userChainFamily: viewer.chainFamily
+        })
+        expect(quote.oneClickOrder).toEqual({ depositAddress: 'deposit.near', viewer })
+      }
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -1768,6 +2159,12 @@ test.describe('confidential funding safety rules', () => {
       assertConfidentialQuoteBinding(quote, { ...quoteBinding, amountRaw: '1001' })
     ).toThrow('requested funding route')
     expect(assertConfidentialIntentBinding(input).standard).toBe('erc191')
+    expect(() =>
+      assertConfidentialIntentBinding({
+        ...input,
+        intent: { standard: 'nep413', payload: input.intent.payload }
+      })
+    ).toThrow('ERC-191')
     expect(() =>
       assertConfidentialIntentBinding({
         ...input,
@@ -2098,6 +2495,77 @@ test.describe('confidential funding safety rules', () => {
   })
 })
 
+test('EVM confidential auth signs ERC-191 and rejects missing or unsupported identities', async () => {
+  const idleClient = {
+    async deriveGlobalPea() {
+      throw new Error('PEA derivation should not run')
+    }
+  }
+  const missingIdentities = [
+    async () => null,
+    async () => ({ keyDomainSource: { kind: 'hardware' } }),
+    async () => ({ keyDomainSource: { kind: 'private-key', chainFamily: 'near' } })
+  ]
+  for (const loadContext of missingIdentities) {
+    const signer = new ConfidentialFundingSigner(idleClient, loadContext)
+    await expect(signer.resolveIdentity('eip155:1')).rejects.toThrow(
+      'Confidential funding requires a supported active EVM Account'
+    )
+  }
+
+  expect(isEvmConfidentialDepositIdentity({ kind: 'evm' })).toBe(true)
+  expect(isEvmConfidentialDepositIdentity({})).toBe(true)
+  expect(isEvmConfidentialDepositIdentity({ kind: 'near' })).toBe(false)
+  expect(isEvmConfidentialDepositIdentity({ kind: 'near-ledger' })).toBe(false)
+
+  const address = '0x1111111111111111111111111111111111111111'
+  const peaAddress = '0x2222222222222222222222222222222222222222'
+  const chainId = 'eip155:1'
+  let preparedPayload = null
+  const signer = new ConfidentialFundingSigner(
+    {
+      async deriveGlobalPea() {
+        return { address: peaAddress }
+      },
+      async prepare(_keyDomainId, payload) {
+        preparedPayload = payload
+        return {
+          execution: { kind: 'internal' },
+          operation: 'message',
+          expiresAt: Date.now() + 60_000,
+          summary: { review: { level: 'review' } },
+          commandId: 'command-erc191'
+        }
+      },
+      async confirm() {
+        return {
+          kind: 'signature',
+          signature: { encoding: 'hex', value: `0x${'11'.repeat(64)}00` },
+          address
+        }
+      },
+      async cancel() {}
+    },
+    async () => ({
+      keyDomainSource: { kind: 'software' },
+      chainAccount: {
+        scope: { keyDomainId: 'wallet:one', accountId: 'account:one', chainId },
+        derivation: { scheme: 'bip44', path: "m/44'/60'/0'/0/0" },
+        identity: { kind: 'account-identifier', value: address }
+      }
+    })
+  )
+  const identity = await signer.resolveIdentity(chainId)
+  expect(identity.kind).toBe('evm')
+  expect(identity.address).toBe(address)
+  expect(identity.peaAddress).toBe(peaAddress)
+  const signed = await signer.signMessage({ identity, chainId, payload: 'auth-payload' })
+  expect(preparedPayload.kind).toBe('evm-personal-message')
+  expect(new TextDecoder().decode(preparedPayload.message)).toBe('auth-payload')
+  expect(signed).toMatchObject({ standard: 'erc191', payload: 'auth-payload' })
+  expect(signed.signature.startsWith('secp256k1:')).toBe(true)
+})
+
 test('confidential account transfer freezes the signed-intent quote for the other account', async () => {
   const signerId = '0x1111111111111111111111111111111111111111'
   const recipient = '0x3333333333333333333333333333333333333333'
@@ -2216,7 +2684,8 @@ test('confidential account transfer freezes the signed-intent quote for the othe
           correlationId: 'intent-transfer'
         }
       },
-      submitIntent: async () => ({ intentHash: 'hash', correlationId: 'submitted' })
+      submitIntent: async () => ({ intentHash: 'hash', correlationId: 'submitted' }),
+      getOneClickStatus: async () => ({ status: 'PROCESSING' })
     }
   })
   const request = {

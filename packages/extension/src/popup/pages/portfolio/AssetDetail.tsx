@@ -5,6 +5,7 @@ import { Icon } from '@iconify/react'
 import Big from '@/lib/big'
 import { parseAssetId } from '@/core/chains/registry'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
+import { resolveConfidentialIdentity } from '@/core/accounts/confidential-identity'
 import type { ActivityItem } from '@/core/activity'
 import {
   findAssetPrice,
@@ -49,12 +50,19 @@ import zcashChainIcon from '@/images/zcash-chain.svg'
 import { AssetDetailBalanceRow } from './AssetDetailBalanceRow'
 import { withConfidentialAssetPrices } from '@/popup/services/portfolio-prices'
 import { PrivateAddressWarningDialog } from '@/popup/components/account/PrivateAddressWarningDialog'
-import type { BalanceTransferIntent } from '@/popup/services/private-balance-transfer'
+import {
+  getPrivateTransferChainIds,
+  type BalanceTransferIntent
+} from '@/popup/services/private-balance-transfer'
 import { getShieldTransferChainIds } from '@/popup/services/shield-transfer'
 import {
   resolveNearConfidentialZecDetail,
   resolveNearConfidentialZecHolding
 } from '@/popup/services/near-confidential-holdings'
+import {
+  nearIncognitoReceiveUnavailableMessage,
+  selectNearReceiveAddress
+} from '@/popup/services/near-send-receive-page'
 
 import { formatDisplayTokenAmount } from '@/popup/services/portfolio-format'
 import { assetPriceClient } from '@/popup/services/asset-price-client'
@@ -330,10 +338,11 @@ export function AssetDetail() {
     evmMainAddress
   )
   const shieldChainIds = getShieldTransferChainIds(storageV2Account, currentNetwork === 'mainnet')
-  const hasConfidentialCapability = shieldChainIds.length > 0
   const evmShieldEligible = Boolean(chain && shieldChainIds.includes(chain.chain.id))
   const refreshConfidentialBalances =
-    evmShieldEligible || (chain?.chain.family === 'zcash' && hasConfidentialCapability)
+    privateTransferEligible ||
+    (chain?.chain.family === 'zcash' &&
+      getPrivateTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length > 0)
   const loadingConfidentialBalance =
     refreshConfidentialBalances &&
     Boolean(portfolioScopeKey) &&
@@ -358,6 +367,9 @@ export function AssetDetail() {
         assetId: asset.asset.id
       })
     : null
+  const hasConfidentialCapability =
+    currentNetwork === 'mainnet' &&
+    (shieldChainIds.length > 0 || getPrivateTransferChainIds(storageV2Account, true).length > 0)
   const modeScopeKey = JSON.stringify([currentNetwork, effectiveWalletId, effectiveAccountId])
   const enabledIncognito = useSettingsStore(state => state.incognitoCardScopes[modeScopeKey])
   const { state: executionMode } = useDAppExecutionMode(
@@ -480,18 +492,18 @@ export function AssetDetail() {
     chain &&
     !fundingUnavailableReason &&
     chain.chain.capabilities.transaction.status === 'available' &&
-    ['zcash', 'evm', 'bitcoin'].includes(chain.chain.family)
+    ['zcash', 'evm', 'bitcoin', 'near'].includes(chain.chain.family)
   )
   const canReceive = Boolean(
     chain &&
     chain.chain.capabilities.address.status === 'available' &&
-    ['zcash', 'evm', 'bitcoin'].includes(chain.chain.family)
+    ['zcash', 'evm', 'bitcoin', 'near'].includes(chain.chain.family)
   )
   const canSwap = Boolean(
     asset &&
     chain &&
     !fundingUnavailableReason &&
-    ['zcash', 'evm', 'bitcoin'].includes(chain.chain.family)
+    ['zcash', 'evm', 'bitcoin', 'near'].includes(chain.chain.family)
   )
   const canSwapNativeZec =
     !confidentialOnlyDetail &&
@@ -593,6 +605,7 @@ export function AssetDetail() {
       query.set('sourceAccountId', effectiveAccountId)
     }
     if (domain === 'private') query.set('mode', 'private')
+    if (chain.chain.family === 'near' && domain === 'private') query.set('source', 'incognito')
     if (chain.chain.family === 'evm') {
       if (domain === 'public') query.set('sourceMode', 'main')
     }
@@ -609,14 +622,14 @@ export function AssetDetail() {
     })
   }
 
-  const handleReceive = () => {
+  const handleReceive = (mode: 'public' | 'incognito' = 'public') => {
     if (!chain || !asset || !canReceive || !effectiveWalletId || !effectiveAccountId) return
     const query = new URLSearchParams({
       walletId: effectiveWalletId,
       accountId: effectiveAccountId,
       chainId: chain.chain.id,
       assetId: asset.asset.id,
-      mode: 'public'
+      mode: mode === 'incognito' ? 'incognito' : 'public'
     })
     navigate(`/receive?${query.toString()}`)
   }
@@ -688,7 +701,23 @@ export function AssetDetail() {
           }
         ]
       : []),
-    ...(privateTransferEligible && domain === 'private'
+    ...(domain === 'private' && chain?.chain.family === 'near'
+      ? [
+          {
+            action: 'send' as const,
+            label: 'Send',
+            disabled: !canSend,
+            onClick: () => handleSend('private')
+          },
+          {
+            action: 'receive' as const,
+            label: 'Receive',
+            disabled: !canReceive,
+            onClick: () => handleReceive('incognito')
+          }
+        ]
+      : []),
+    ...(privateTransferEligible && domain === 'private' && chain?.chain.family !== 'near'
       ? [
           {
             action: 'deposit' as const,
@@ -705,7 +734,9 @@ export function AssetDetail() {
     {
       action: 'swap' as const,
       label: 'Swap',
-      disabled: !canSwap || (domain === 'private' && !privateTransferEligible),
+      disabled:
+        !canSwap ||
+        (domain === 'private' && chain?.chain.family !== 'near' && !privateTransferEligible),
       onClick: () => handleSwap(domain)
     }
   ]
@@ -925,6 +956,44 @@ export function AssetDetail() {
       ? accountNetwork?.addresses.find(address => address.privacy === 'transparent')?.value
       : (preferredBitcoinAddress?.value ??
         accountNetwork?.addresses.find(address => address.preferredForReceive)?.value)
+  const nearKeySource =
+    storageV2Account?.walletSource.kind === 'hardware'
+      ? 'hardware'
+      : storageV2Account?.walletSource.kind === 'private-key'
+        ? 'imported'
+        : 'software'
+  const nearIncognitoReceive =
+    chain.chain.family === 'near'
+      ? selectNearReceiveAddress({
+          mode: 'incognito',
+          keySource: nearKeySource,
+          mainAccountId: publicAddress,
+          persistedPeaAccountId: accountNetwork?.privateExecutionAddress
+        })
+      : null
+  const nearPublicReceive =
+    chain.chain.family === 'near'
+      ? selectNearReceiveAddress({
+          mode: 'public',
+          keySource: nearKeySource,
+          mainAccountId: publicAddress,
+          persistedPeaAccountId: accountNetwork?.privateExecutionAddress
+        })
+      : null
+  const confidentialIdentity = resolveConfidentialIdentity(
+    storageV2Account
+      ? {
+          walletSource: storageV2Account.walletSource,
+          accountIndex: storageV2Account.accountIndex
+        }
+      : null
+  )
+  const evmIntentsAddress =
+    confidentialIdentity.kind === 'evm'
+      ? storageV2Account?.networks
+          .find(network => network.chain.family === 'evm')
+          ?.addresses.find(address => address.preferredForReceive)?.value
+      : undefined
   const formatBalanceFiat = (value: string | null | undefined) =>
     value == null ? '—' : formatFiatAmount(value, { showSign: true })
   const renderBalanceAddress = (
@@ -952,10 +1021,14 @@ export function AssetDetail() {
     ) : null
   const historyAddress =
     detailMode === 'public'
-      ? publicAddress
-      : detailMode === 'private' && privateTransferEligible
-        ? accountNetwork?.privateExecutionAddress
-        : undefined
+      ? nearPublicReceive?.status === 'address'
+        ? nearPublicReceive.address
+        : publicAddress
+      : detailMode === 'private' && nearIncognitoReceive?.status === 'address'
+        ? nearIncognitoReceive.address
+        : detailMode === 'private' && privateTransferEligible
+          ? accountNetwork?.privateExecutionAddress
+          : undefined
   const historyUrl = historyAddress
     ? formatChainAddressExplorerUrl(chain.chain.id, historyAddress, currentNetwork)
     : null
@@ -1168,30 +1241,53 @@ export function AssetDetail() {
             className="wallet-action-row grid auto-cols-fr grid-flow-col items-start gap-2 pb-3"
           >
             {detailMode === 'private' ? (
-              <>
-                <WalletActionButton
-                  icon={<WalletActionIcon action="deposit" />}
-                  label="Deposit"
-                  disabled={!privateTransferEligible}
-                  onClick={() => handlePrivateTransfer('deposit')}
-                />
-                <WalletActionButton
-                  icon={<WalletActionIcon action="withdraw" />}
-                  label="Withdraw"
-                  disabled={!privateTransferEligible}
-                  onClick={() => handlePrivateTransfer('withdraw')}
-                />
-                <WalletActionButton
-                  icon={<WalletActionIcon action="swap" />}
-                  label="Swap"
-                  disabled={!privateTransferEligible || !canSwap}
-                  onClick={() => handleSwap('private')}
-                />
-              </>
+              chain.chain.family === 'near' ? (
+                <>
+                  <WalletActionButton
+                    icon={<WalletActionIcon action="send" />}
+                    label="Send"
+                    disabled={!canSend}
+                    onClick={() => handleSend('private')}
+                  />
+                  <WalletActionButton
+                    icon={<WalletActionIcon action="receive" />}
+                    label="Receive"
+                    disabled={!canReceive}
+                    onClick={() => handleReceive('incognito')}
+                  />
+                  <WalletActionButton
+                    icon={<WalletActionIcon action="swap" />}
+                    label="Swap"
+                    disabled={!canSwap}
+                    onClick={() => handleSwap('private')}
+                  />
+                </>
+              ) : (
+                <>
+                  <WalletActionButton
+                    icon={<WalletActionIcon action="deposit" />}
+                    label="Deposit"
+                    disabled={!privateTransferEligible}
+                    onClick={() => handlePrivateTransfer('deposit')}
+                  />
+                  <WalletActionButton
+                    icon={<WalletActionIcon action="withdraw" />}
+                    label="Withdraw"
+                    disabled={!privateTransferEligible}
+                    onClick={() => handlePrivateTransfer('withdraw')}
+                  />
+                  <WalletActionButton
+                    icon={<WalletActionIcon action="swap" />}
+                    label="Swap"
+                    disabled={!privateTransferEligible || !canSwap}
+                    onClick={() => handleSwap('private')}
+                  />
+                </>
+              )
             ) : (
               <>
                 <WalletActionButton
-                  icon={<WalletActionIcon action="send" shielded={detailMode === 'shield'} />}
+                  icon={<WalletActionIcon action="send" />}
                   label="Send"
                   disabled={
                     detailMode === 'shield'
@@ -1209,7 +1305,7 @@ export function AssetDetail() {
                   }}
                 />
                 <WalletActionButton
-                  icon={<WalletActionIcon action="receive" shielded={detailMode === 'shield'} />}
+                  icon={<WalletActionIcon action="receive" />}
                   label="Receive"
                   disabled={
                     detailMode === 'public'
@@ -1299,51 +1395,70 @@ export function AssetDetail() {
           </a>
         )}
 
-        {detailMode === 'all' && chain.chain.family === 'evm' && (
-          <section className="py-2" aria-label="Account balances">
-            {detailModes
-              .map(({ value }) => value)
-              .filter(
-                (domain): domain is 'public' | 'private' | 'shield' =>
-                  domain !== 'all' && Boolean(categories?.domains.includes(domain))
-              )
-              .map(domain => {
-                const raw = categories?.raw[domain] ?? null
-                return (
-                  <AssetDetailBalanceRow
-                    key={domain}
-                    shielded={domain === 'shield'}
-                    onSelect={() => selectDetailMode(domain)}
-                    label={
-                      domain === 'shield' ? 'Shield' : domain === 'private' ? 'Incognito' : 'Public'
-                    }
-                    subtitle={
-                      domain === 'shield'
-                        ? 'NEAR Confidential Intents'
-                        : domain === 'private'
-                          ? renderBalanceAddress(
-                              accountNetwork?.privateExecutionAddress,
-                              'Incognito',
-                              true
-                            )
-                          : renderBalanceAddress(publicAddress, 'Public')
-                    }
-                    balance={
-                      domain === 'shield' && raw === null && loadingConfidentialBalance ? (
-                        <BalanceSkeleton className="h-4 w-20" />
-                      ) : raw === null ? (
-                        '—'
-                      ) : (
-                        `${formatDisplayTokenAmount(raw, asset.metadata.decimals)} ${formatSymbol(asset.metadata.symbol)}`
-                      )
-                    }
-                    fiat={formatBalanceFiat(categories?.fiat[domain])}
-                    actions={domain === 'shield' ? confidentialActions() : accountActions(domain)}
-                  />
+        {detailMode === 'all' &&
+          (chain.chain.family === 'evm' || chain.chain.family === 'near') && (
+            <section className="py-2" aria-label="Account balances">
+              {detailModes
+                .map(({ value }) => value)
+                .filter(
+                  (domain): domain is 'public' | 'private' | 'shield' =>
+                    domain !== 'all' && Boolean(categories?.domains.includes(domain))
                 )
-              })}
-          </section>
-        )}
+                .map(domain => {
+                  const raw = categories?.raw[domain] ?? null
+                  return (
+                    <AssetDetailBalanceRow
+                      key={domain}
+                      shielded={domain === 'shield'}
+                      onSelect={() => selectDetailMode(domain)}
+                      label={
+                        domain === 'shield'
+                          ? 'Shield'
+                          : domain === 'private'
+                            ? 'Incognito'
+                            : 'Public'
+                      }
+                      subtitle={
+                        domain === 'shield'
+                          ? (renderBalanceAddress(evmIntentsAddress, 'Shield') ??
+                            'NEAR Confidential Intents')
+                          : domain === 'private'
+                            ? chain.chain.family === 'near'
+                              ? nearIncognitoReceive?.status === 'address'
+                                ? renderBalanceAddress(
+                                    nearIncognitoReceive.address,
+                                    'Incognito',
+                                    true
+                                  )
+                                : nearIncognitoReceiveUnavailableMessage(nearKeySource)
+                              : renderBalanceAddress(
+                                  accountNetwork?.privateExecutionAddress,
+                                  'Incognito',
+                                  true
+                                )
+                            : renderBalanceAddress(
+                                nearPublicReceive?.status === 'address'
+                                  ? nearPublicReceive.address
+                                  : publicAddress,
+                                'Public'
+                              )
+                      }
+                      balance={
+                        domain === 'shield' && raw === null && loadingConfidentialBalance ? (
+                          <BalanceSkeleton className="h-4 w-20" />
+                        ) : raw === null ? (
+                          '—'
+                        ) : (
+                          `${formatDisplayTokenAmount(raw, asset.metadata.decimals)} ${formatSymbol(asset.metadata.symbol)}`
+                        )
+                      }
+                      fiat={formatBalanceFiat(categories?.fiat[domain])}
+                      actions={domain === 'shield' ? confidentialActions() : accountActions(domain)}
+                    />
+                  )
+                })}
+            </section>
+          )}
 
         {bitcoinCatalog && (
           <section className="border-t border-border py-4" aria-label="Bitcoin accounts">

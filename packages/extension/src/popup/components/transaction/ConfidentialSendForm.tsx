@@ -9,7 +9,7 @@ import type { ConfidentialFundingReview } from '@/core/services/confidential-fun
 import { formatBaseUnitAmount, formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { classifyError } from '@/lib/errors'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
-import { formatSymbol } from '@/lib/format'
+import { formatShieldSymbol } from '@/lib/format'
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
@@ -21,6 +21,8 @@ import { assetPriceClient } from '@/popup/services/asset-price-client'
 import { withConfidentialAssetPrices } from '@/popup/services/portfolio-prices'
 import { findAssetPrice } from '@/core/prices'
 import { getShieldTransferChainIds } from '@/popup/services/shield-transfer'
+import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
+import { formatSendFiatValue } from '@/popup/services/send-transfer-model'
 import { useNavigate } from '@/popup/provider/Router'
 import { useSwapPreferences } from '@/store/swap-store'
 import {
@@ -36,8 +38,10 @@ import type { ShieldTokenPickerItem } from '@/popup/services/shield-transfer'
 import { resolveTransferMaximum } from '@/popup/services/transfer-maximum'
 import { sortSendAssetsByBalanceValue, sortSendNetworks } from '@/popup/services/send-asset-order'
 import { RecipientSelector } from '@/popup/components/transaction/RecipientSelector'
-import { TransactionReviewView } from '@/popup/components/transaction/TransactionReviewView'
-import { formatSendFiatValue } from '@/popup/services/send-transfer-model'
+import {
+  TransactionReviewExchangeSummary,
+  TransactionReviewView
+} from '@/popup/components/transaction/TransactionReviewView'
 import { TransactionReviewParty } from '@/popup/components/transaction/TransactionReviewParty'
 import { QuoteReviewChanges } from '@/popup/components/transaction/QuoteReviewChanges'
 import { openConfidentialActivity } from '@/popup/components/transaction/ConfidentialActivitySheet'
@@ -145,7 +149,9 @@ export function ConfidentialSendForm({
     nativeAccount: activeAccount
   })
   const canManageNear =
-    providerIsNear && getShieldTransferChainIds(activeAccount, network === 'mainnet').length > 0
+    providerIsNear &&
+    (getShieldTransferChainIds(activeAccount, network === 'mainnet').length > 0 ||
+      getPrivateTransferChainIds(activeAccount, network === 'mainnet').length > 0)
   const scopeKey = `${network}:${account?.walletId ?? ''}:${account?.accountId ?? ''}`
   const latestScope = useRef(scopeKey)
   latestScope.current = scopeKey
@@ -479,8 +485,9 @@ export function ConfidentialSendForm({
     return sortSendNetworks(
       [...chains.values()].map(chain => {
         const supported = supportedIds.has(chain.id)
-        const checkingRoute =
-          !supported && !catalogSettled && (chain.family === 'evm' || chain.family === 'zcash')
+        const routeFamily =
+          chain.family === 'evm' || chain.family === 'zcash' || chain.family === 'near'
+        const checkingRoute = !supported && !catalogSettled && routeFamily
         return {
           id: chain.id,
           name: chain.displayName,
@@ -491,7 +498,7 @@ export function ConfidentialSendForm({
             ? undefined
             : checkingRoute
               ? 'Checking route'
-              : chain.family === 'evm' || chain.family === 'zcash'
+              : routeFamily
                 ? 'No route available'
                 : 'Shield Send unavailable'
         }
@@ -503,7 +510,7 @@ export function ConfidentialSendForm({
     if (!catalogSettled || !awaitingCatalog || !source) return
     applyRouteSelection(source.asset.asset.id, destination?.chain.chain.id ?? source.chain.chain.id)
   }, [catalogSettled, awaitingCatalog, source, destination, applyRouteSelection])
-  const availableRaw = shieldFundingAvailableRaw(source, displayBalances)
+  const availableRaw = shieldFundingAvailableRaw(source, spendableBalances ?? displayBalances)
   const balanceAuthorizationRequired = balanceErrorCode === 'authorization_required'
   const balanceErrorMessage = balanceAuthorizationRequired
     ? 'Connect your Shield account to load balances.'
@@ -512,7 +519,7 @@ export function ConfidentialSendForm({
       : 'Unable to load Shield balances.'
   const displayedAsset = source?.asset ?? initialAsset
   const amountState =
-    source && displayBalances
+    source && (spendableBalances ?? displayBalances)
       ? resolvePrivateBalanceTransferAmount({
           amount,
           decimals: source.asset.metadata.decimals,
@@ -645,7 +652,7 @@ export function ConfidentialSendForm({
               shieldProvider: 'near-confidential'
             },
             amount: prepared.amount,
-            symbol: formatSymbol(prepared.source.asset.metadata.symbol),
+            symbol: formatShieldSymbol(prepared.source.asset.metadata.symbol),
             from: 'Shield · NEAR Confidential',
             recipient: prepared.review.destinationAddress,
             network: prepared.destination.chain.chain.displayName
@@ -1020,7 +1027,7 @@ export function ConfidentialSendForm({
           title={`Confirm ${actionLabel}`}
           asset={{
             assetId: prepared.source.asset.asset.id,
-            symbol: formatSymbol(prepared.source.asset.metadata.symbol),
+            symbol: formatShieldSymbol(prepared.source.asset.metadata.symbol),
             icon: prepared.source.asset.metadata.iconUrl,
             blockchain: withdrawChainIconAlias(prepared.source.chain.chain)
           }}
@@ -1032,6 +1039,31 @@ export function ConfidentialSendForm({
               catalogPrices.get(prepared.source.managed.protocolAssetId)
           )}
           network={prepared.destination.chain.chain.displayName}
+          summary={
+            <TransactionReviewExchangeSummary
+              presentation="single"
+              destinationLabel="Recipient receive"
+              destinationPrefix=""
+              source={{
+                asset: {
+                  assetId: prepared.source.asset.asset.id,
+                  symbol: formatShieldSymbol(prepared.source.asset.metadata.symbol),
+                  icon: prepared.source.asset.metadata.iconUrl,
+                  blockchain: withdrawChainIconAlias(prepared.source.chain.chain)
+                },
+                amount: prepared.amount
+              }}
+              destination={{
+                asset: {
+                  assetId: prepared.destination.asset.asset.id,
+                  symbol: formatShieldSymbol(prepared.destination.asset.metadata.symbol),
+                  icon: prepared.destination.asset.metadata.iconUrl,
+                  blockchain: withdrawChainIconAlias(prepared.destination.chain.chain)
+                },
+                amount: output
+              }}
+            />
+          }
           rows={[
             {
               label: 'From',
@@ -1058,7 +1090,7 @@ export function ConfidentialSendForm({
               content: (
                 <AmountDisplay
                   value={output}
-                  symbol={formatSymbol(prepared.destination.asset.metadata.symbol)}
+                  symbol={formatShieldSymbol(prepared.destination.asset.metadata.symbol)}
                 />
               )
             },
@@ -1067,7 +1099,7 @@ export function ConfidentialSendForm({
               content: (
                 <AmountDisplay
                   value={minimum}
-                  symbol={formatSymbol(prepared.destination.asset.metadata.symbol)}
+                  symbol={formatShieldSymbol(prepared.destination.asset.metadata.symbol)}
                 />
               )
             },
@@ -1092,7 +1124,7 @@ export function ConfidentialSendForm({
                           prepared.review.sourceNetworkFee.raw,
                           prepared.review.sourceNetworkFee.decimals
                         )}
-                        symbol={formatSymbol(prepared.review.sourceNetworkFee.symbol)}
+                        symbol={formatShieldSymbol(prepared.review.sourceNetworkFee.symbol)}
                         profile="fee"
                       />
                     )
@@ -1128,7 +1160,7 @@ export function ConfidentialSendForm({
                 changes={reviewDescription.changes}
                 output={{
                   decimals: prepared.destination.asset.metadata.decimals,
-                  symbol: formatSymbol(prepared.destination.asset.metadata.symbol)
+                  symbol: formatShieldSymbol(prepared.destination.asset.metadata.symbol)
                 }}
               />
             ) : undefined
@@ -1196,7 +1228,13 @@ export function ConfidentialSendForm({
         />
       ) : recipient && !recipientValid ? (
         <TransactionNotice
-          message={`Enter a valid ${destinationNetwork?.family === 'zcash' ? 'Zcash' : 'EVM'} address`}
+          message={`Enter a valid ${
+            destinationNetwork?.family === 'zcash'
+              ? 'Zcash'
+              : destinationNetwork?.family === 'near'
+                ? 'NEAR'
+                : 'EVM'
+          } address`}
         />
       ) : amountState?.error ? (
         <TransactionNotice message={amountState.error} tone="warning" />
@@ -1273,13 +1311,13 @@ export function ConfidentialSendForm({
           },
           asset: {
             assetId: displayedAsset?.asset.id,
-            symbol: displayedAsset ? formatSymbol(displayedAsset.metadata.symbol) : 'Token',
+            symbol: displayedAsset ? formatShieldSymbol(displayedAsset.metadata.symbol) : 'Token',
             icon: displayedAsset?.metadata.iconUrl,
             networkName: source?.chain.chain.displayName ?? '',
             blockchain: source ? withdrawChainIconAlias(source.chain.chain) : undefined,
             onSelectAsset: onOpenSourcePicker,
             disabled: busy,
-            ariaLabel: `Select Confidential ${formatSymbol(displayedAsset?.metadata.symbol)} asset`
+            ariaLabel: `Select Confidential ${formatShieldSymbol(displayedAsset?.metadata.symbol)} asset`
           },
           balance: {
             value:

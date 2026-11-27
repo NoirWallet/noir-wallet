@@ -24,7 +24,7 @@ export {
 } from './near-account-discovery'
 export { attestNearRpcEndpoint } from './near-network-attestation'
 export type { AttestNearRpcEndpointInput } from './near-network-attestation'
-export { createNearRpcClient, NearRpcError } from './near-rpc-client'
+export { createNearRpcClient, formatNearBalanceShortage, NearRpcError } from './near-rpc-client'
 export type {
   NearAccessKeyPermission,
   NearAccessKeySnapshot,
@@ -61,6 +61,18 @@ export {
   parsePreparedNearLendingSupply,
   type PreparedNearLendingSupply
 } from './near-lending-supply-preparer'
+export {
+  parsePreparedNearConfidentialDeposit,
+  parsePreparedNearConfidentialFungibleDeposit,
+  parsePreparedNearIntentsDeposit,
+  prepareNearConfidentialFungibleDeposit,
+  prepareNearIntentsDeposit,
+  type PreparedNearConfidentialDeposit,
+  type PreparedNearConfidentialFungibleDeposit,
+  type PreparedNearIntentsDeposit,
+  type PrepareNearConfidentialFungibleDepositInput,
+  type PrepareNearIntentsDepositInput
+} from './near-intents-deposit-preparer'
 export {
   createNearTransferGraph,
   type CreateNearTransferGraphInput

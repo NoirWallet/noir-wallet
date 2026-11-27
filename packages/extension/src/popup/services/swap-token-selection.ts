@@ -74,6 +74,17 @@ export type TokenSearchFields = Readonly<{
   searchTerms?: readonly string[]
 }>
 
+/** "All" stays on the curated list. A selected chain or a search uses the loaded catalog. */
+export function selectSwapCatalogCandidates<T>(input: {
+  readonly tokens: readonly T[]
+  readonly defaultTokens?: readonly T[]
+  readonly blockchain: string
+  readonly searching: boolean
+}): readonly T[] {
+  if (input.searching || input.blockchain !== 'all') return input.tokens
+  return input.defaultTokens ?? input.tokens
+}
+
 export function filterTokenPickerRows<Row>(
   rows: readonly Row[],
   network: string,
@@ -292,7 +303,13 @@ export function getSwapDestinationTokens<T extends SwapToken>(
       ]
     : [...sourceTokens, ...crossChainTokens]
   return [
-    ...new Map(eligible.map(token => [`${token.blockchain}:${token.assetId}`, token])).values()
+    ...new Map(
+      eligible.map(token => [
+        // Native NEAR and wNEAR share assetId. SwapToken does not declare isNative.
+        `${token.blockchain}:${token.assetId}:${'isNative' in token && token.isNative ? 'native' : ''}`,
+        token
+      ])
+    ).values()
   ]
 }
 

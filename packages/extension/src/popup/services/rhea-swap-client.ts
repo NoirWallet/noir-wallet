@@ -32,6 +32,7 @@ import {
   type FreshRheaSwapCatalog
 } from '@/infrastructure/persistence/rhea-swap-catalog-cache'
 import { classifyError, isRpcEndpointError } from '@/lib/errors'
+import { withNearNativeCatalogToken } from '@/core/services/rhea-swap/rhea-swap-near-wrap'
 import {
   getSwapQuoteFailureMessage,
   isSwapQuotePriceMoved,
@@ -99,6 +100,30 @@ function tokenCatalogKey(input: {
   ])
 }
 
+function presentFromCatalog(
+  direction: 'from' | 'cross-chain-to',
+  result: RheaSwapCatalogResult
+): RheaSwapCatalogResult {
+  if (direction !== 'from') return result
+  const tokens = withNearNativeCatalogToken(result.tokens)
+  if (tokens === result.tokens) return result
+  return Object.freeze({
+    tokens: Object.freeze(tokens),
+    failedChainIds: result.failedChainIds
+  })
+}
+
+function parseNearDirectNativeHold(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('RHEA Swap NEAR native hold is invalid')
+  }
+  const holdRaw = Reflect.get(value, 'holdRaw')
+  if (typeof holdRaw !== 'string' || !/^(?:0|[1-9][0-9]*)$/.test(holdRaw)) {
+    throw new Error('RHEA Swap NEAR native hold is invalid')
+  }
+  return holdRaw
+}
+
 function unwrap<T>(value: unknown, parse: (input: unknown) => T): T {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new RheaSwapClientError('RHEA Swap returned an invalid response')
@@ -163,7 +188,7 @@ export function createRheaSwapClient(
       tokenCatalog.delete(key)
       return null
     }
-    return cached.value
+    return presentFromCatalog(input.direction, cached.value)
   }
   const hydrateCachedTokens = (input: {
     readonly direction: 'from' | 'cross-chain-to'
@@ -228,7 +253,7 @@ export function createRheaSwapClient(
         tokenCatalog.delete(oldest)
       }
     }
-    return request
+    return presentFromCatalog(input.direction, request)
   }
 
   const getTokens = (
@@ -399,6 +424,11 @@ export function createRheaSwapClient(
       unwrap(
         await send({ type: 'PREPARE_RHEA_SWAP_NEAR', quoteHandle, binding }),
         parseRheaSwapNearTransactionBatchReview
+      ),
+    readNearDirectNativeHold: async (quoteHandle: string, sender: string): Promise<string> =>
+      unwrap(
+        await send({ type: 'READ_RHEA_SWAP_NEAR_NATIVE_HOLD', quoteHandle, sender }),
+        parseNearDirectNativeHold
       ),
     confirmNearTransactionBatch: async (
       quoteHandle: string,

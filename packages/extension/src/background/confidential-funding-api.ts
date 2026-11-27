@@ -1,4 +1,5 @@
 import {
+  CONFIDENTIAL_WITHDRAW_PROVIDER_APP_FEE,
   NOIR_PUBLIC_CONFIDENTIAL_TRANSFER_APP_FEES,
   NOIR_RECEIVE_REFERRAL,
   NOIR_SEND_REFERRAL,
@@ -33,6 +34,11 @@ import {
   assertConfidentialQuoteBinding,
   assertFlexibleExternalDepositQuoteBinding
 } from '@/core/services/confidential-funding'
+import {
+  isNearChainConfidentialProtocolAsset,
+  NEAR_CONFIDENTIAL_DEPOSIT_MODE,
+  normalizeNearConfidentialQuote
+} from './confidential-near-quote'
 
 const REQUEST_TIMEOUT_MS = 30_000
 const MAX_CONFIDENTIAL_PROVIDER_FEE_BPS = 25
@@ -49,6 +55,7 @@ export interface ConfidentialSession {
   readonly refreshToken: string
   readonly expiresAt: number
   readonly refreshExpiresAt: number
+  readonly signerId?: string
 }
 
 export interface ConfidentialBalance {
@@ -218,6 +225,35 @@ export function readConfidentialQuoteAppFees(
       fee: entry.fee as number
     }
   })
+}
+
+/** Shown when a quoted app fee cannot be charged on a cluster leg. */
+export const CONFIDENTIAL_QUOTED_FEE_UNREPRESENTABLE_ERROR =
+  'Amount is too small to cover the quoted fee.'
+
+/**
+ * 1Click charges quoteRequest app fees in integer raw units (bps / 10_000).
+ * A positive fee that truncates to 0 is later rejected with business code 2002.
+ * amountOut staying equal to amountIn is the same outcome from the provider.
+ */
+export function confidentialQuoteAppFeeUnrepresentable(quote: ConfidentialQuote): boolean {
+  const feeBps = readConfidentialQuoteAppFees(quote).reduce((sum, fee) => sum + fee.fee, 0)
+  if (feeBps <= 0) return false
+  if (feeBps > 10_000) throw new Error('Confidential quote app fees are invalid')
+  const amountIn = quote.quote.amountIn
+  const amountOut = quote.quote.amountOut
+  if (!/^(0|[1-9]\d*)$/.test(amountIn) || !/^(0|[1-9]\d*)$/.test(amountOut)) {
+    throw new Error('Confidential quote amount is invalid')
+  }
+  if ((BigInt(amountIn) * BigInt(feeBps)) / 10_000n === 0n) return true
+  return BigInt(amountOut) === BigInt(amountIn)
+}
+
+function isConfidentialWithdrawProviderAppFee(fee: IntentsAppFee): boolean {
+  return (
+    fee.recipient === CONFIDENTIAL_WITHDRAW_PROVIDER_APP_FEE.recipient &&
+    fee.fee === CONFIDENTIAL_WITHDRAW_PROVIDER_APP_FEE.fee
+  )
 }
 
 function assertQuoteAppFees(
@@ -575,7 +611,8 @@ export class ConfidentialFundingApi {
   }
 
   async submitWithdraws(
-    request: ConfidentialWithdrawRequest
+    request: ConfidentialWithdrawRequest,
+    signerChainFamily: 'evm' | 'near' = 'evm'
   ): Promise<Readonly<{ orderId: string }>> {
     if (request.withdraws.length < 1 || request.withdraws.length > 5) {
       throw new Error('Confidential withdrawal count is invalid')
@@ -584,7 +621,7 @@ export class ConfidentialFundingApi {
       this.swapUrl('/v3/private/withdraws'),
       {
         method: 'POST',
-        body: JSON.stringify({ ...request, signer_chain_family: 'evm' })
+        body: JSON.stringify({ ...request, signer_chain_family: signerChainFamily })
       },
       this.requireSwapToken()
     )
@@ -783,8 +820,9 @@ export class ConfidentialFundingApi {
   }
 
   async createAuthPayload(
-    signerId: string
-  ): Promise<Readonly<{ standard: 'erc191'; payload: string; expiresAt: number }>> {
+    signerId: string,
+    signerChainFamily: 'evm' | 'near' = 'evm'
+  ): Promise<Readonly<{ standard: 'erc191' | 'nep413'; payload: string; expiresAt: number }>> {
     const response = await requestJson(this.nearRpcUrl, {
       method: 'POST',
       body: JSON.stringify({
@@ -826,14 +864,31 @@ export class ConfidentialFundingApi {
     crypto.getRandomValues(random)
     new DataView(random.buffer).setBigInt64(0, BigInt(now.getTime()) * 1_000_000n, true)
     nonce.set(random, 17)
+    const deadlineValue = deadline.toISOString()
+    const nonceValue = base64Encode(nonce)
+    if (signerChainFamily === 'near') {
+      return Object.freeze({
+        standard: 'nep413' as const,
+        expiresAt: deadline.getTime(),
+        payload: JSON.stringify({
+          message: JSON.stringify({
+            signer_id: signerId,
+            deadline: deadlineValue,
+            intents: []
+          }),
+          recipient: INTENTS_CONTRACT,
+          nonce: nonceValue
+        })
+      })
+    }
     return Object.freeze({
       standard: 'erc191' as const,
       expiresAt: deadline.getTime(),
       payload: JSON.stringify({
         signer_id: signerId,
         verifying_contract: INTENTS_CONTRACT,
-        deadline: deadline.toISOString(),
-        nonce: base64Encode(nonce),
+        deadline: deadlineValue,
+        nonce: nonceValue,
         intents: []
       })
     })
@@ -936,20 +991,23 @@ export class ConfidentialFundingApi {
     ) {
       throw new Error('Confidential quote route is invalid')
     }
+    const normalized = normalizeNearConfidentialQuote(input)
+    const nearSource = isNearChainConfidentialProtocolAsset(normalized.originAsset)
     const request = {
-      dry: input.dry,
+      dry: normalized.dry,
       swapType: 'EXACT_INPUT',
-      slippageTolerance: input.slippageBps,
-      originAsset: input.originAsset,
-      depositType: input.depositType,
-      destinationAsset: input.destinationAsset,
-      amount: input.amountRaw,
-      refundTo: input.refundTo ?? input.signerId,
-      refundType: input.refundType,
-      recipient: input.recipient,
-      recipientType: input.recipientType,
+      slippageTolerance: normalized.slippageBps,
+      originAsset: normalized.originAsset,
+      depositType: normalized.depositType,
+      destinationAsset: normalized.destinationAsset,
+      amount: normalized.amountRaw,
+      refundTo: normalized.refundTo ?? normalized.signerId,
+      refundType: normalized.refundType,
+      recipient: normalized.recipient,
+      recipientType: normalized.recipientType,
+      ...(nearSource ? { depositMode: NEAR_CONFIDENTIAL_DEPOSIT_MODE } : {}),
       deadline: new Date(Date.now() + 60 * 60_000).toISOString(),
-      referral: input.referral,
+      referral: normalized.referral,
       quoteWaitingTimeMs: 0,
       confidentiality: 'basic'
     }
@@ -967,50 +1025,85 @@ export class ConfidentialFundingApi {
         ? []
         : isInternalSwap
           ? NOIR_SWAP_APP_FEES
-          : NOIR_PUBLIC_CONFIDENTIAL_TRANSFER_APP_FEES
+          : isWithdrawal && input.referral === NOIR_SEND_REFERRAL
+            ? []
+            : NOIR_PUBLIC_CONFIDENTIAL_TRANSFER_APP_FEES
+    // Successful confidential withdrawals settle this provider fee. Request it only
+    // when the dry quote omitted every app fee, so it is never stacked to 100 bps.
+    const acceptObservedWithdrawFee =
+      !isClusterWithdrawal &&
+      isWithdrawal &&
+      input.referral === NOIR_SEND_REFERRAL &&
+      appFees.length === 0
     let providerFees: readonly IntentsAppFee[] = []
+    let quotedAppFees = appFees
     if (!isClusterWithdrawal) {
-      const baseline = await this.quoteProviderFees(request, signal)
-      assertConfidentialQuoteBinding(baseline.quote, input)
-      if (input.dry && appFees.length === 0) return baseline.quote
-      providerFees = baseline.fees
+      const { quote: baseline, fees } = await this.quoteProviderFees(
+        request,
+        signal,
+        acceptObservedWithdrawFee
+      )
+      assertConfidentialQuoteBinding(baseline, normalized)
+      if (nearSource && baseline.quote.depositMemo) {
+        throw new Error('NEAR Shield quote must not include a memo')
+      }
+      providerFees = fees
+      quotedAppFees =
+        acceptObservedWithdrawFee && providerFees.length === 0
+          ? [CONFIDENTIAL_WITHDRAW_PROVIDER_APP_FEE]
+          : appFees
+      if (input.dry && quotedAppFees.length === 0) return baseline
     }
     const viewer = input.dry
       ? undefined
       : (input.viewer ??
-        (input.refundType === 'CONFIDENTIAL_INTENTS'
+        (input.refundType === 'CONFIDENTIAL_INTENTS' && !nearSource
           ? ({ chainFamily: 'evm', walletAddress: input.signerId, signingMode: 'public' } as const)
           : undefined))
-    const quote = await this.requestQuoteWithFees(request, appFees, providerFees, {
+    const quote = await this.requestQuoteWithFees(request, quotedAppFees, providerFees, {
       viewer,
       signal
     })
     if (Object.entries(request).some(([key, value]) => quote.quoteRequest[key] !== value)) {
       throw new Error('Confidential quote does not match the requested funding route')
     }
-    assertConfidentialQuoteBinding(quote, input)
+    assertQuoteAppFees(quote, quotedAppFees, providerFees)
+    if (nearSource && quote.quote.depositMemo) {
+      throw new Error('NEAR Shield quote must not include a memo')
+    }
+    assertConfidentialQuoteBinding(quote, normalized)
     return quote
   }
 
   async quoteFlexibleDeposit(input: {
     readonly originAsset: string
+    readonly quoteAmountRaw?: string
     readonly signerId: string
     readonly refundTo: string
     readonly slippageBps: number
     readonly viewer?: OneClickViewer
   }): Promise<ConfidentialQuote> {
+    const normalized = normalizeNearConfidentialQuote({
+      originAsset: input.originAsset,
+      recipient: input.signerId,
+      refundTo: input.refundTo,
+      recipientType: 'CONFIDENTIAL_INTENTS',
+      refundType: 'ORIGIN_CHAIN'
+    })
+    const nearSource = isNearChainConfidentialProtocolAsset(normalized.originAsset)
     const request = {
-      dry: true,
+      dry: input.quoteAmountRaw === undefined,
       swapType: 'FLEX_INPUT',
       slippageTolerance: input.slippageBps,
-      originAsset: input.originAsset,
+      originAsset: normalized.originAsset,
       depositType: 'ORIGIN_CHAIN',
       destinationAsset: input.originAsset,
-      amount: '1',
-      refundTo: input.refundTo,
+      amount: input.quoteAmountRaw ?? '1',
+      refundTo: normalized.refundTo ?? input.refundTo,
       refundType: 'ORIGIN_CHAIN',
-      recipient: input.signerId,
+      recipient: normalized.recipient,
       recipientType: 'CONFIDENTIAL_INTENTS',
+      ...(nearSource ? { depositMode: NEAR_CONFIDENTIAL_DEPOSIT_MODE } : {}),
       deadline: new Date(Date.now() + 60 * 60_000).toISOString(),
       referral: NOIR_RECEIVE_REFERRAL,
       quoteWaitingTimeMs: 0,
@@ -1033,7 +1126,11 @@ export class ConfidentialFundingApi {
       const quote = parseQuote(
         await requestOneClickQuote(this.config.oneClickApiUrl, request, requestJson)
       )
-      assertFlexibleExternalDepositQuoteBinding(quote, binding, Date.now(), true)
+      assertFlexibleExternalDepositQuoteBinding(quote, binding, Date.now(), request.dry)
+      if (nearSource && quote.quote.depositMemo) {
+        throw new Error('NEAR Shield quote must not include a memo')
+      }
+      if (!request.dry) return quote
       minimumInputRaw = quote.quote.minAmountIn!
     } catch (error) {
       const minimum =
@@ -1047,7 +1144,7 @@ export class ConfidentialFundingApi {
     }
     if (minimumInputRaw.length > 78) throw new Error('Confidential minimum input is invalid')
     const minimum = BigInt(minimumInputRaw)
-    const amountRaw = (minimum + (minimum + 9n) / 10n).toString()
+    const amountRaw = request.dry ? (minimum + (minimum + 9n) / 10n).toString() : minimumInputRaw
     if (amountRaw.length > 78) throw new Error('Confidential input amount is invalid')
     const pricedRequest = { ...request, dry: false, amount: amountRaw }
     const pricedBinding = { ...binding, amountRaw }
@@ -1060,6 +1157,9 @@ export class ConfidentialFundingApi {
       { viewer: input.viewer }
     )
     assertFlexibleExternalDepositQuoteBinding(quote, pricedBinding)
+    if (nearSource && quote.quote.depositMemo) {
+      throw new Error('NEAR Shield quote must not include a memo')
+    }
     return quote
   }
 
@@ -1150,7 +1250,11 @@ export class ConfidentialFundingApi {
     return quote
   }
 
-  private async quoteProviderFees(request: ConfidentialQuoteRequest, signal?: AbortSignal) {
+  private async quoteProviderFees(
+    request: ConfidentialQuoteRequest,
+    signal?: AbortSignal,
+    acceptObservedWithdrawFee = false
+  ) {
     const baseline = { ...request, dry: true }
     const quote = parseQuote(
       await requestOneClickQuote(this.config.oneClickApiUrl, baseline, requestJson, { signal })
@@ -1159,7 +1263,11 @@ export class ConfidentialFundingApi {
     if (
       Object.entries(baseline).some(([key, expected]) => quote.quoteRequest[key] !== expected) ||
       fees.length > 1 ||
-      fees.some(fee => fee.fee > MAX_CONFIDENTIAL_PROVIDER_FEE_BPS)
+      fees.some(
+        fee =>
+          fee.fee > MAX_CONFIDENTIAL_PROVIDER_FEE_BPS &&
+          !(acceptObservedWithdrawFee && isConfidentialWithdrawProviderAppFee(fee))
+      )
     ) {
       throw new Error('Confidential provider fee quote is invalid')
     }
@@ -1169,12 +1277,13 @@ export class ConfidentialFundingApi {
   async generateIntent(input: {
     readonly signerId: string
     readonly depositAddress: string
+    readonly standard?: 'erc191' | 'nep413'
   }): Promise<Readonly<{ intent: unknown; correlationId: string }>> {
     const value = await requestJson(this.oneClickUrl('/generate-intent'), {
       method: 'POST',
       body: JSON.stringify({
         type: 'swap_transfer',
-        standard: 'erc191',
+        standard: input.standard ?? 'erc191',
         signerId: input.signerId,
         depositAddress: input.depositAddress
       })
@@ -1210,11 +1319,14 @@ export class ConfidentialFundingApi {
     if (!this.rheaAccessToken) {
       throw new Error('RHEA Swap is unavailable')
     }
+    // EVM order-status keeps its numeric chain id. NEAR references and the RHEA
+    // catalog id 900001 are not sent on router=nearintents.
+    if (chainId.length > 128) throw new Error('Confidential status chain is invalid')
     const query = new URLSearchParams({
       orderId: depositAddress,
-      router: 'nearintents',
-      chainId
+      router: 'nearintents'
     })
+    if (/^[1-9][0-9]*$/.test(chainId) && chainId !== '900001') query.set('chainId', chainId)
     const value = await requestJson(
       `${this.config.rheaSwapApiUrl}/api/swap/order-status?${query.toString()}`,
       {},

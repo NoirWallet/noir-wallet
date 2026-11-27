@@ -16,12 +16,18 @@ import {
   ASSET_PRICE_SOURCE_ASSETS,
   getEvmNativeProtocolAssetId
 } from '@/config/asset-market-assets'
-import { NOIR_MOVE_REFERRAL, NOIR_PRIVATELY_REFERRAL, NOIR_SWAP_REFERRAL } from '@/config/intents'
+import {
+  isNoirPublicConfidentialTransferReferral,
+  NOIR_MOVE_REFERRAL,
+  NOIR_PRIVATELY_REFERRAL,
+  NOIR_SWAP_REFERRAL
+} from '@/config/intents'
 import { createInitialProductChainRegistry, getZcashChainId } from '@/core/chains/registry'
 import {
   getEvmRouteAssetIdentity,
   getPrivateCrossChainTransferAssetGroup
 } from '@/core/chains/cross-chain-asset-group'
+import { assertNearPrivateQuoteRoute } from './rhea-swap-near-private-route'
 
 const RAW_AMOUNT_PATTERN = /^(0|[1-9][0-9]{0,77})$/
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/
@@ -56,6 +62,27 @@ export function rheaSwapReferral(purpose?: PrivateQuotePurpose): string {
   return NOIR_SWAP_REFERRAL
 }
 
+/** `noir_move` and `noir_privately` quote through 1Click, including NEAR Directly deposits. */
+export function usesPublicConfidentialTransferAdapter(input: {
+  readonly referral: unknown
+}): boolean {
+  return isNoirPublicConfidentialTransferReferral(input.referral)
+}
+
+type PrivateQuoteSourceFamily = 'evm' | 'zcash' | 'near' | 'other'
+
+function privateQuoteSourceFamily(fromChain: string): PrivateQuoteSourceFamily {
+  if (/^[1-9]\d*$/.test(fromChain)) return 'evm'
+  switch (fromChain) {
+    case 'zcash':
+      return 'zcash'
+    case 'near':
+      return 'near'
+    default:
+      return 'other'
+  }
+}
+
 export function publicConfidentialRefundViewer(
   fromChain: ChainRef,
   walletAddress: string,
@@ -65,6 +92,9 @@ export function publicConfidentialRefundViewer(
     return parseZcashAddress(walletAddress, 'mainnet').scheme === 'zcash-transparent-p2pkh'
       ? { chainFamily: 'zcash', walletAddress, signingMode: 'transparent' }
       : undefined
+  }
+  if (fromChain === 'near') {
+    return { chainFamily: 'near', walletAddress }
   }
   if (/^0x[0-9a-f]{40}$/i.test(walletAddress)) {
     const privateRefund =
@@ -81,6 +111,40 @@ export function publicConfidentialRefundViewer(
 }
 
 export function assertPrivateQuoteRoute(
+  request: Pick<
+    QuoteRequest,
+    'fromChain' | 'toChain' | 'tokenIn' | 'tokenOut' | 'sender' | 'recipient' | 'confidentiality'
+  >,
+  account: PrivateSwapAccountRoute | null,
+  purpose: PrivateQuotePurpose,
+  scope?: Pick<PrivateSwapAccountRoute, 'walletId' | 'accountId'> & {
+    readonly zcashFundingSource?: 'transparent' | 'shielded'
+  }
+): void {
+  const family = privateQuoteSourceFamily(request.fromChain)
+  switch (family) {
+    case 'near':
+      assertNearPrivateQuoteRoute(
+        request,
+        account,
+        purpose,
+        scope,
+        assertEstablishedPrivateQuoteRoute
+      )
+      return
+    case 'evm':
+    case 'zcash':
+    case 'other':
+      assertEstablishedPrivateQuoteRoute(request, account, purpose, scope)
+      return
+    default: {
+      const unsupported: never = family
+      throw new Error(`Unsupported private quote family: ${JSON.stringify(unsupported)}`)
+    }
+  }
+}
+
+function assertEstablishedPrivateQuoteRoute(
   request: Pick<
     QuoteRequest,
     'fromChain' | 'toChain' | 'tokenIn' | 'tokenOut' | 'sender' | 'recipient' | 'confidentiality'

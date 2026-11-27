@@ -49,6 +49,7 @@ import {
   adaptNearPreparedSigning,
   adaptNearSignedResult,
   parseNearSigningPreparePayload,
+  type NearPeaSigningBinding,
   type NearSigningPreparePayload
 } from './signing-adapter-near'
 import {
@@ -295,7 +296,12 @@ export function parseSigningPreparePayload(value: unknown): ParsedSigningPrepare
   if (record.kind === 'solana-transaction' || record.kind === 'solana-message') {
     return parseSolanaSigningPreparePayload(record)
   }
-  if (record.kind === 'near-transaction' || record.kind === 'near-nep413-message') {
+  if (
+    record.kind === 'near-transaction' ||
+    record.kind === 'pea-near-transaction' ||
+    record.kind === 'near-nep413-message' ||
+    record.kind === 'pea-near-message'
+  ) {
     return parseNearSigningPreparePayload(record)
   }
   const kind = readLiteral(
@@ -454,6 +460,54 @@ function requireRawSummary(value: unknown, keys: readonly string[], label: strin
   return summary
 }
 
+function accessListsMatch(
+  left: readonly EvmAccessListItem[],
+  right: readonly EvmAccessListItem[]
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((item, index) => {
+      const other = right[index]
+      return (
+        other !== undefined &&
+        evmAddressesMatch(item.address, other.address) &&
+        item.storageKeys.length === other.storageKeys.length &&
+        item.storageKeys.every((key, keyIndex) => key === other.storageKeys[keyIndex])
+      )
+    })
+  )
+}
+
+function evmTransactionsMatch(left: EvmTransaction, right: EvmTransaction): boolean {
+  if (
+    left.type !== right.type ||
+    left.chainId !== right.chainId ||
+    left.nonce !== right.nonce ||
+    left.gasLimit !== right.gasLimit ||
+    !evmAddressesMatch(left.to, right.to) ||
+    left.value !== right.value ||
+    left.input !== right.input
+  ) {
+    return false
+  }
+  if (left.type === 'legacy') {
+    return right.type === 'legacy' && left.gasPrice === right.gasPrice
+  }
+  if (left.type === 'eip2930') {
+    return (
+      right.type === 'eip2930' &&
+      left.gasPrice === right.gasPrice &&
+      accessListsMatch(left.accessList, right.accessList)
+    )
+  }
+  return (
+    right.type === 'eip1559' &&
+    left.maxFeePerGas === right.maxFeePerGas &&
+    left.maxPriorityFeePerGas === right.maxPriorityFeePerGas &&
+    accessListsMatch(left.accessList, right.accessList)
+  )
+}
+
 async function adaptEvmTransaction(
   raw: unknown,
   payload: Extract<
@@ -468,9 +522,18 @@ async function adaptEvmTransaction(
   assertExactKeys(
     prepared.value,
     ['requestId', 'account', 'signingHash', 'summary'],
-    [],
+    ['transaction'],
     'PreparedEvmTransaction'
   )
+  // Engine 7a6dfb7 echoes the reviewed transaction. Older responses omit it.
+  // A present echo must match the reviewed input; an absent field stays valid.
+  if (prepared.value.transaction !== undefined) {
+    if (
+      !evmTransactionsMatch(parseEvmTransaction(prepared.value.transaction), payload.transaction)
+    ) {
+      throw new Error('Prepared EVM transaction does not match its input')
+    }
+  }
   const account =
     payload.kind === 'pea-evm-transaction'
       ? parseRawPeaExecutionAccount(prepared.value.account, payload.chainId, payload.addressIndex)
@@ -1109,7 +1172,8 @@ export async function adaptPreparedSigning(
   signingCommandId: SigningCommandId,
   expiresAt: number,
   bitcoinAccount?: RawDerivedBitcoinAccount,
-  imported = false
+  imported = false,
+  nearPea?: NearPeaSigningBinding
 ): Promise<AdaptedPreparedSigning> {
   switch (payload.kind) {
     case 'evm-transaction':
@@ -1130,8 +1194,10 @@ export async function adaptPreparedSigning(
     case 'solana-message':
       return adaptSolanaPreparedSigning(raw, payload, signingCommandId, expiresAt, imported)
     case 'near-transaction':
+    case 'pea-near-transaction':
     case 'near-nep413-message':
-      return adaptNearPreparedSigning(raw, payload, signingCommandId, expiresAt, imported)
+    case 'pea-near-message':
+      return adaptNearPreparedSigning(raw, payload, signingCommandId, expiresAt, imported, nearPea)
   }
 }
 
@@ -1192,7 +1258,9 @@ export function adaptSignedResult(
       if (account.curve !== 'ed25519') throw new Error('Ed25519 signing account is missing')
       return adaptSolanaSignedResult(kind, raw, account)
     case 'near-transaction':
+    case 'pea-near-transaction':
     case 'near-nep413-message':
+    case 'pea-near-message':
       if (account.curve !== 'ed25519') throw new Error('Ed25519 signing account is missing')
       return adaptNearSignedResult(kind, raw, account)
   }

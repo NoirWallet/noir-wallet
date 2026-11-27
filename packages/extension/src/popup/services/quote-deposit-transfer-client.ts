@@ -70,6 +70,8 @@ import {
   type NearTransferSubmission,
   type NearWalletClient
 } from './near-wallet-client'
+import { selectEvmQuoteAssetExecution } from './evm-quote-asset-execution'
+import { selectNearQuoteAssetExecution } from './near-quote-asset-execution'
 
 export type QuoteDepositExecutionMode = 'main' | 'private'
 
@@ -439,54 +441,25 @@ export function resolveWalletOwnedQuoteAsset(
   return null
 }
 
-function selectEvmBalance(
-  asset: PortfolioAssetView,
-  mode: QuoteDepositExecutionMode,
-  publicOnly: boolean
-): PortfolioAssetView | null {
-  const selectedRaw =
-    mode === 'private'
-      ? (asset.balance.privateOnchainRaw ?? asset.balance.privateRaw)
-      : (asset.balance.mainRaw ?? (publicOnly ? asset.balance.availableRaw : undefined))
-  if (selectedRaw === undefined) return null
-  return Object.freeze({
-    ...asset,
-    balance: Object.freeze({
-      ...asset.balance,
-      totalRaw: selectedRaw,
-      spendableRaw: selectedRaw,
-      availableRaw: selectedRaw
-    })
-  })
-}
-
 export function selectWalletOwnedQuoteAssetExecution(
   source: WalletOwnedQuoteAsset,
   mode: QuoteDepositExecutionMode,
   privateExecutionAddress?: string,
   publicOnly = false
 ): WalletOwnedQuoteAsset | null {
-  if (source.family !== 'evm') return mode === 'main' ? source : null
-  const asset = selectEvmBalance(source.asset, mode, publicOnly)
-  const networkFeeAsset = selectEvmBalance(source.networkFeeAsset, mode, publicOnly)
-  if (!asset || !networkFeeAsset) return null
-  let refundAddress = source.refundAddress
-  if (mode === 'private') {
-    if (
-      !privateExecutionAddress ||
-      !/^0x[0-9a-fA-F]{40}$/.test(privateExecutionAddress) ||
-      privateExecutionAddress.toLowerCase() === source.refundAddress.toLowerCase()
-    ) {
-      return null
+  switch (source.family) {
+    case 'evm':
+      return selectEvmQuoteAssetExecution(source, mode, privateExecutionAddress, publicOnly)
+    case 'near':
+      return selectNearQuoteAssetExecution(source, mode, privateExecutionAddress)
+    case 'bitcoin':
+    case 'solana':
+      return mode === 'main' ? source : null
+    default: {
+      const unsupported: never = source
+      return unsupported
     }
-    refundAddress = privateExecutionAddress
   }
-  return Object.freeze({
-    ...source,
-    asset,
-    networkFeeAsset,
-    refundAddress
-  })
 }
 
 export function resolveWalletQuoteReceiveTarget(

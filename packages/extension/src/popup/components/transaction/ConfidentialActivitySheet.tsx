@@ -5,7 +5,7 @@ import { fullHeightTransactionDialogClassName, TransactionResult } from './Trans
 import { AmountDisplay } from '../common/AmountDisplay'
 import { openModal } from '@/popup/provider/ModalManager'
 import { evmWalletClient } from '@/popup/services/evm-wallet-client'
-import { formatSymbol } from '@/lib/format'
+import { formatShieldSymbol } from '@/lib/format'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { useWalletStore } from '@/store/wallet-store'
 import { useSettingsStore } from '@/store/settings-store'
@@ -258,12 +258,12 @@ export function ConfidentialActivityView({
         ...(refunded ? { statusLabel: 'Refunded', statusTone: 'neutral' as const } : {}),
         fallback: display
           ? {
-              source: { value: display.amount, symbol: formatSymbol(display.symbol) },
+              source: { value: display.amount, symbol: formatShieldSymbol(display.symbol) },
               ...(display.receiveAmount && display.receiveSymbol
                 ? {
                     destination: {
                       value: display.receiveAmount,
-                      symbol: formatSymbol(display.receiveSymbol)
+                      symbol: formatShieldSymbol(display.receiveSymbol)
                     }
                   }
                 : {}),
@@ -317,7 +317,7 @@ export function ConfidentialActivityView({
                   ? 'Transaction Failed'
                   : progressTitle
         }
-        onClose={inDialog ? undefined : onDone}
+        onClose={!inDialog && display?.operation === 'swap' ? onDone : undefined}
         footer={
           <div className="space-y-2">
             {scopedActivity && (
@@ -381,7 +381,7 @@ export function ConfidentialActivityView({
                 <span className="text-muted">Amount</span>
                 <AmountDisplay
                   value={display.amount}
-                  symbol={formatSymbol(display.symbol)}
+                  symbol={formatShieldSymbol(display.symbol)}
                   prefix={display.operation === 'swap' || display.operation === 'send' ? '−' : ''}
                   className="min-w-0 justify-end text-sm font-medium"
                 />
@@ -394,7 +394,7 @@ export function ConfidentialActivityView({
                 </span>
                 <AmountDisplay
                   value={display.receiveAmount}
-                  symbol={formatSymbol(display.receiveSymbol)}
+                  symbol={formatShieldSymbol(display.receiveSymbol)}
                   className="min-w-0 justify-end text-sm font-medium"
                 />
               </div>

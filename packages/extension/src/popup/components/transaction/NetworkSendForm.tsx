@@ -1,5 +1,6 @@
 import { Icon } from '@iconify/react'
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { parseNearAccountId } from '@/core/chains/near'
 import { parseSolanaPublicKey } from '@/core/chains/solana'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
@@ -7,11 +8,16 @@ import { bitcoinAccountTypeDescription } from '@/popup/components/bitcoin/Bitcoi
 import { formatPortfolioNetworkName } from '@/popup/services/portfolio-format'
 import type { ChainSelectorOption } from '@/popup/components/common/ChainSelector'
 import { EvmSendAdapter, type EvmSendAdapterProps } from '../evm/EvmSendAdapter'
+import {
+  NearPrivateSendForm,
+  useNearSendAccount
+} from '@/popup/components/transaction/NearPrivateSendForm'
 import { NetworkFeeTierPicker } from '@/popup/components/transaction/NetworkFeeTierPicker'
 import { SendTransferView } from '@/popup/components/transaction/SendTransferView'
 import { useBitcoinSendTransfer } from '@/popup/hooks/useBitcoinSendTransfer'
 import { useSendTransfer, type SendTransferConfig } from '@/popup/hooks/useSendTransfer'
 import type { BitcoinTransferSubmission } from '@/popup/services/bitcoin-wallet-client'
+import { projectNearPublicSendAsset } from '@/popup/services/near-quote-asset-execution'
 import {
   nearWalletClient,
   type NearTransferReview,
@@ -33,6 +39,10 @@ import {
   getNearSendPrepareError
 } from '@/popup/services/near-send-validation'
 import {
+  guardNearPublicPrepare,
+  isNearPrivateSendAsset
+} from '@/popup/services/near-send-receive-page'
+import {
   getSolanaSendApprovalError,
   getSolanaSendPrepareError
 } from '@/popup/services/solana-send-validation'
@@ -53,6 +63,7 @@ interface NetworkSendFormProps {
     chainId: string,
     draft: Readonly<{ recipient: string; amount: string }>
   ) => void
+  readonly onSelectAsset?: (draft: Readonly<{ recipient: string; amount: string }>) => void
   readonly onSubmitted: (submission: SendTransferSubmission) => void
 }
 
@@ -100,35 +111,121 @@ export function NetworkSendForm(
       )
     case 'near':
       return (
-        <ConfiguredTransfer
-          key="near"
-          config={{
-            family,
-            selection,
-            onSubmitted: value => onSubmitted({ family, value }),
-            parseRecipient: parseNearAccountId,
-            recipientPlaceholder:
-              selection.chain.chain.network.kind === 'testnet'
-                ? 'alice.testnet or implicit account'
-                : 'alice.near or implicit account',
-            invalidRecipientMessage: 'Enter a valid NEAR account ID.',
-            reviewDescription: 'Review the NEAR recipient and maximum network fee before signing.',
-            reviewMismatchMessage: 'The NEAR review does not match the requested transfer.',
-            feeDecimals: 24,
-            feeSymbol: 'NEAR',
-            totalLabel: 'Maximum total',
-            prepare: nearWalletClient.prepareTransfer,
-            approve: nearWalletClient.approveTransfer,
-            reject: nearWalletClient.rejectTransfer,
-            estimateFeeRaw: value => value.debit.maximumFeeRaw,
-            matchesReview: matchesNearReview,
-            reviewSender: value => value.review.summary.fields.signerId,
-            prepareError: getNearSendPrepareError,
-            approvalError: getNearSendApprovalError
-          }}
+        <NearSendBranch
+          selection={selection}
+          initialRecipient={initialRecipient}
+          initialAmount={initialAmount}
+          destinationNetworks={props.destinationNetworks}
+          onSelectDestinationNetwork={props.onSelectDestinationNetwork}
+          onSelectAsset={props.onSelectAsset}
+          onSubmitted={value => onSubmitted({ family: 'near', value })}
         />
       )
   }
+}
+
+function NearSendBranch({
+  selection,
+  initialRecipient,
+  initialAmount,
+  destinationNetworks = [],
+  onSelectDestinationNetwork,
+  onSelectAsset,
+  onSubmitted
+}: Pick<
+  NetworkSendFormProps,
+  | 'selection'
+  | 'initialRecipient'
+  | 'initialAmount'
+  | 'destinationNetworks'
+  | 'onSelectDestinationNetwork'
+  | 'onSelectAsset'
+> & {
+  readonly onSubmitted: (submission: NearTransferSubmission) => void
+}) {
+  const [params] = useSearchParams()
+  const source = params.get('source') === 'incognito' ? 'incognito' : 'main'
+  const [sendPrivately, setSendPrivately] = useState(
+    source === 'incognito' || params.get('mode') === 'private'
+  )
+  const [draft, setDraft] = useState({
+    recipient: initialRecipient ?? '',
+    amount: initialAmount ?? ''
+  })
+  const chainId = selection.chain.chain.id
+  const assetId = selection.asset.asset.id
+  const accountState = useNearSendAccount(chainId)
+  const mainnetPrivateAsset = chainId === 'near:mainnet' && isNearPrivateSendAsset(assetId)
+  const publicNetworks = source === 'incognito' ? [] : destinationNetworks
+  const selectPublicNetwork = source === 'incognito' ? undefined : onSelectDestinationNetwork
+  if (source === 'incognito' || (sendPrivately && mainnetPrivateAsset)) {
+    return (
+      <NearPrivateSendForm
+        selection={selection}
+        source={source}
+        accountState={accountState}
+        initialRecipient={draft.recipient}
+        initialAmount={draft.amount}
+        destinationNetworks={publicNetworks}
+        onSelectDestinationNetwork={selectPublicNetwork}
+        onSelectAsset={onSelectAsset}
+        onDraftChange={setDraft}
+        onTogglePrivacy={source === 'incognito' ? undefined : () => setSendPrivately(false)}
+        onSubmitted={onSubmitted}
+      />
+    )
+  }
+  return (
+    <ConfiguredTransfer
+      key="near"
+      destinationNetworks={publicNetworks}
+      onSelectDestinationNetwork={selectPublicNetwork}
+      config={{
+        family: 'near',
+        selection: {
+          ...selection,
+          asset: projectNearPublicSendAsset(selection.asset)
+        },
+        initialRecipient: draft.recipient,
+        initialAmount: draft.amount,
+        onDraftChange: setDraft,
+        onSelectAsset,
+        onSubmitted,
+        parseRecipient: parseNearAccountId,
+        recipientPlaceholder:
+          selection.chain.chain.network.kind === 'testnet'
+            ? 'alice.testnet or implicit account'
+            : 'alice.near or implicit account',
+        invalidRecipientMessage: 'Enter a valid NEAR account ID.',
+        reviewDescription: 'Review the NEAR recipient and maximum network fee before signing.',
+        reviewMismatchMessage: 'The NEAR review does not match the requested transfer.',
+        feeDecimals: 24,
+        feeSymbol: 'NEAR',
+        totalLabel: 'Maximum total',
+        prepare: nearWalletClient.prepareTransfer,
+        approve: nearWalletClient.approveTransfer,
+        reject: nearWalletClient.rejectTransfer,
+        estimateFeeRaw: value => value.debit.maximumFeeRaw,
+        matchesReview: matchesNearReview,
+        reviewSender: value => value.review.summary.fields.signerId,
+        prepareError: getNearSendPrepareError,
+        approvalError: getNearSendApprovalError,
+        blockPublicPrepare: ({ recipient, amountRaw }) =>
+          guardNearPublicPrepare({
+            recipient,
+            amountRaw,
+            chainId,
+            assetId,
+            accountStatus: accountState.status,
+            account: accountState.account,
+            now: Date.now()
+          }),
+        privacy: mainnetPrivateAsset
+          ? { checked: false, onChange: () => setSendPrivately(true) }
+          : undefined
+      }}
+    />
+  )
 }
 
 function ConfiguredTransfer<

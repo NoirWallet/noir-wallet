@@ -4,7 +4,6 @@ import {
   parseOneClickViewer,
   type OneClickOrder
 } from '@/core/services/near-intents/one-click-order'
-
 export type ChainRef = `${number}` | 'solana' | 'aptos' | 'near' | 'tron' | 'btc' | 'zcash' | 'sui'
 
 export interface AssetRef {
@@ -78,7 +77,6 @@ export function isOneClickConfidentialRoute(
   if (isNoirPublicConfidentialTransferReferral(referral)) return true
   return isRecord(bridge) && bridge.provider === ONE_CLICK_CONFIDENTIAL_BRIDGE
 }
-
 export function readRheaSwapReportRecordId(value: unknown): string | undefined {
   const id = typeof value === 'number' && Number.isSafeInteger(value) ? String(value) : value
   return typeof id === 'string' && /^[1-9]\d{0,30}$/.test(id) ? id : undefined

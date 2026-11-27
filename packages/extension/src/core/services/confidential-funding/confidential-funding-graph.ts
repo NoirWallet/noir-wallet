@@ -19,6 +19,48 @@ export function getConfidentialFundingPlanId(transactionId: string): string | nu
   return /^[a-zA-Z0-9:_-]{1,160}$/.test(planId) ? planId : null
 }
 
+const APP_FEE_REJECTION_STATUS = 'APP_FEE_REJECTED_2002'
+
+/**
+ * Copy a stored plan fee rejection onto the activity snapshot.
+ * Stored graphs keep failure.code as relay-failed; this projection is not persisted.
+ */
+export function projectConfidentialAppFeeRejection(
+  graph: TransactionGraph,
+  plan:
+    | Pick<
+        ConfidentialFundingPlan,
+        'network' | 'transactionId' | 'keyDomainId' | 'accountId' | 'errorStatus'
+      >
+    | undefined,
+  network: Network
+): TransactionGraph {
+  const intent = graph.root.intent
+  const shield = intent?.shield
+  if (
+    !intent ||
+    !shield ||
+    shield.errorStatus === APP_FEE_REJECTION_STATUS ||
+    plan?.errorStatus !== APP_FEE_REJECTION_STATUS ||
+    plan.network !== network ||
+    plan.transactionId !== graph.root.id ||
+    plan.keyDomainId !== graph.root.scope.keyDomainId ||
+    plan.accountId !== graph.root.scope.accountId
+  ) {
+    return graph
+  }
+  return {
+    ...graph,
+    root: {
+      ...graph.root,
+      intent: {
+        ...intent,
+        shield: { ...shield, errorStatus: APP_FEE_REJECTION_STATUS }
+      }
+    }
+  }
+}
+
 export function isLegacyShieldWithdrawActivityGraph(graph: TransactionGraph): boolean {
   const intent = graph.root.intent
   return (
@@ -187,6 +229,7 @@ export function createConfidentialFundingGraph(input: {
     assetId: string
     amountRaw: string
     address: string
+    senderAddress?: string
     evmSenderAddress?: string
     feeAssetId?: string
     maximumFeeRaw?: string
@@ -299,7 +342,8 @@ export function createConfidentialFundingGraph(input: {
           : {}),
         sender: {
           chainId: input.source.chainId,
-          address: input.source.evmSenderAddress ?? input.source.address
+          address:
+            input.source.senderAddress ?? input.source.evmSenderAddress ?? input.source.address
         },
         ...(input.source.evm ? { evm: { schemaVersion: 1 as const, ...input.source.evm } } : {}),
         recipient: { chainId: input.destination.chainId, address: input.destination.address }

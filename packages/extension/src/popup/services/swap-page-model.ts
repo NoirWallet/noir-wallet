@@ -37,6 +37,11 @@ import {
 } from '@/popup/services/shield-swap-zec-sources'
 import type { ShieldFundingAsset } from './shield-transfer'
 import { resolveAccountAvailableRaw } from '@/popup/services/transfer-availability'
+import { readNearSwapBalanceRaw } from '@/popup/services/near-quote-asset-execution'
+import {
+  nearDirectCatalogToken,
+  nearDirectQuoteAsset
+} from '@/core/chains/near/near-incognito-move'
 import {
   filterCrossChainSendDestinations,
   type CrossChainSendCapabilities
@@ -407,6 +412,19 @@ const portfolioTokenBalances = new WeakMap<
   }
 >()
 
+/** Separates rows that share a protocol asset id, such as native NEAR and wNEAR. */
+export function swapTokenBalanceKey(token: {
+  readonly assetId: string
+  readonly rheaChainId?: string
+  readonly rheaAddress?: string
+  readonly isNative?: boolean
+  readonly decimals?: number
+}): string {
+  const native = token.isNative === true
+  const address = native ? 'native' : (token.rheaAddress ?? '')
+  return `${token.rheaChainId ?? ''}:${address}:${token.assetId}:${token.decimals ?? ''}:${native}`
+}
+
 export function buildWalletSwapSourceBalances(input: {
   readonly tokens: readonly RheaSwapToken[]
   readonly portfolio: PortfolioReadModel | null
@@ -429,7 +447,7 @@ export function buildWalletSwapSourceBalances(input: {
   const cached = snapshot?.[input.evmExecutionMode]
   for (const token of input.tokens) {
     if (isZecToken(token)) {
-      balances.set(token.assetId, input.zcashAvailable)
+      balances.set(swapTokenBalanceKey(token), input.zcashAvailable)
       continue
     }
     if (!input.portfolio) continue
@@ -442,7 +460,7 @@ export function buildWalletSwapSourceBalances(input: {
           input.evmExecutionMode
         )
     cached?.set(token, formatted)
-    if (formatted !== undefined) balances.set(token.assetId, formatted)
+    if (formatted !== undefined) balances.set(swapTokenBalanceKey(token), formatted)
   }
   return balances
 }
@@ -451,6 +469,12 @@ export function resolveWalletSwapSourceAvailableRaw(
   source: WalletOwnedQuoteAsset,
   evmExecutionMode: 'main' | 'private'
 ): string | undefined {
+  if (source.family === 'near') {
+    return readNearSwapBalanceRaw(
+      source.asset.balance,
+      evmExecutionMode === 'private' ? 'incognito' : 'main'
+    )
+  }
   if (source.family !== 'evm') return source.asset.balance.availableRaw
   if (
     evmExecutionMode === 'private' &&
@@ -495,7 +519,7 @@ export function resolveSwapExecutionSourceMode(input: {
 }): 'main' | 'private' {
   if (input.isPrivateFunding) return 'main'
   return input.requestedMode === 'private' &&
-    input.sourceFamily === 'evm' &&
+    (input.sourceFamily === 'evm' || input.sourceFamily === 'near') &&
     input.privateSourceAvailable
     ? 'private'
     : 'main'
@@ -504,12 +528,14 @@ export function resolveSwapExecutionSourceMode(input: {
 export function filterConfidentialFundingSourceTokens(
   tokens: readonly RheaSwapToken[],
   portfolio: PortfolioReadModel | null,
-  receiveTargets: AdditionalReceiveTargetsView | null
+  receiveTargets: AdditionalReceiveTargetsView | null,
+  destinationChain: string | null = null
 ): readonly RheaSwapToken[] {
   if (!portfolio || !receiveTargets) return []
+  const family = destinationChain === 'near' ? 'near' : 'evm'
   return tokens.filter(token => {
     if (isZecToken(token)) return false
-    return resolveWalletOwnedQuoteAsset(token, portfolio, receiveTargets)?.family === 'evm'
+    return resolveWalletOwnedQuoteAsset(token, portfolio, receiveTargets)?.family === family
   })
 }
 
@@ -534,7 +560,17 @@ export function isPrivateSwapDestinationSupported(
   mode: 'main' | 'private' = 'private',
   zcashAddresses?: Readonly<{ shielded: string; transparent: string }>
 ): boolean {
-  if (!portfolio || !isConfidentialSwapDestinationSupported(token)) return false
+  if (!portfolio) return false
+  if (token.rheaChainId === 'near') {
+    const target = resolveWalletQuoteReceiveTarget(token, portfolio, receiveTargets)
+    if (target?.kind !== 'near') return false
+    if (mode === 'main') return target.address.length > 0
+    const privateAddress = privateExecutionAddresses.get(target.chain.id)
+    return Boolean(
+      privateAddress && /^[0-9a-f]{64}$/.test(privateAddress) && privateAddress !== target.address
+    )
+  }
+  if (!isConfidentialSwapDestinationSupported(token)) return false
   if (isZecToken(token)) return Boolean(zcashAddresses?.shielded && zcashAddresses.transparent)
   const target = resolveWalletQuoteReceiveTarget(token, portfolio, receiveTargets)
   if (target?.kind !== 'evm') return false
@@ -590,14 +626,17 @@ export function resolveLockedWalletSwapSourceToken(input: {
   readonly walletSourceTokens: readonly RheaSwapToken[]
 }): RheaSwapToken | null {
   if (!input.requestedToken) return null
-  const walletSourceIds = new Set(input.walletSourceTokens.map(token => token.assetId))
+  const sourceIdentity = (token: RheaSwapToken) =>
+    `${token.assetId}:${token.rheaAddress}:${token.isNative}`
+  const walletSourceIds = new Set(input.walletSourceTokens.map(sourceIdentity))
   return (
     input.sourceTokens.find(
       token =>
-        walletSourceIds.has(token.assetId) &&
+        walletSourceIds.has(sourceIdentity(token)) &&
         token.assetId === input.requestedToken?.assetId &&
         token.rheaChainId === input.requestedToken.rheaChainId &&
-        token.rheaAddress === input.requestedToken.rheaAddress
+        token.rheaAddress === input.requestedToken.rheaAddress &&
+        token.isNative === input.requestedToken.isNative
     ) ?? null
   )
 }
@@ -613,6 +652,9 @@ export function resolveConfidentialFundingDestinationToken(input: {
   if (!portfolio) return null
   return (
     input.tokens.find(token => {
+      if (input.destinationChain === 'near') {
+        return matchesNearConfidentialFundingDestination(token, input, portfolio)
+      }
       if (String(token.rheaChainId) !== input.destinationChain) return false
       if (!isConfidentialSwapDestinationSupported(token)) return false
       const destination = resolveWalletOwnedQuoteAsset(token, portfolio, input.receiveTargets)
@@ -622,6 +664,26 @@ export function resolveConfidentialFundingDestinationToken(input: {
             destination.asset.asset.id === input.destinationAsset
         : token.isNative
     }) ?? null
+  )
+}
+
+function matchesNearConfidentialFundingDestination(
+  token: RheaSwapToken,
+  input: {
+    readonly destinationAsset: string | null
+    readonly receiveTargets: AdditionalReceiveTargetsView | null
+  },
+  portfolio: PortfolioReadModel
+): boolean {
+  if (token.rheaChainId !== 'near') return false
+  const destination = resolveWalletOwnedQuoteAsset(token, portfolio, input.receiveTargets)
+  if (destination?.family !== 'near') return false
+  const quoteAsset = nearDirectQuoteAsset(destination.asset.asset)
+  if (!quoteAsset || nearDirectCatalogToken([token], quoteAsset) !== token) return false
+  if (!input.destinationAsset) return token.isNative
+  return (
+    destination.asset.asset.id === input.destinationAsset ||
+    token.assetId === input.destinationAsset
   )
 }
 

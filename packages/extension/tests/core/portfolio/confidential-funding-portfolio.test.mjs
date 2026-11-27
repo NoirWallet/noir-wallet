@@ -29,7 +29,10 @@ import {
   getBundledInitialProductAssetDefinitions
 } from '../../../src/core/chains/registry/index.ts'
 import { hidePortfolioAssets } from '../../../src/core/portfolio/portfolio-visibility.ts'
-import { buildPortfolioReadModel, parsePortfolioReadModel } from '../../../src/core/portfolio/index.ts'
+import {
+  buildPortfolioReadModel,
+  parsePortfolioReadModel
+} from '../../../src/core/portfolio/index.ts'
 import { findAssetPrice } from '../../../src/core/prices/asset-price.ts'
 import { listStandaloneNearConfidentialHoldings } from '../../../src/popup/services/near-confidential-holdings.ts'
 import { withConfidentialAssetPrices } from '../../../src/popup/services/portfolio-prices.ts'
@@ -497,7 +500,10 @@ test('only projects Confidential zero after a confirmed empty balance read', asy
     confidentialRaw: '0'
   })
   expect(knownZero.confidential).toEqual({
-    status: 'ready', freshness: 'fresh', updatedAt: 1000, assets: []
+    status: 'ready',
+    freshness: 'fresh',
+    updatedAt: 1000,
+    assets: []
   })
 
   snapshot = {
@@ -508,7 +514,9 @@ test('only projects Confidential zero after a confirmed empty balance read', asy
   }
   const stale = await coordinator.enrichPortfolio(model, false)
   expect(stale.confidential).toMatchObject({
-    status: 'ready', freshness: 'stale', updatedAt: 1000
+    status: 'ready',
+    freshness: 'stale',
+    updatedAt: 1000
   })
   expect(stale.assets[0]).toMatchObject({
     freshness: 'stale',
@@ -518,83 +526,87 @@ test('only projects Confidential zero after a confirmed empty balance read', asy
   expect(stale.chains[0].status).toBe('partial')
 })
 
-test('notifies Portfolio only after a successful Confidential refresh for the active account', { timeout: 5000 }, async () => {
-  const previousChrome = globalThis.chrome
-  const storage = { get: async () => ({}), set: async () => {}, remove: async () => {} }
-  const updates = []
-  globalThis.chrome = {
-    storage: { local: storage, session: storage },
-    runtime: { sendMessage: async message => updates.push(message) }
-  }
-  const { useWalletStore } = await import('../../../src/store/wallet-store.ts')
-  const { getConfidentialFundingMessageHandler } = await import(
-    '../../../src/background/confidential-funding-messages.ts'
-  )
-  const wallet = useWalletStore.getState()
-  const previousScope = {
-    currentNetwork: wallet.currentNetwork,
-    currentWalletId: wallet.currentWalletId,
-    currentAccountId: wallet.currentAccountId
-  }
-  const scope = { network: 'mainnet', keyDomainId: 'wallet:one', accountId: 'account:one' }
-  const message = { scope, authorize: true }
-  const handler = getConfidentialFundingMessageHandler('REFRESH_CONFIDENTIAL_BALANCES')
-  const { AccountContextTransitionCoordinator } = await import(
-    '../../../src/background/account-context-transition.ts'
-  )
-  const accountContextTransition = new AccountContextTransitionCoordinator()
-  const context = refreshBalances => ({
-    coordinator: { refreshBalances },
-    accountContextTransition
-  })
-  try {
-    Object.assign(wallet, {
-      currentNetwork: 'mainnet',
-      currentWalletId: scope.keyDomainId,
-      currentAccountId: scope.accountId
+test(
+  'notifies Portfolio only after a successful Confidential refresh for the active account',
+  { timeout: 5000 },
+  async () => {
+    const previousChrome = globalThis.chrome
+    const storage = { get: async () => ({}), set: async () => {}, remove: async () => {} }
+    const updates = []
+    globalThis.chrome = {
+      storage: { local: storage, session: storage },
+      runtime: { sendMessage: async message => updates.push(message) }
+    }
+    const { useWalletStore } = await import('../../../src/store/wallet-store.ts')
+    const { getConfidentialFundingMessageHandler } =
+      await import('../../../src/background/confidential-funding-messages.ts')
+    const wallet = useWalletStore.getState()
+    const previousScope = {
+      currentNetwork: wallet.currentNetwork,
+      currentWalletId: wallet.currentWalletId,
+      currentAccountId: wallet.currentAccountId
+    }
+    const scope = { network: 'mainnet', keyDomainId: 'wallet:one', accountId: 'account:one' }
+    const message = { scope, authorize: true }
+    const handler = getConfidentialFundingMessageHandler('REFRESH_CONFIDENTIAL_BALANCES')
+    const { AccountContextTransitionCoordinator } =
+      await import('../../../src/background/account-context-transition.ts')
+    const accountContextTransition = new AccountContextTransitionCoordinator()
+    const context = refreshBalances => ({
+      coordinator: { refreshBalances },
+      accountContextTransition
     })
-    const balances = [{ tokenId: 'token', available: '1', source: 'api' }]
-    // A refresh may authorize through the signer, which serializes its own
-    // account validation/signature. It must not wait behind its caller.
-    expect(
+    try {
+      Object.assign(wallet, {
+        currentNetwork: 'mainnet',
+        currentWalletId: scope.keyDomainId,
+        currentAccountId: scope.accountId
+      })
+      const balances = [{ tokenId: 'token', available: '1', source: 'api' }]
+      // A refresh may authorize through the signer, which serializes its own
+      // account validation/signature. It must not wait behind its caller.
+      expect(
+        await handler(
+          context(() => accountContextTransition.runActiveOperation(async () => balances)),
+          message
+        )
+      ).toBe(balances)
+      expect(updates).toEqual([
+        { type: 'PORTFOLIO_UPDATED', walletId: scope.keyDomainId, accountId: scope.accountId }
+      ])
+
+      updates.length = 0
       await handler(
-        context(() => accountContextTransition.runActiveOperation(async () => balances)),
-        message
+        context(async () => balances),
+        { ...message, notifyPortfolio: false }
       )
-    ).toBe(balances)
-    expect(updates).toEqual([
-      { type: 'PORTFOLIO_UPDATED', walletId: scope.keyDomainId, accountId: scope.accountId }
-    ])
+      expect(updates).toEqual([])
 
-    updates.length = 0
-    await handler(context(async () => balances), { ...message, notifyPortfolio: false })
-    expect(updates).toEqual([])
+      await expect(
+        handler(
+          context(async () => {
+            throw new Error('balance unavailable')
+          }),
+          message
+        )
+      ).rejects.toThrow('balance unavailable')
+      expect(updates).toEqual([])
 
-    await expect(
-      handler(
+      await handler(
         context(async () => {
-          throw new Error('balance unavailable')
+          wallet.currentAccountId = 'account:two'
+          return balances
         }),
         message
       )
-    ).rejects.toThrow('balance unavailable')
-    expect(updates).toEqual([])
-
-    await handler(
-      context(async () => {
-        wallet.currentAccountId = 'account:two'
-        return balances
-      }),
-      message
-    )
-    expect(updates).toEqual([])
-
-  } finally {
-    Object.assign(wallet, previousScope)
-    if (previousChrome === undefined) delete globalThis.chrome
-    else globalThis.chrome = previousChrome
+      expect(updates).toEqual([])
+    } finally {
+      Object.assign(wallet, previousScope)
+      if (previousChrome === undefined) delete globalThis.chrome
+      else globalThis.chrome = previousChrome
+    }
   }
-})
+)
 
 test(
   'native ZEC Confidential quote authorization does not block account switching',
@@ -655,6 +667,208 @@ test(
     }
   }
 )
+
+test('maps NEAR Intents balances onto chain assets without bridge assets or double counting', () => {
+  const nativeId = 'near:mainnet/slip44:397'
+  const tokenId = 'near:mainnet/nep141:token.near'
+  const chains = createInitialProductChainRegistry('mainnet')
+  const assets = createAssetRegistry(chains, [
+    ...getBundledInitialProductAssetDefinitions('mainnet'),
+    {
+      chainId: 'near:mainnet',
+      namespace: 'nep141',
+      reference: 'token.near',
+      kind: 'token',
+      metadata: { name: 'Token', symbol: 'TOK', decimals: 8 },
+      source: 'protocol',
+      verification: 'trusted'
+    }
+  ])
+  const balance = (raw, extra = {}) => ({
+    totalRaw: raw.total,
+    spendableRaw: raw.spendable,
+    availableRaw: raw.available,
+    pendingRaw: '0',
+    updatedAt: 1,
+    ...extra
+  })
+  const nearAsset = (id, raw) => ({
+    asset: { id, chainId: 'near:mainnet' },
+    metadata: { decimals: 24, name: 'NEAR', symbol: 'NEAR' },
+    balance: raw,
+    chainAccountIds: [],
+    freshness: 'fresh',
+    updatedAt: 1
+  })
+  const model = {
+    scope: { keyDomainId: 'wallet:near', accountId: 'account:near' },
+    status: 'ready',
+    ignoredAssetCount: 0,
+    chains: [
+      {
+        chain: { id: 'near:mainnet', family: 'near' },
+        status: 'ready',
+        assets: [],
+        errorCodes: []
+      }
+    ],
+    assets: [
+      nearAsset(
+        nativeId,
+        balance(
+          { total: '100', spendable: '100', available: '100' },
+          { mainRaw: '80', privateRaw: '20', privateOnchainRaw: '20', confidentialRaw: '0' }
+        )
+      ),
+      nearAsset(
+        'near:mainnet/nep141:wrap.near',
+        balance(
+          { total: '0', spendable: '0', available: '0' },
+          { mainRaw: '0', privateRaw: '0', privateOnchainRaw: '0', confidentialRaw: '0' }
+        )
+      ),
+      nearAsset(
+        tokenId,
+        balance(
+          { total: '0', spendable: '0', available: '0' },
+          { mainRaw: '0', privateRaw: '0', privateOnchainRaw: '0', confidentialRaw: '0' }
+        )
+      )
+    ]
+  }
+  const balances = [
+    { tokenId: confidentialPrivateTokenId('nep141:wrap.near'), available: '15' },
+    { tokenId: confidentialPrivateTokenId('nep141:token.near'), available: '4' },
+    { tokenId: confidentialPrivateTokenId('nep141:btc.omft.near'), available: '9' }
+  ]
+  expect(
+    filterConfidentialPortfolioMappings(
+      [
+        { assetId: nativeId, protocolAssetId: 'nep141:wrap.near' },
+        { assetId: 'eip155:1/slip44:60', protocolAssetId: 'nep141:eth.omft.near' }
+      ],
+      'mainnet'
+    ).map(mapping => mapping.assetId)
+  ).toEqual(['eip155:1/slip44:60'])
+
+  const merged = mergeConfidentialBalancesIntoPortfolio(model, [], balances)
+  const native = merged.assets.find(asset => asset.asset.id === nativeId)
+  expect(native.balance).toMatchObject({
+    mainRaw: '80',
+    privateOnchainRaw: '20',
+    confidentialRaw: '15',
+    privateRaw: '35',
+    totalRaw: '115'
+  })
+  expect(
+    merged.assets.find(asset => asset.asset.id === 'near:mainnet/nep141:wrap.near').balance
+      .confidentialRaw
+  ).toBe('0')
+  expect(merged.assets.find(asset => asset.asset.id === tokenId).balance.confidentialRaw).toBe('4')
+
+  const view = buildConfidentialPortfolioView(balances, [], [], [], assets)
+  expect(view.assets.find(asset => asset.protocolAssetId === 'nep141:wrap.near').assetId).toBe(
+    nativeId
+  )
+  const managedNear = buildConfidentialPortfolioView(
+    balances,
+    [
+      {
+        assetId: 'nep141:wrap.near',
+        blockchain: 'near',
+        contractAddress: 'wrap.near',
+        decimals: 24,
+        symbol: 'wNEAR',
+        price: 0,
+        priceUpdatedAt: ''
+      }
+    ],
+    [
+      {
+        protocolAssetId: 'nep141:wrap.near',
+        assetId: 'near:mainnet/nep141:wrap.near',
+        chainId: 'near:mainnet',
+        namespace: 'nep141',
+        reference: 'wrap.near',
+        blockchain: 'near',
+        symbol: 'wNEAR',
+        decimals: 24,
+        management: 'protocol'
+      }
+    ],
+    [],
+    assets
+  )
+  expect(
+    managedNear.assets.find(asset => asset.protocolAssetId === 'nep141:wrap.near')
+  ).toMatchObject({
+    assetId: nativeId,
+    chainId: 'near:mainnet',
+    symbol: 'NEAR',
+    decimals: 24
+  })
+  expect(view.assets.find(asset => asset.protocolAssetId === 'nep141:token.near').assetId).toBe(
+    tokenId
+  )
+  expect(
+    view.assets.find(asset => asset.protocolAssetId === 'nep141:btc.omft.near').assetId
+  ).toBeUndefined()
+
+  const evmId = 'eip155:1/erc20:0x1111111111111111111111111111111111111111'
+  const displayed = {
+    ...merged,
+    assets: [
+      native,
+      {
+        asset: { id: evmId, chainId: 'eip155:1' },
+        balance: { confidentialRaw: '7' }
+      }
+    ],
+    confidential: {
+      status: 'ready',
+      assets: [
+        {
+          tokenId: confidentialPrivateTokenId('nep141:wrap.near'),
+          protocolAssetId: 'nep141:wrap.near',
+          availableRaw: '15',
+          assetId: nativeId,
+          chainId: 'near:mainnet',
+          decimals: 24,
+          symbol: 'NEAR'
+        },
+        {
+          tokenId: confidentialPrivateTokenId('nep141:usdc.omft.near'),
+          protocolAssetId: 'nep141:usdc.omft.near',
+          availableRaw: '7',
+          assetId: evmId,
+          chainId: 'eip155:1',
+          decimals: 6,
+          symbol: 'USDC'
+        },
+        {
+          tokenId: confidentialPrivateTokenId('nep141:other.near'),
+          protocolAssetId: 'nep141:other.near',
+          availableRaw: '16',
+          assetId: tokenId,
+          chainId: 'near:mainnet',
+          decimals: 8,
+          symbol: 'TOK'
+        },
+        {
+          tokenId: confidentialPrivateTokenId('nep141:btc.omft.near'),
+          protocolAssetId: 'nep141:btc.omft.near',
+          availableRaw: '9',
+          symbol: 'BTC'
+        }
+      ]
+    }
+  }
+  expect(
+    listStandaloneNearConfidentialHoldings(displayed, displayed, null).map(
+      holding => holding.entry.asset.protocolAssetId
+    )
+  ).toEqual(['nep141:other.near', 'nep141:btc.omft.near'])
+})
 
 test('projects dApp Shield balances as decimal amounts with chain names', () => {
   const balances = projectShieldDappBalances(
@@ -854,7 +1068,9 @@ test('projects Shield operation details and omits unresolved amounts or referenc
 })
 
 test('projects Shield operation phases without exposing internal signing names', () => {
-  expect(projectShieldDappPlanStatus({ phase: 'prepared' })).toEqual({ status: 'awaiting-approval' })
+  expect(projectShieldDappPlanStatus({ phase: 'prepared' })).toEqual({
+    status: 'awaiting-approval'
+  })
   expect(projectShieldDappPlanStatus({ phase: 'deposit-signed' })).toEqual({ status: 'signing' })
   expect(projectShieldDappPlanStatus({ phase: 'needs-auth' })).toEqual({ status: 'needs-auth' })
   expect(
@@ -1038,7 +1254,9 @@ test('reads a Shield operation only for the active account and refreshes an in-f
   expect(await coordinator.readShieldDappStatus({ scope, operationId: 'detailed-plan' })).toEqual(
     detailed
   )
-  expect(await coordinator.readShieldDappStatus({ scope, operationId: 'deposit-detailed' })).toEqual({
+  expect(
+    await coordinator.readShieldDappStatus({ scope, operationId: 'deposit-detailed' })
+  ).toEqual({
     id: 'deposit-detailed',
     layer: 'near-confidential',
     action: 'receive',

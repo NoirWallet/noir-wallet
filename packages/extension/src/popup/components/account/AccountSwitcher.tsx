@@ -4,7 +4,10 @@ import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { useWalletStore } from '@/store/wallet-store'
 import { getAccountDisplayName, formatSortAddress } from '@/lib/format'
 import { isWalletLockedError } from '@/lib/errors'
-import type { AccountNetworksCatalogView } from '@/popup/services/account-networks-client'
+import type {
+  AccountNetworkView,
+  AccountNetworksCatalogView
+} from '@/popup/services/account-networks-client'
 import {
   accountNetworkIconChain,
   accountNetworkLabel,
@@ -16,6 +19,11 @@ import {
   type SwitcherAccount
 } from '@/popup/services/account-list-model'
 import { switchWalletAccount } from '@/popup/services/account-switch'
+import type { NearPrivateSendKeySource } from '@/popup/services/near-send-routing'
+import {
+  nearIncognitoReceiveUnavailableMessage,
+  selectNearReceiveAddress
+} from '@/popup/services/near-send-receive-page'
 import { useNavigate } from '@/popup/provider/Router'
 import { useDialog } from '@/popup/hooks/useDialog'
 import { CopyFeedbackIcon, CopyToast, useCopyToClipboard } from '../common/CopyToast'
@@ -111,6 +119,87 @@ function AccountAvatar({
   )
 }
 
+type OtherChainPreview =
+  | Readonly<{
+      kind: 'address'
+      network: AccountNetworkView
+      value: string
+      confidential: boolean
+    }>
+  | Readonly<{
+      kind: 'unavailable'
+      network: AccountNetworkView
+      message: string
+    }>
+
+function nearPreviewKeySource(kind: SwitcherAccount['walletSourceKind']): NearPrivateSendKeySource {
+  if (kind === 'hardware') return 'hardware'
+  if (kind === 'private-key') return 'imported'
+  return 'software'
+}
+
+function nearPreviewSelection(
+  network: AccountNetworkView,
+  mode: 'public' | 'private',
+  keySource: NearPrivateSendKeySource
+) {
+  if (network.chain.family !== 'near') return null
+  return selectNearReceiveAddress({
+    mode: mode === 'private' ? 'incognito' : 'public',
+    keySource,
+    mainAccountId:
+      network.addresses.find(address => address.preferredForReceive)?.value ??
+      network.addresses[0]?.value,
+    persistedPeaAccountId: network.privateExecutionAddress
+  })
+}
+
+function hasNearIncognitoAddress(
+  networks: readonly AccountNetworkView[],
+  keySource: NearPrivateSendKeySource
+): boolean {
+  return networks.some(
+    network => nearPreviewSelection(network, 'private', keySource)?.status === 'address'
+  )
+}
+
+function otherChainPreviews(
+  networks: readonly AccountNetworkView[],
+  mode: 'public' | 'private',
+  keySource: NearPrivateSendKeySource
+): readonly OtherChainPreview[] {
+  return networks.flatMap((network): readonly OtherChainPreview[] => {
+    if (network.chain.family === 'zcash' || network.chain.family === 'evm') return []
+    if (network.chain.family === 'near') {
+      const selection = nearPreviewSelection(network, mode, keySource)
+      if (selection?.status === 'address') {
+        return [
+          {
+            kind: 'address' as const,
+            network,
+            value: selection.address,
+            confidential: selection.mode === 'incognito'
+          }
+        ]
+      }
+      if (mode !== 'private') return []
+      return [
+        {
+          kind: 'unavailable' as const,
+          network,
+          message: nearIncognitoReceiveUnavailableMessage(keySource)
+        }
+      ]
+    }
+    if (mode === 'private') return []
+    const address =
+      network.addresses.find(candidate => candidate.preferredForReceive) ?? network.addresses[0]
+    return address
+      ? [{ kind: 'address' as const, network, value: address.value, confidential: false }]
+      : []
+  })
+}
+
 function AccountAddressPopover({
   account,
   defaultEvmMode,
@@ -136,34 +225,35 @@ function AccountAddressPopover({
   readonly className?: string
   readonly addressesStatus: 'loading' | 'ready' | 'error'
 }) {
-  const [selectedEvmMode, setEvmMode] = useState<'public' | 'private' | null>(null)
+  const [selectedAddressMode, setAddressMode] = useState<'public' | 'private' | null>(null)
   const keyPrefix = `${copyScope}-${account.walletId}-${account.accountId}`
+  const keySource = nearPreviewKeySource(account.walletSourceKind)
   const zcash = account.networks.find(network => network.chain.family === 'zcash')
   const evm = account.networks.filter(network => network.chain.family === 'evm')
   const evmAddresses = evmExecutionAddresses(evm)
-  const evmMode = evmAddresses.privateAddress ? (selectedEvmMode ?? defaultEvmMode) : 'public'
+  const canToggleAddressMode =
+    Boolean(evmAddresses.privateAddress) || hasNearIncognitoAddress(account.networks, keySource)
+  const addressMode = canToggleAddressMode ? (selectedAddressMode ?? defaultEvmMode) : 'public'
   const network = useWalletStore(state => state.currentNetwork)
   const incognitoSetup = useIncognitoSetup(
     network,
     account.walletId,
     account.accountId,
-    evmMode === 'private' && Boolean(evmAddresses.privateAddress)
+    addressMode === 'private' && Boolean(evmAddresses.privateAddress)
   )
-  const otherAddresses = account.networks.flatMap(network => {
-    if (network.chain.family === 'zcash' || network.chain.family === 'evm') return []
-    const address =
-      network.addresses.find(candidate => candidate.preferredForReceive) ?? network.addresses[0]
-    return address ? [{ network, address }] : []
-  })
+  const otherAddresses = otherChainPreviews(account.networks, addressMode, keySource)
   const zcashAddresses = [...(zcash?.addresses ?? [])].sort(
     (left, right) => Number(left.privacy === 'shielded') - Number(right.privacy === 'shielded')
   )
   const evmAddress =
-    evmMode === 'public'
+    addressMode === 'public'
       ? evmAddresses.mainAddress
       : incognitoSetup.status === 'complete'
         ? evmAddresses.privateAddress
         : undefined
+  const showEvmRow =
+    evm.length > 0 && (addressMode === 'public' || Boolean(evmAddresses.privateAddress))
+  const showOtherChainsHeader = evm.length > 0 || canToggleAddressMode
 
   return (
     <div
@@ -231,23 +321,23 @@ function AccountAddressPopover({
           </div>
         </div>
       )}
-      {evm.length > 0 && (
+      {showOtherChainsHeader && (
         <div className="pt-1">
           <div className="mb-2 flex items-center justify-between gap-2">
             <span className="text-sm leading-[18px] text-wallet-secondary">Other chains</span>
-            {evmAddresses.privateAddress && (
+            {canToggleAddressMode && (
               <div
                 role="group"
-                aria-label="EVM address mode"
+                aria-label="Other chains address mode"
                 className="flex h-7 rounded-md bg-background p-0.5"
               >
                 <button
                   type="button"
-                  aria-pressed={evmMode === 'public'}
-                  onClick={() => setEvmMode('public')}
+                  aria-pressed={addressMode === 'public'}
+                  onClick={() => setAddressMode('public')}
                   className={cn(
                     'wallet-interactive rounded px-2 text-xs font-medium focus-visible:outline-2 focus-visible:outline-primary active:brightness-90',
-                    evmMode === 'public'
+                    addressMode === 'public'
                       ? 'bg-wallet-selected text-white hover:brightness-110'
                       : 'text-muted hover:bg-white/6 hover:text-foreground'
                   )}
@@ -256,11 +346,11 @@ function AccountAddressPopover({
                 </button>
                 <button
                   type="button"
-                  aria-pressed={evmMode === 'private'}
-                  onClick={() => setEvmMode('private')}
+                  aria-pressed={addressMode === 'private'}
+                  onClick={() => setAddressMode('private')}
                   className={cn(
                     'wallet-interactive rounded px-2 text-xs focus-visible:outline-2 focus-visible:outline-primary active:brightness-90',
-                    evmMode === 'private'
+                    addressMode === 'private'
                       ? 'bg-private text-background hover:brightness-110'
                       : 'text-muted hover:bg-white/6 hover:text-foreground'
                   )}
@@ -270,101 +360,120 @@ function AccountAddressPopover({
               </div>
             )}
           </div>
-          <div className="grid min-h-10 grid-cols-[26px_minmax(0,1fr)_auto_24px] items-center gap-x-2 gap-y-1 @max-[240px]:grid-cols-[26px_minmax(0,1fr)_24px]">
-            <img
-              src={evmGroupIcon}
-              alt=""
-              aria-hidden="true"
-              width={26}
-              height={26}
-              className="size-[26px] shrink-0"
-            />
-            <span className="min-w-0 text-sm leading-[18px] @max-[240px]:col-span-2">
-              Ethereum
-              <br />
-              &amp; EVM
-            </span>
-            {(evmAddress || evmMode === 'public') && (
-              <span className="whitespace-nowrap font-mono text-xs leading-[18px] text-muted @max-[240px]:col-start-2 @max-[240px]:row-start-2">
-                {evmAddress ? formatSortAddress(evmAddress) : '—'}
+          {showEvmRow && (
+            <div className="grid min-h-10 grid-cols-[26px_minmax(0,1fr)_auto_24px] items-center gap-x-2 gap-y-1 @max-[240px]:grid-cols-[26px_minmax(0,1fr)_24px]">
+              <img
+                src={evmGroupIcon}
+                alt=""
+                aria-hidden="true"
+                width={26}
+                height={26}
+                className="size-[26px] shrink-0"
+              />
+              <span className="min-w-0 text-sm leading-[18px] @max-[240px]:col-span-2">
+                Ethereum
+                <br />
+                &amp; EVM
               </span>
-            )}
-            {evmMode === 'private' && incognitoSetup.status !== 'complete' && (
-              <div className="col-start-3 col-span-2 row-start-1 justify-self-end @max-[240px]:col-start-2 @max-[240px]:row-start-2">
-                {incognitoSetup.status === 'available' && (
-                  <IncognitoSetupButton
-                    complete={incognitoSetup.complete}
-                    onRequestSetup={onRequestSetup}
-                    className="px-2 text-xs"
+              {(evmAddress || addressMode === 'public') && (
+                <span className="whitespace-nowrap font-mono text-xs leading-[18px] text-muted @max-[240px]:col-start-2 @max-[240px]:row-start-2">
+                  {evmAddress ? formatSortAddress(evmAddress) : '—'}
+                </span>
+              )}
+              {addressMode === 'private' && incognitoSetup.status !== 'complete' && (
+                <div className="col-span-2 col-start-3 row-start-1 justify-self-end @max-[240px]:col-start-2 @max-[240px]:row-start-2">
+                  {incognitoSetup.status === 'available' && (
+                    <IncognitoSetupButton
+                      complete={incognitoSetup.complete}
+                      onRequestSetup={onRequestSetup}
+                      className="px-2 text-xs"
+                    />
+                  )}
+                  {incognitoSetup.status === 'loading' && (
+                    <Skeleton className="h-7 w-20" aria-label="Loading Incognito setup" />
+                  )}
+                  {incognitoSetup.status === 'error' && (
+                    <button
+                      type="button"
+                      className="text-xs text-primary"
+                      onClick={incognitoSetup.retry}
+                    >
+                      Retry
+                    </button>
+                  )}
+                </div>
+              )}
+              {evmAddress && (
+                <button
+                  type="button"
+                  aria-label={`Copy EVM ${addressMode === 'private' ? 'Incognito' : 'Public'} address`}
+                  title="Copy address"
+                  onClick={() =>
+                    (addressMode === 'private' ? onCopyPrivate : onCopy)(
+                      evmAddress,
+                      `${keyPrefix}-evm-${addressMode}`
+                    )
+                  }
+                  className="wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-white/8 hover:text-foreground active:bg-white/12 focus-visible:outline-2 focus-visible:outline-primary @max-[240px]:col-start-3 @max-[240px]:row-start-2"
+                >
+                  <CopyFeedbackIcon
+                    copied={isCopied(`${keyPrefix}-evm-${addressMode}`)}
+                    width={14}
+                    height={14}
                   />
-                )}
-                {incognitoSetup.status === 'loading' && (
-                  <Skeleton className="h-7 w-20" aria-label="Loading Incognito setup" />
-                )}
-                {incognitoSetup.status === 'error' && (
-                  <button
-                    type="button"
-                    className="text-xs text-primary"
-                    onClick={incognitoSetup.retry}
-                  >
-                    Retry
-                  </button>
-                )}
-              </div>
-            )}
-            {evmAddress && (
-              <button
-                type="button"
-                aria-label={`Copy EVM ${evmMode === 'private' ? 'Incognito' : 'Public'} address`}
-                title="Copy address"
-                onClick={() =>
-                  (evmMode === 'private' ? onCopyPrivate : onCopy)(
-                    evmAddress,
-                    `${keyPrefix}-evm-${evmMode}`
-                  )
-                }
-                className="wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-white/8 hover:text-foreground active:bg-white/12 focus-visible:outline-2 focus-visible:outline-primary @max-[240px]:col-start-3 @max-[240px]:row-start-2"
-              >
-                <CopyFeedbackIcon
-                  copied={isCopied(`${keyPrefix}-evm-${evmMode}`)}
-                  width={14}
-                  height={14}
-                />
-              </button>
-            )}
-          </div>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
-      {otherAddresses.map(({ network, address }) => (
+      {otherAddresses.map(row => (
         <div
-          key={network.chain.id}
+          key={row.network.chain.id}
           className="flex min-h-10 items-center gap-2 border-t border-white/10 py-2"
         >
           <ChainIcon
-            chain={accountNetworkIconChain(network)}
+            chain={accountNetworkIconChain(row.network)}
             width={22}
             height={22}
             className="size-[22px] shrink-0 rounded-[4px]"
           />
           <span className="min-w-0 flex-1 text-xs">
-            <span className="block truncate">{accountNetworkLabel(network)}</span>
-            <span className="block truncate font-mono text-muted">
-              {formatSortAddress(address.value)}
-            </span>
+            <span className="block truncate">{accountNetworkLabel(row.network)}</span>
+            {row.kind === 'address' ? (
+              <span className="block truncate font-mono text-muted">
+                {formatSortAddress(row.value)}
+              </span>
+            ) : (
+              <span className="block text-xs leading-4 text-muted">{row.message}</span>
+            )}
           </span>
-          <button
-            type="button"
-            aria-label={`Copy ${network.chain.displayName} address`}
-            title="Copy address"
-            onClick={() => onCopy(address.value, `${keyPrefix}-${network.chain.id}`)}
-            className="wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-white/8 hover:text-foreground active:bg-white/12 focus-visible:outline-2 focus-visible:outline-primary"
-          >
-            <CopyFeedbackIcon
-              copied={isCopied(`${keyPrefix}-${network.chain.id}`)}
-              width={14}
-              height={14}
-            />
-          </button>
+          {row.kind === 'address' && (
+            <button
+              type="button"
+              aria-label={
+                row.confidential
+                  ? `Copy ${accountNetworkLabel(row.network)} Incognito address`
+                  : `Copy ${row.network.chain.displayName} address`
+              }
+              title="Copy address"
+              onClick={() =>
+                (row.confidential ? onCopyPrivate : onCopy)(
+                  row.value,
+                  `${keyPrefix}-${row.network.chain.id}${row.confidential ? '-incognito' : ''}`
+                )
+              }
+              className="wallet-interactive flex size-6 shrink-0 items-center justify-center rounded-md text-muted hover:bg-white/8 hover:text-foreground active:bg-white/12 focus-visible:outline-2 focus-visible:outline-primary"
+            >
+              <CopyFeedbackIcon
+                copied={isCopied(
+                  `${keyPrefix}-${row.network.chain.id}${row.confidential ? '-incognito' : ''}`
+                )}
+                width={14}
+                height={14}
+              />
+            </button>
+          )}
         </div>
       ))}
       {account.networks.length === 0 &&
@@ -583,6 +692,13 @@ export function AccountSwitcher({
         )
       : accountName) ??
     'Accounts'
+  const catalogAccount =
+    selectedWalletId && selectedAccountId
+      ? catalogAccounts.find(
+          account =>
+            account.walletId === selectedWalletId && account.accountId === selectedAccountId
+        )
+      : undefined
   const activeAccount =
     active ??
     (selectedWalletId && selectedAccountId
@@ -590,11 +706,8 @@ export function AccountSwitcher({
           walletId: selectedWalletId,
           accountId: selectedAccountId,
           name: activeName,
-          networks:
-            catalogAccounts.find(
-              account =>
-                account.walletId === selectedWalletId && account.accountId === selectedAccountId
-            )?.networks ?? [],
+          networks: catalogAccount?.networks ?? [],
+          walletSourceKind: catalogAccount?.walletSource.kind ?? 'software',
           active: true
         }
       : null)

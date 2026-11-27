@@ -1,11 +1,21 @@
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
+import {
+  NEAR_DIRECT_RHEA_TOKEN_LIST_CHAIN_ID,
+  nearDirectCatalogToken,
+  nearDirectQuoteAsset
+} from '@/core/chains/near/near-incognito-move'
 import { resolveRheaPrivateTransferToken, type RheaSwapQuoteMode } from '@/core/services/rhea-swap'
 import { preferWalletEvmQuoteToken, toWalletEvmQuoteToken } from './token-address-discovery'
 import type { ConfidentialFundingPreview } from '@/core/services/confidential-funding'
-import { formatBaseUnitDecimalAmount, formatFeeAmount } from '@/lib/number-format'
+import {
+  formatBaseUnitDecimalAmount,
+  formatDecimalAmount,
+  formatFeeAmount
+} from '@/lib/number-format'
 import { evmWalletClient, type EvmFeeEstimate } from './evm-wallet-client'
 import { rheaSwapClient } from './rhea-swap-client'
 import { requiredRheaEvmApproval } from './rhea-evm-approval'
+import { CONFIDENTIAL_QUOTED_FEE_UNREPRESENTABLE_ERROR } from '@/background/confidential-funding-api'
 import { formatIntentsConfirmationTime } from './confirmation-time-format'
 import { readSwapErrorReason } from './swap-quote-error-message'
 
@@ -16,6 +26,9 @@ export function formatTransferQuoteMinimumError(
   decimals: number,
   symbol: string
 ): string | null {
+  if (error === CONFIDENTIAL_QUOTED_FEE_UNREPRESENTABLE_ERROR) {
+    return CONFIDENTIAL_QUOTED_FEE_UNREPRESENTABLE_ERROR
+  }
   const match = BRIDGE_MINIMUM_RAW.exec(readSwapErrorReason(error))
   if (!match) return null
   const amount = formatFeeAmount(formatBaseUnitDecimalAmount(match[1]!, decimals))
@@ -30,6 +43,8 @@ export interface BalanceTransferEstimate {
     readonly symbol: string
     readonly decimals: number
   }
+  /** Native yocto that must remain outside a direct NEAR amount. Not part of the displayed fee. */
+  readonly nativeHoldRaw?: string
   readonly time: string
 }
 
@@ -70,6 +85,7 @@ export async function estimateDirectTransfer(input: {
   readonly quoteMode: RheaSwapQuoteMode
   readonly signal: AbortSignal
 }): Promise<BalanceTransferEstimate> {
+  if (input.chain.chain.family === 'near') return estimateNearDirectTransfer(input)
   const match = /^eip155:([1-9][0-9]*)$/.exec(input.chain.chain.id)
   if (!match || input.asset.asset.chainId !== input.chain.chain.id) {
     throw new Error('This network does not support the transfer')
@@ -211,23 +227,93 @@ export async function estimateDirectTransfer(input: {
   }
 }
 
+async function estimateNearDirectTransfer(
+  input: Parameters<typeof estimateDirectTransfer>[0]
+): Promise<BalanceTransferEstimate> {
+  if (input.chain.chain.id !== 'near:mainnet') {
+    throw new Error('This network does not support the transfer')
+  }
+  const quoteAsset = nearDirectQuoteAsset(input.asset.asset)
+  if (!quoteAsset) throw new Error('This asset is unavailable for the transfer')
+  const catalog = await rheaSwapClient
+    .listTokens({ direction: 'from', tokenListChainIds: [NEAR_DIRECT_RHEA_TOKEN_LIST_CHAIN_ID] })
+    .catch(() => null)
+  input.signal.throwIfAborted()
+  const token = nearDirectCatalogToken(catalog?.tokens ?? [], quoteAsset)
+  if (!token) throw new Error('This asset is unavailable for the transfer')
+  const asset = {
+    chain: token.rheaChainId,
+    address: token.rheaAddress,
+    symbol: token.symbol,
+    decimals: token.decimals,
+    isNative: token.isNative
+  }
+  const quote = await rheaSwapClient.quote(
+    {
+      fromChain: token.rheaChainId,
+      toChain: token.rheaChainId,
+      tokenIn: asset,
+      tokenOut: asset,
+      amountIn: input.amountRaw,
+      sender: input.sender,
+      recipient: input.recipient,
+      slippageBps: 100,
+      confidentiality: 'basic'
+    },
+    input.executionMode === 'private' ? 'private-transfer' : 'public-private-move'
+  )
+  try {
+    input.signal.throwIfAborted()
+    let nativeHoldRaw: string | undefined
+    if (input.asset.asset.kind === 'native') {
+      await rheaSwapClient.prepare(quote.quoteHandle)
+      input.signal.throwIfAborted()
+      nativeHoldRaw = await rheaSwapClient.readNearDirectNativeHold(quote.quoteHandle, input.sender)
+    }
+    input.signal.throwIfAborted()
+    return {
+      expiresAt: Math.min(quote.expiresAt ?? Infinity, Date.now() + 30_000),
+      routeFeeRaw: routeFee(input.amountRaw, quote.estimatedOut),
+      time: formatTransferTime(undefined, DIRECT_MAXIMUM_MINUTES),
+      ...(nativeHoldRaw === undefined ? {} : { nativeHoldRaw })
+    }
+  } finally {
+    await rheaSwapClient.discard(quote.quoteHandle).catch(() => {})
+  }
+}
+
 export function formatBalanceTransferFee(
   estimate: BalanceTransferEstimate | null,
   asset: PortfolioAssetView | null
-): { value: string; networkFee: string | null } {
-  if (!estimate || !asset) return { value: '—', networkFee: null }
+): { value: string; detail: string | null; networkFee: string | null } {
+  if (!estimate || !asset) return { value: '—', detail: null, networkFee: null }
   const gas = estimate.sourceNetworkFee
-  const format = (raw: string, decimals: number, symbol: string) => {
+  const format = (raw: string, decimals: number, native = false) => {
     const value = BigInt(raw)
     const amount = formatBaseUnitDecimalAmount(value < 0n ? -value : value, decimals)
-    const display = formatFeeAmount(amount)
-    return `${display.startsWith('<') ? '' : '≈ '}${value < 0n ? '-' : ''}${display} ${symbol}`
+    const display = native
+      ? formatDecimalAmount(amount, { maximumFractionDigits: 5 })
+      : formatFeeAmount(amount)
+    return `${display.startsWith('<') ? '' : '~'}${value < 0n ? '-' : ''}${display}`
+  }
+  const networkFee = gas ? `${format(gas.raw, gas.decimals, true)} ${gas.symbol}` : null
+  if (estimate.routeFeeRaw === null) {
+    return { value: '—', detail: networkFee, networkFee }
+  }
+  if (gas && asset.asset.kind === 'native' && gas.symbol === asset.metadata.symbol) {
+    const total = BigInt(estimate.routeFeeRaw) + BigInt(gas.raw)
+    return {
+      value: `${format(total.toString(), asset.metadata.decimals, true)} ${asset.metadata.symbol}`,
+      detail: null,
+      networkFee
+    }
   }
   return {
     value:
-      estimate.routeFeeRaw === null
-        ? '—'
-        : format(estimate.routeFeeRaw, asset.metadata.decimals, asset.metadata.symbol),
-    networkFee: gas ? format(gas.raw, gas.decimals, gas.symbol) : null
+      asset.asset.kind === 'native'
+        ? `${format(estimate.routeFeeRaw, asset.metadata.decimals, true)} ${asset.metadata.symbol}`
+        : format(estimate.routeFeeRaw, asset.metadata.decimals),
+    detail: networkFee,
+    networkFee
   }
 }

@@ -42,6 +42,12 @@ import { useIncognitoSetup } from '@/popup/hooks/useIncognitoSetup'
 import { IncognitoSetupButton } from '@/popup/components/account/IncognitoSetupButton'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import type { ActiveAccountIdentity } from '@/popup/lib/effective-active-account'
+import {
+  nearIncognitoReceiveUnavailableMessage,
+  selectNearReceiveAddress,
+  type NearReceiveSelection
+} from '@/popup/services/near-send-receive-page'
+import type { NearPrivateSendKeySource } from '@/popup/services/near-send-routing'
 
 interface AddressQrTarget {
   readonly network: AccountNetworkView
@@ -205,9 +211,34 @@ function AddressRow({
   )
 }
 
+function nearAccountKeySource(
+  kind: 'software' | 'private-key' | 'hardware'
+): NearPrivateSendKeySource {
+  if (kind === 'hardware') return 'hardware'
+  if (kind === 'private-key') return 'imported'
+  return 'software'
+}
+
+function nearReceiveSelection(
+  network: AccountNetworkView,
+  mode: 'public' | 'private',
+  keySource: NearPrivateSendKeySource
+): NearReceiveSelection | null {
+  if (network.chain.family !== 'near') return null
+  return selectNearReceiveAddress({
+    mode: mode === 'private' ? 'incognito' : 'public',
+    keySource,
+    mainAccountId:
+      network.addresses.find(address => address.preferredForReceive)?.value ??
+      network.addresses[0]?.value,
+    persistedPeaAccountId: network.privateExecutionAddress
+  })
+}
+
 function AddressNetworkGroup({
   network,
   mode,
+  keySource,
   onCopy,
   isCopied,
   onCopyPrivateExecution,
@@ -216,19 +247,32 @@ function AddressNetworkGroup({
 }: {
   readonly network: AccountNetworkView
   readonly mode: 'public' | 'private'
+  readonly keySource: NearPrivateSendKeySource
   readonly onCopy: (address: string, key: string) => void
   readonly isCopied: (key: string) => boolean
   readonly onCopyPrivateExecution: (address: string) => void
   readonly onShowQr: (target: AddressQrTarget) => void
   readonly onOpenSettings?: () => void
 }) {
+  const nearSelection = nearReceiveSelection(network, mode, keySource)
+  const publicNearAddress =
+    mode === 'public' && nearSelection?.status === 'address' ? nearSelection.address : null
   const addresses =
-    network.chain.family === 'zcash'
-      ? [...network.addresses].sort(
-          (left, right) =>
-            Number(left.privacy === 'shielded') - Number(right.privacy === 'shielded')
-        )
-      : network.addresses
+    publicNearAddress !== null
+      ? [
+          network.addresses.find(address => address.value === publicNearAddress) ?? {
+            value: publicNearAddress,
+            scheme: 'near',
+            privacy: 'transparent' as const,
+            preferredForReceive: true
+          }
+        ]
+      : network.chain.family === 'zcash'
+        ? [...network.addresses].sort(
+            (left, right) =>
+              Number(left.privacy === 'shielded') - Number(right.privacy === 'shielded')
+          )
+        : network.addresses
   const privateExecutionAddress =
     network.chain.family === 'evm' ? network.privateExecutionAddress : undefined
   const displayName = accountNetworkLabel(network)
@@ -246,6 +290,63 @@ function AddressNetworkGroup({
       className="shrink-0 rounded-lg"
     />
   )
+
+  if (mode === 'private' && network.chain.family === 'near') {
+    if (nearSelection?.status !== 'address' || nearSelection.mode !== 'incognito') return null
+    return (
+      <section
+        className="flex min-h-[72px] min-w-0 items-center gap-[13px] border-b border-border/40 py-2"
+        aria-label={`${displayName} Incognito address`}
+      >
+        {icon}
+        <div className="min-w-0 flex-1">
+          <h2 className="flex items-center gap-1.5 text-base font-medium leading-[21px] text-foreground">
+            <span className="truncate">{displayName}</span>
+            <span className="shrink-0 rounded bg-private/15 px-1.5 py-0.5 text-xs text-private">
+              Incognito
+            </span>
+          </h2>
+          <AddressValue
+            value={nearSelection.address}
+            className="mt-0.5 block text-xs leading-4 text-muted"
+          />
+          <p className="mt-1 text-xs leading-4 text-muted">{nearSelection.notice}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            title="Copy Incognito address"
+            aria-label={`Copy ${displayName} Incognito address`}
+            className="wallet-interactive flex size-[26px] items-center justify-center rounded-md text-muted hover:bg-white/10 hover:text-foreground active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+            onClick={() => onCopyPrivateExecution(nearSelection.address)}
+          >
+            <Icon icon="lucide:copy" width={17} height={17} />
+          </button>
+          <button
+            type="button"
+            title="Show QR code"
+            aria-label={`Show ${displayName} Incognito address QR code`}
+            className="wallet-interactive flex size-[26px] items-center justify-center rounded-md text-muted hover:bg-white/10 hover:text-foreground active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2"
+            onClick={() =>
+              onShowQr({
+                network,
+                displayName,
+                confidential: true,
+                address: {
+                  value: nearSelection.address,
+                  scheme: 'near',
+                  privacy: 'transparent',
+                  preferredForReceive: true
+                }
+              })
+            }
+          >
+            <Icon icon="lucide:qr-code" width={17} height={17} />
+          </button>
+        </div>
+      </section>
+    )
+  }
 
   if (mode === 'private' && privateExecutionAddress) {
     return (
@@ -389,6 +490,8 @@ export function AddressesList({
   const accountId =
     searchParams.get('accountId') ??
     (receive ? (receiveAccount?.accountId ?? activeAccountId) : null)
+  const requestedIncognito =
+    searchParams.get('mode') === 'incognito' || searchParams.get('mode') === 'private'
 
   if (!walletId || !accountId) {
     return (
@@ -403,12 +506,13 @@ export function AddressesList({
 
   return (
     <AccountAddressesList
-      key={JSON.stringify([network, walletId, accountId, location.key])}
+      key={JSON.stringify([network, walletId, accountId, location.key, requestedIncognito])}
       network={network}
       walletId={walletId}
       accountId={accountId}
       active={walletId === activeWalletId && accountId === activeAccountId}
       receive={receive}
+      requestedIncognito={requestedIncognito}
     />
   )
 }
@@ -418,13 +522,15 @@ function AccountAddressesList({
   accountId,
   network,
   active,
-  receive
+  receive,
+  requestedIncognito
 }: {
   readonly walletId: string
   readonly accountId: string
   readonly network: typeof DEFAULT_NETWORK
   readonly active: boolean
   readonly receive: boolean
+  readonly requestedIncognito: boolean
 }) {
   const { navigate } = useNavigate()
   const { copyToClipboard, showToast, isCopied, copyFailed } = useCopyToClipboard()
@@ -457,8 +563,14 @@ function AccountAddressesList({
               .includes(networkQuery.trim().toLowerCase()))
       )
     : []
-  const [selectedMode, setMode] = useState<'public' | 'private' | null>(null)
-  const mode = privateExecutionSupported ? (selectedMode ?? defaultMode) : 'public'
+  const [selectedMode, setMode] = useState<'public' | 'private' | null>(
+    requestedIncognito ? 'private' : null
+  )
+  const [accountKeySource, setAccountKeySource] = useState<NearPrivateSendKeySource>('software')
+  const mode =
+    !privateExecutionSupported && !requestedIncognito
+      ? 'public'
+      : (selectedMode ?? (requestedIncognito ? 'private' : defaultMode))
   const [evmExpanded, setEvmExpanded] = useState(false)
   const [networks, setNetworks] = useState<readonly AccountNetworkView[]>([])
   const [accountIdentity, setAccountIdentity] = useState<{ name: string } | null>(null)
@@ -472,6 +584,11 @@ function AccountAddressesList({
     readonly qrTarget?: AddressQrTarget
     readonly copyKey?: string
   } | null>(null)
+
+  useEffect(
+    () => setMode(requestedIncognito ? 'private' : null),
+    [walletId, accountId, requestedIncognito]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -495,15 +612,17 @@ function AccountAddressesList({
           setError('No enabled network addresses are available for this account.')
           return
         }
-        const canUsePrivate = supportsEvmPrivateExecution(entry.walletSource)
-        setPrivateExecutionSupported(canUsePrivate)
+        const canUseEvmPrivate = supportsEvmPrivateExecution(entry.walletSource)
+        const keySource = nearAccountKeySource(entry.walletSource.kind)
+        const hasNearAccount = entry.networks.some(network => network.chain.family === 'near')
+        setAccountKeySource(keySource)
+        setPrivateExecutionSupported(canUseEvmPrivate || hasNearAccount)
         setNetworks(
-          canUsePrivate
-            ? entry.networks
-            : entry.networks.map(network => ({
-                ...network,
-                privateExecutionAddress: undefined
-              }))
+          entry.networks.map(network =>
+            network.chain.family === 'evm' && !canUseEvmPrivate
+              ? { ...network, privateExecutionAddress: undefined }
+              : network
+          )
         )
         setAccountIdentity({ name: entry.accountDisplayName })
       } catch {
@@ -539,13 +658,19 @@ function AccountAddressesList({
       network =>
         (mode === 'public' ||
           network.chain.family === 'zcash' ||
-          (network.chain.family === 'evm' && Boolean(network.privateExecutionAddress))) &&
+          (network.chain.family === 'evm' && Boolean(network.privateExecutionAddress)) ||
+          nearReceiveSelection(network, 'private', accountKeySource)?.status === 'address') &&
         (!query ||
           `${accountNetworkLabel(network)} ${network.chain.displayName}`
             .toLowerCase()
             .includes(query))
     )
-  }, [networkQuery, networks, mode])
+  }, [accountKeySource, networkQuery, networks, mode])
+  const hasNearAccount = networks.some(network => network.chain.family === 'near')
+  const hasNearIncognito = networks.some(
+    network => nearReceiveSelection(network, 'private', accountKeySource)?.status === 'address'
+  )
+  const canOpenIncognito = hasPrivateAddresses || hasNearIncognito || hasNearAccount
   const evmNetworks = filteredNetworks.filter(network => network.chain.family === 'evm')
   const otherNetworks = filteredNetworks.filter(network => network.chain.family !== 'evm')
   const otherChainNetworks = otherNetworks.filter(network => network.chain.family !== 'zcash')
@@ -565,6 +690,7 @@ function AccountAddressesList({
       key={network.chain.id}
       network={network}
       mode={mode}
+      keySource={accountKeySource}
       onCopy={(value, key) => void copyToClipboard(value, key)}
       isCopied={isCopied}
       onCopyPrivateExecution={address => setPrivateAddressAction({ address })}
@@ -640,7 +766,11 @@ function AccountAddressesList({
             className="mt-5"
           />
         ) : filteredNetworks.length === 0 && missingFamilies.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted">No matching networks</p>
+          <p role="status" className="py-10 text-center text-sm leading-5 text-muted">
+            {mode === 'private' && hasNearAccount
+              ? nearIncognitoReceiveUnavailableMessage(accountKeySource)
+              : 'No matching networks'}
+          </p>
         ) : (
           <div role="region" className="mt-3 pb-4" aria-label="Account network addresses">
             {missingFamilies.includes('zcash') && renderMissingFamily('zcash')}
@@ -669,7 +799,7 @@ function AccountAddressesList({
                     <button
                       type="button"
                       aria-pressed={mode === 'private'}
-                      disabled={!hasPrivateAddresses}
+                      disabled={!canOpenIncognito}
                       onClick={() => setMode('private')}
                       className={cn(
                         'wallet-interactive min-w-[55px] rounded px-1.5 text-xs font-medium enabled:hover:bg-white/10 enabled:active:bg-white/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-40',
@@ -801,6 +931,11 @@ function AccountAddressesList({
                 )}
                 {!privateEvmClosed && evmExpanded && evmNetworks.map(renderNetwork)}
               </div>
+            )}
+            {mode === 'private' && hasNearAccount && !hasNearIncognito && (
+              <p role="status" className="py-3 text-xs leading-4 text-muted">
+                {nearIncognitoReceiveUnavailableMessage(accountKeySource)}
+              </p>
             )}
             {otherChainNetworks.map(renderNetwork)}
           </div>

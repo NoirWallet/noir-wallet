@@ -16,8 +16,9 @@ import { NETWORK_FEE_TIERS, type NetworkFeeTier } from '@/core/transactions/doma
 import type { EvmFeeSelection } from '@/infrastructure/chains/evm'
 import type { Network } from '@/types'
 import { parseZcashAddress } from '@/core/address-book/address-book'
+import { parseNearAccountId } from '@/core/chains/near/identifiers'
 import { formatBaseUnitAmount } from '@/lib/number-format'
-import { formatSymbol } from '@/lib/format'
+import { formatShieldSymbol } from '@/lib/format'
 import { evmWalletClient } from './evm-wallet-client'
 import { getEvmFeeTierPreviews, type NetworkFeePreviews } from './network-fee-presentation'
 
@@ -192,6 +193,18 @@ function parseClusterNetworkFee(value: unknown) {
   return Object.freeze({ raw: value.raw, symbol: value.symbol, decimals: value.decimals })
 }
 
+function isSameNearAccount(recipient: string, destination: string): boolean {
+  try {
+    return (
+      parseNearAccountId(recipient) === recipient &&
+      parseNearAccountId(destination) === destination &&
+      recipient === destination
+    )
+  } catch {
+    return false
+  }
+}
+
 function matchesExternalRecipient(
   recipient: unknown,
   destination: unknown,
@@ -201,12 +214,31 @@ function matchesExternalRecipient(
   if (/^0x[0-9a-fA-F]{40}$/.test(recipient)) {
     return !/^0x0{40}$/i.test(recipient) && recipient.toLowerCase() === destination.toLowerCase()
   }
+  // A NEAR account id is not a Zcash address. Check it before the Zcash parser.
+  if (isSameNearAccount(recipient, destination)) return true
   if (network !== 'mainnet' && network !== 'testnet') return false
   try {
     return parseZcashAddress(recipient, network).address === destination
   } catch {
     return false
   }
+}
+
+// Cluster reviews on NEAR use account ids, including 64-hex implicit accounts.
+function isConfidentialRouteAddress(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  if (/^0x[0-9a-fA-F]{40}$/.test(value)) return !/^0x0{40}$/i.test(value)
+  try {
+    return parseNearAccountId(value) === value
+  } catch {
+    return false
+  }
+}
+
+function cancellablePreparedPlanId(value: unknown): string | null {
+  if (!isRecord(value) || value.phase !== 'prepared' || typeof value.planId !== 'string')
+    return null
+  return value.planId.length > 0 ? value.planId : null
 }
 
 function parseReview(value: unknown): ConfidentialFundingReview {
@@ -226,9 +258,9 @@ function parseReview(value: unknown): ConfidentialFundingReview {
       (!Number.isSafeInteger(review.quoteAppFeeBps) ||
         review.quoteAppFeeBps < 0 ||
         review.quoteAppFeeBps > 10_000)) ||
-    !/^0x[0-9a-fA-F]{40}$/.test(review.sourceAddress) ||
+    !isConfidentialRouteAddress(review.sourceAddress) ||
     (review.externalRecipient === undefined &&
-      !/^0x[0-9a-fA-F]{40}$/.test(review.destinationAddress)) ||
+      !isConfidentialRouteAddress(review.destinationAddress)) ||
     (review.externalRecipient !== undefined &&
       (review.operation !== 'withdraw' ||
         review.destinationDomain !== 'public' ||
@@ -428,8 +460,18 @@ export function createConfidentialFundingClient(
       ),
     prepare: async (
       request: PrepareConfidentialFundingRequest
-    ): Promise<ConfidentialFundingReview> =>
-      parseReview(unwrap(await send({ type: 'PREPARE_CONFIDENTIAL_FUNDING', request }))),
+    ): Promise<ConfidentialFundingReview> => {
+      const value = unwrap(await send({ type: 'PREPARE_CONFIDENTIAL_FUNDING', request }))
+      try {
+        return parseReview(value)
+      } catch (error) {
+        const planId = cancellablePreparedPlanId(value)
+        // The plan is already stored. A rejected review must not keep its balance reserved.
+        if (planId)
+          await send({ type: 'CANCEL_CONFIDENTIAL_FUNDING', planId }).catch(() => undefined)
+        throw error
+      }
+    },
     confirm: async (planId: string, payloadFingerprint: string): Promise<ConfidentialFundingPlan> =>
       parsePlan(
         unwrap(
@@ -531,7 +573,7 @@ export async function previewClusterNetworkFeeTiers(
       if (fee)
         previews[tier] = {
           amount: formatBaseUnitAmount(fee.raw, fee.decimals),
-          symbol: formatSymbol(fee.symbol),
+          symbol: formatShieldSymbol(fee.symbol),
           approximate: true
         }
     })

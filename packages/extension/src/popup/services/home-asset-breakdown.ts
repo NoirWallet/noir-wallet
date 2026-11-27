@@ -4,6 +4,11 @@ import type { AssetPriceReadModel } from '@/core/prices'
 import { buildAccountKey } from '@/core/wallet/account-scope'
 import type { AccountPortfolioValueSnapshot } from '@/core/wallet/account-portfolio-value'
 import { isPortfolioModelForScope } from './portfolio-cache'
+import {
+  chainHasIndependentConfidential,
+  chainIncludedInDomainProjection,
+  readyChainCountsAsDomainBalance
+} from '@/core/portfolio/domain-balance-policy'
 import { getAssetDomainRaw, summarizeAssetDomainsUsd, type AssetDomain } from './asset-domains'
 
 export type HomePortfolioTotalStatus = 'loading' | 'ready' | 'partial' | 'unavailable'
@@ -112,8 +117,9 @@ export function resolveHomeAssetDomainDisplay(input: {
       model?.confidential?.status === 'ready' ||
       chains.some(
         chain =>
-          (chain.chain.family === 'zcash' && chain.status === 'ready') ||
-          ((chain.chain.family === 'evm' || chain.chain.family === 'zcash') &&
+          (readyChainCountsAsDomainBalance(chain.chain.family, 'shield') &&
+            chain.status === 'ready') ||
+          (chainIncludedInDomainProjection(chain.chain.family, 'shield') &&
             chain.assets.some(asset => {
               const raw = getAssetDomainRaw(asset, 'shield')
               return raw !== null && BigInt(raw) > 0n
@@ -121,7 +127,7 @@ export function resolveHomeAssetDomainDisplay(input: {
       ),
     private: chains.some(
       chain =>
-        chain.chain.family === 'evm' &&
+        chainIncludedInDomainProjection(chain.chain.family, 'private') &&
         (chain.status === 'ready' ||
           chain.assets.some(asset => {
             const raw = getAssetDomainRaw(asset, 'private')
@@ -134,17 +140,21 @@ export function resolveHomeAssetDomainDisplay(input: {
     shield:
       chains.some(
         chain =>
-          (chain.chain.family === 'zcash' || chain.chain.family === 'evm') &&
+          chainIncludedInDomainProjection(chain.chain.family, 'shield') &&
           (chain.status === 'loading' || chain.status === 'partial')
       ) ||
       (model?.confidential === undefined &&
         !input.settled &&
-        chains.some(
-          chain => chain.chain.family === 'evm' && chain.chain.network.kind === 'mainnet'
+        chains.some(chain =>
+          chainHasIndependentConfidential(
+            chain.chain.family,
+            chain.chain.family === 'evm' ? chain.chain.network.kind : undefined
+          )
         )),
     private: chains.some(
       chain =>
-        chain.chain.family === 'evm' && (chain.status === 'loading' || chain.status === 'partial')
+        chainIncludedInDomainProjection(chain.chain.family, 'private') &&
+        (chain.status === 'loading' || chain.status === 'partial')
     )
   }
   const totals: Record<AssetDomain, string | null> = {

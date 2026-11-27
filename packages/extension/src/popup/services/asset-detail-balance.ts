@@ -10,10 +10,11 @@ import { formatBaseUnitDecimalAmount, parseDisplayUnitAmount } from '@/lib/numbe
 import type { Network, ZcashBalance } from '@/types'
 import { formatDisplayTokenAmount } from '@/popup/services/portfolio-format'
 import {
-  getAssetDomainRaw,
-  getAssetShieldProvider,
-  type AssetDomain
-} from '@/popup/services/asset-domains'
+  domainBalanceFamily,
+  selectAssetDetailDomainRaw,
+  selectAssetDetailDomains
+} from '@/core/portfolio/domain-balance-policy'
+import { type AssetDomain } from '@/popup/services/asset-domains'
 
 export function getNativeZcashDetailFallback(
   network: Network,
@@ -83,18 +84,20 @@ export function getAssetDetailCategories(
     model = visibleModel
     asset = model?.assets.find(candidate => candidate.asset.id === asset.asset.id) ?? asset
   }
-  const evm = asset.asset.chainId.startsWith('eip155:')
-  const zcash = getAssetShieldProvider(asset) === 'zcash-shield'
-  const raw: Record<AssetDomain, string | null> = {
-    all: asset.balance.totalRaw,
-    public: getAssetDomainRaw(asset, 'public'),
-    shield: zcash ? getAssetDomainRaw(asset, 'shield') : null,
-    private: evm ? getAssetDomainRaw(asset, 'private') : null
-  }
+  const family = domainBalanceFamily(asset)
+  const evm = family === 'evm'
+  const near = family === 'near'
+  const raw: Record<AssetDomain, string | null> = { ...selectAssetDetailDomainRaw(asset) }
   let shieldPriceUsd: string | undefined
 
-  if (evm && model?.confidential?.status === 'ready') {
-    const candidates = model.confidential.assets.filter(entry => entry.assetId === asset.asset.id)
+  const confidential =
+    (evm || (near && asset.balance.mainRaw !== undefined)) &&
+    model?.confidential?.status === 'ready'
+      ? model.confidential
+      : null
+
+  if (confidential) {
+    const candidates = confidential.assets.filter(entry => entry.assetId === asset.asset.id)
     if (
       candidates.length === 1 &&
       candidates[0]!.chainId === asset.asset.chainId &&
@@ -115,13 +118,15 @@ export function getAssetDetailCategories(
     }
   }
 
-  const domains: AssetDomain[] = ['all', 'public']
-  if (zcash) domains.push('shield')
-  if (evm && (shieldEligible || (raw.shield !== null && BigInt(raw.shield) > 0n))) {
-    domains.push('shield')
-  }
-  if (evm && (privateEligible || (raw.private !== null && BigInt(raw.private) > 0n))) {
-    domains.push('private')
+  const domains = [...selectAssetDetailDomains(family, raw, privateEligible)].filter(
+    domain =>
+      domain !== 'shield' ||
+      family !== 'evm' ||
+      shieldEligible ||
+      (raw.shield !== null && BigInt(raw.shield) > 0n)
+  )
+  if (family === 'evm' && shieldEligible && !domains.includes('shield')) {
+    domains.splice(2, 0, 'shield')
   }
 
   const fiat = Object.fromEntries(

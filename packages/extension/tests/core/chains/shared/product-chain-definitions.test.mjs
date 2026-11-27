@@ -288,7 +288,8 @@ test.describe('initial multichain product definitions', () => {
       'eip155:137/erc20:0x7ceb23fd6bc0add59e62ac25578270cff1b9f619',
       'bip122:000000000019d6689c085ae165831e93/slip44:0',
       'solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp/slip44:501',
-      'near:mainnet/slip44:397'
+      'near:mainnet/slip44:397',
+      'near:mainnet/nep141:wrap.near'
     ])
   })
 })

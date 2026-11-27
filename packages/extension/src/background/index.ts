@@ -190,6 +190,7 @@ import {
 } from './evm-transaction-monitor'
 import { createBackgroundEvmPortfolioCoordinator } from './evm-portfolio'
 import { createBackgroundPortfolioCoordinator } from './portfolio'
+import { ChromeDetectedNearAssetCatalogRepository } from '@/infrastructure/chains/near/near-detected-asset-catalog'
 import { createBackgroundActivityCoordinator } from './activity'
 import {
   discoverZcashTransparentReceipts,
@@ -214,6 +215,7 @@ import {
   recoverRheaWithdrawActivity
 } from './rhea-swap'
 import { getSafeRheaSwapRuntimeErrorMessage } from '@/core/services/rhea-swap/rhea-swap-error'
+import { isNearIncognitoQuoteSender } from '@/core/chains/near/near-incognito-move'
 import {
   assertPrivateQuoteRoute,
   getPrivateWithdrawAsset,
@@ -245,7 +247,7 @@ import {
   type RheaSwapNearCoordinator
 } from './rhea-swap-near'
 import { parseKeyDomainId } from '@/core/keyring/domain'
-import { parseAccountId } from '@/core/accounts/domain'
+import { parseAccountId, type ChainAccount } from '@/core/accounts/domain'
 import { isAssetMarketHistoryRange } from '@/core/prices'
 import { UnsupportedAssetMarketHistoryError } from '@/infrastructure/prices'
 import {
@@ -712,6 +714,22 @@ let additionalReceiveTargetsCoordinator!: ReturnType<
   typeof createBackgroundAdditionalReceiveTargetsCoordinator
 >
 let accountNetworksCoordinator!: ReturnType<typeof createBackgroundAccountNetworksCoordinator>
+
+async function readDirectoryNearPrivateExecutionAddress(
+  keyDomainId: string,
+  accountId: string,
+  chainId: string
+): Promise<string | null> {
+  try {
+    const catalog = await accountNetworksCoordinator.readCatalog({ deriveMissingAddresses: true })
+    const address = catalog?.accounts
+      .find(item => item.walletId === keyDomainId && item.accountId === accountId)
+      ?.networks.find(network => network.chainId === chainId)?.privateExecutionAddress
+    return typeof address === 'string' && /^[0-9a-f]{64}$/.test(address) ? address : null
+  } catch {
+    return null
+  }
+}
 
 async function requireCurrentPrivateSwapQuote(
   quoteHandle: string,
@@ -1456,12 +1474,50 @@ async function reloadMultichainRuntime(
     ? createBackgroundEvmPortfolioCoordinator(activeEvm)
     : null
   portfolioCoordinator?.dispose()
+  const knownAssetIds = new Set(
+    [
+      ...getBundledInitialProductAssetDefinitions(DEFAULT_NETWORK, customEvmNetworks),
+      ...userAssets.definitions,
+      ...intentsProtocolAssets
+    ].map(asset => `${asset.chainId}/${asset.namespace}:${asset.reference.replace(/_/g, '%5F')}`)
+  )
+  const detectedNearAssets = nearOperationsEnabled
+    ? await new ChromeDetectedNearAssetCatalogRepository(DEFAULT_NETWORK)
+        .list()
+        .then(records =>
+          records.flatMap(record =>
+            knownAssetIds.has(record.assetId)
+              ? []
+              : [
+                  Object.freeze({
+                    chainId: record.chainId,
+                    namespace: 'nep141' as const,
+                    reference: record.contractId,
+                    kind: 'token' as const,
+                    metadata: record.metadata,
+                    source: 'discovered' as const,
+                    verification: 'unverified' as const
+                  })
+                ]
+          )
+        )
+        .catch(() => [])
+    : []
   portfolioCoordinator = createBackgroundPortfolioCoordinator(
     catalog,
     customEvmNetworks,
     userAssets.definitions,
     intentsProtocolAssets,
     settings,
+    {
+      detectedAssets: detectedNearAssets,
+      resolvePrivateExecutionAddress: (chainAccount: ChainAccount) =>
+        readDirectoryNearPrivateExecutionAddress(
+          chainAccount.scope.keyDomainId,
+          chainAccount.scope.accountId,
+          chainAccount.scope.chainId
+        )
+    },
     async (model, refresh) => {
       try {
         return (await confidentialFundingCoordinator?.enrichPortfolio(model, refresh)) ?? model
@@ -1474,6 +1530,8 @@ async function reloadMultichainRuntime(
   activityCoordinator = createBackgroundActivityCoordinator(
     bitcoinRpcUrl,
     settings,
+    (scope, chainId) =>
+      readDirectoryNearPrivateExecutionAddress(scope.keyDomainId, scope.accountId, chainId),
     (scope, chainId, mode) =>
       activityNotifications.historyRead({ ...scope, network: DEFAULT_NETWORK }, chainId, mode)
   )
@@ -4431,6 +4489,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     message.type === 'CONFIRM_RHEA_SWAP_SOLANA' ||
     message.type === 'CANCEL_RHEA_SWAP_SOLANA' ||
     message.type === 'PREPARE_RHEA_SWAP_NEAR' ||
+    message.type === 'READ_RHEA_SWAP_NEAR_NATIVE_HOLD' ||
     message.type === 'CONFIRM_RHEA_SWAP_NEAR' ||
     message.type === 'CANCEL_RHEA_SWAP_NEAR' ||
     message.type === 'RECORD_RHEA_SWAP_SUBMISSION' ||
@@ -4455,6 +4514,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     }
     if (
       (message.type === 'PREPARE_RHEA_SWAP_NEAR' ||
+        message.type === 'READ_RHEA_SWAP_NEAR_NATIVE_HOLD' ||
         message.type === 'CONFIRM_RHEA_SWAP_NEAR' ||
         message.type === 'CANCEL_RHEA_SWAP_NEAR') &&
       !nearCoordinator
@@ -4493,6 +4553,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                   `eip155:${request.fromChain}`,
                   catalog.accounts
                 ) === 'confidential'
+              const nearPrivateSender = isNearIncognitoQuoteSender(request, account ?? null)
               const purpose = message.purpose as PrivateQuotePurpose | undefined
               const requestedZcashFundingSource = message.zcashFundingSource
               if (
@@ -4511,7 +4572,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                 purpose === 'confidential-funding' ||
                 purpose === 'public-private-move'
               ) {
-                if (privateSender) throw new Error('Swap source mode changed.')
+                if (privateSender || nearPrivateSender) throw new Error('Swap source mode changed.')
                 const scope = {
                   walletId: account?.walletId ?? '',
                   accountId: account?.accountId ?? '',
@@ -4540,7 +4601,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
               }
               if (!purpose) throw new Error('Swap quote requires a reviewed route.')
               const privateZcashSource = purpose === 'private-swap' && request.fromChain === 'zcash'
-              if (!privateSender && !privateZcashSource) {
+              if (!privateSender && !privateZcashSource && !nearPrivateSender) {
                 throw new Error('Private quote needs a reviewed route.')
               }
               const scope = {
@@ -4621,59 +4682,70 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
                                       )
                                 )
                                 .then(() => Object.freeze({ success: true }))
-                            : message.type === 'PREPARE_RHEA_SWAP_NEAR'
-                              ? accountContextTransition.runActiveOperation(() =>
-                                  nearCoordinator
-                                    ? nearCoordinator.prepare(
-                                        message.quoteHandle as string,
-                                        message.binding
-                                      )
-                                    : Promise.reject(
-                                        new Error('RHEA Swap NEAR execution is unavailable')
-                                      )
-                                )
-                              : message.type === 'CONFIRM_RHEA_SWAP_NEAR'
+                            : message.type === 'READ_RHEA_SWAP_NEAR_NATIVE_HOLD'
+                              ? accountContextTransition.runActiveOperation(async () => {
+                                  if (!nearCoordinator) {
+                                    throw new Error('RHEA Swap NEAR execution is unavailable')
+                                  }
+                                  const holdRaw = await nearCoordinator.readNearDirectNativeHold(
+                                    message.quoteHandle as string,
+                                    message.sender as string
+                                  )
+                                  return Object.freeze({ holdRaw })
+                                })
+                              : message.type === 'PREPARE_RHEA_SWAP_NEAR'
                                 ? accountContextTransition.runActiveOperation(() =>
                                     nearCoordinator
-                                      ? nearCoordinator.confirm(
+                                      ? nearCoordinator.prepare(
                                           message.quoteHandle as string,
-                                          message.payloadFingerprint as string
+                                          message.binding
                                         )
                                       : Promise.reject(
                                           new Error('RHEA Swap NEAR execution is unavailable')
                                         )
                                   )
-                                : message.type === 'CANCEL_RHEA_SWAP_NEAR'
-                                  ? accountContextTransition
-                                      .runActiveOperation(() =>
-                                        nearCoordinator
-                                          ? nearCoordinator.cancel(message.quoteHandle as string)
-                                          : Promise.reject(
-                                              new Error('RHEA Swap NEAR execution is unavailable')
-                                            )
-                                      )
-                                      .then(() => Object.freeze({ success: true }))
-                                  : message.type === 'RECORD_RHEA_SWAP_SUBMISSION'
-                                    ? rheaSwapService.recordTransactionSubmission(
-                                        message.quoteHandle as string,
-                                        message.sourceHash as string
-                                      )
-                                    : message.type === 'REPORT_RHEA_SWAP_SUBMISSION'
-                                      ? rheaSwapService.reportSubmission(
-                                          message.quoteHandle as string
+                                : message.type === 'CONFIRM_RHEA_SWAP_NEAR'
+                                  ? accountContextTransition.runActiveOperation(() =>
+                                      nearCoordinator
+                                        ? nearCoordinator.confirm(
+                                            message.quoteHandle as string,
+                                            message.payloadFingerprint as string
+                                          )
+                                        : Promise.reject(
+                                            new Error('RHEA Swap NEAR execution is unavailable')
+                                          )
+                                    )
+                                  : message.type === 'CANCEL_RHEA_SWAP_NEAR'
+                                    ? accountContextTransition
+                                        .runActiveOperation(() =>
+                                          nearCoordinator
+                                            ? nearCoordinator.cancel(message.quoteHandle as string)
+                                            : Promise.reject(
+                                                new Error('RHEA Swap NEAR execution is unavailable')
+                                              )
                                         )
-                                      : message.type === 'GET_RHEA_SWAP_ORDER_STATUS'
-                                        ? rheaSwapService.getOrderStatus(
+                                        .then(() => Object.freeze({ success: true }))
+                                    : message.type === 'RECORD_RHEA_SWAP_SUBMISSION'
+                                      ? rheaSwapService.recordTransactionSubmission(
+                                          message.quoteHandle as string,
+                                          message.sourceHash as string
+                                        )
+                                      : message.type === 'REPORT_RHEA_SWAP_SUBMISSION'
+                                        ? rheaSwapService.reportSubmission(
                                             message.quoteHandle as string
                                           )
-                                        : message.type === 'SELECT_RHEA_SWAP_ROUTE'
-                                          ? runScopedSwap(message.quoteHandle as string, () =>
-                                              rheaSwapService.selectRoute(
-                                                message.quoteHandle as string,
-                                                message.routeIndex as number
-                                              )
+                                        : message.type === 'GET_RHEA_SWAP_ORDER_STATUS'
+                                          ? rheaSwapService.getOrderStatus(
+                                              message.quoteHandle as string
                                             )
-                                          : rheaSwapService.discard(message.quoteHandle as string)
+                                          : message.type === 'SELECT_RHEA_SWAP_ROUTE'
+                                            ? runScopedSwap(message.quoteHandle as string, () =>
+                                                rheaSwapService.selectRoute(
+                                                  message.quoteHandle as string,
+                                                  message.routeIndex as number
+                                                )
+                                              )
+                                            : rheaSwapService.discard(message.quoteHandle as string)
     void operation
       .then(result => {
         sendResponse(

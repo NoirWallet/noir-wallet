@@ -8,6 +8,7 @@ import type { SwapToken } from '@/core/services/intents-api'
 import type { Network } from '@/types'
 import { getAssetDomainRaw, type ShieldProvider } from './asset-domains'
 import { resolveManagedIntentsCatalog } from './intents-asset-manager-client'
+import { getNearMoveChainIds } from './private-balance-transfer'
 import { getPortfolioAssetUsdValue } from './portfolio-prices'
 import { getShieldTransferChainIds, listShieldFundingAssets } from './shield-transfer'
 import { getConfidentialZcashTransferRecipients } from './zcash-self-transfer'
@@ -46,12 +47,13 @@ export function getQuickShieldAssets({
   readonly prices: AssetPriceReadModel | null
   readonly enabledFlags: readonly ChainFeatureFlagValue[]
 }): QuickShieldAsset[] {
-  const nearChains = new Set(
-    getShieldTransferChainIds(
+  const nearChains = new Set([
+    ...getShieldTransferChainIds(
       account,
       network === 'mainnet' && isNewWalletFamilyEnabled('evm', enabledFlags)
-    )
-  )
+    ),
+    ...getNearMoveChainIds({ account, mainnet: network === 'mainnet', enabledFlags })
+  ])
   const nativeZcashChain = getZcashChainId(network)
   const { walletSource } = account
   const nativeZcashEnabled =
@@ -110,11 +112,17 @@ export function getQuickShieldAssets({
   return rows.sort((left, right) => new Big(right.valueUsd ?? 0).cmp(left.valueUsd ?? 0))
 }
 
-export function getQuickShieldTotalUsd(assets: readonly QuickShieldAsset[]): string | null {
-  let total: Big | null = null
+export function summarizeQuickShieldAssets(assets: readonly QuickShieldAsset[]) {
+  let pricedCount = 0
+  let total = new Big(0)
   for (const { valueUsd } of assets) {
     if (valueUsd === null) continue
-    total = total === null ? new Big(valueUsd) : total.plus(valueUsd)
+    total = total.plus(valueUsd)
+    pricedCount++
   }
-  return total?.toFixed() ?? null
+  return { totalUsd: pricedCount ? total.toFixed() : null, partial: pricedCount < assets.length }
+}
+
+export function getQuickShieldTotalUsd(assets: readonly QuickShieldAsset[]): string | null {
+  return summarizeQuickShieldAssets(assets).totalUsd
 }

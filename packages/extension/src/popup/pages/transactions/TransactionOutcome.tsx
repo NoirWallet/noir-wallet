@@ -198,7 +198,10 @@ export function TransactionOutcome() {
   const rheaQuoteHandle = data?.type === 'swap' ? data.rheaQuoteHandle : undefined
   const nativeIntentsInternalDestination =
     data?.type === 'swap' && data.nativeIntentsInternalDestination === true
-  const nativeIntentsQuoteHandle = data?.type === 'swap' ? data.nativeIntentsQuoteHandle : undefined
+  const nativeIntentsQuoteHandle =
+    nativeIntentsInternalDestination && data.type === 'swap'
+      ? data.nativeIntentsQuoteHandle
+      : undefined
   const waitsForZcashDestination =
     data?.type === 'swap' &&
     !nativeIntentsInternalDestination &&
@@ -353,7 +356,7 @@ export function TransactionOutcome() {
   }, [confidentialFundingPlanId, updateConfidentialFunding])
 
   useEffect(() => {
-    if (!nativeIntentsQuoteHandle) return
+    if (!nativeIntentsInternalDestination || !nativeIntentsQuoteHandle) return
     let active = true
     let timer: ReturnType<typeof setTimeout> | undefined
     const recheck = async () => {
@@ -364,6 +367,7 @@ export function TransactionOutcome() {
         const wallet = useWalletStore.getState()
         if (
           current?.type !== 'swap' ||
+          !current.nativeIntentsInternalDestination ||
           current.nativeIntentsQuoteHandle !== nativeIntentsQuoteHandle ||
           wallet.currentNetwork !== currentNetwork ||
           wallet.currentWalletId !== effectiveWalletId ||
@@ -385,6 +389,7 @@ export function TransactionOutcome() {
       if (timer !== undefined) clearTimeout(timer)
     }
   }, [
+    nativeIntentsInternalDestination,
     nativeIntentsQuoteHandle,
     currentNetwork,
     effectiveWalletId,

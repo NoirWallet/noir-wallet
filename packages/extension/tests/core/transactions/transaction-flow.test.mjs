@@ -31,6 +31,10 @@ const txSyncSource = readFileSync(
   new URL('../../../src/background/tx-sync.ts', import.meta.url),
   'utf-8'
 )
+const resultStoreSource = readFileSync(
+  new URL('../../../src/store/transaction-result-store.ts', import.meta.url),
+  'utf-8'
+)
 const swapSource = readFileSync(
   new URL('../../../src/popup/pages/swap/Swap.tsx', import.meta.url),
   'utf-8'
@@ -151,6 +155,14 @@ describe('Cross-chain transaction lifecycle regressions', () => {
       monitorSource.includes('getCrossChainCompletionStatus(tx.type, {'),
       'background monitor must resolve finality from the transaction type and route'
     )
+  })
+
+  it('refreshes an open cross-chain result and cancels RHEA rechecks on cleanup', () => {
+    assert.match(resultStoreSource, /depositAddress:\s*string/)
+    assert.match(swapSource, /type:\s*'swap',[\s\S]*?depositAddress:\s*swap\.depositAddress/)
+    assert.match(resultPageSource, /setInterval\(refresh,\s*10_000\)/)
+    assert.match(resultPageSource, /RHEA_STATUS_RECHECK_INTERVAL_MS = 15_000/)
+    assert.match(resultPageSource, /if \(timer !== undefined\) clearTimeout\(timer\)/)
   })
 
   it('tracks Zcash destination confirmations to spendability and cancels on cleanup', () => {

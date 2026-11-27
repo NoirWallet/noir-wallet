@@ -4,8 +4,12 @@ import type {
   PortfolioReadModel,
   ConfidentialPortfolioView
 } from '@/core/portfolio'
-import type { AssetRegistry } from '@/core/chains/registry'
+import type { AssetRegistry, AssetRegistryEntry } from '@/core/chains/registry'
 import { getZcashChainId } from '@/core/chains/registry'
+import {
+  NEAR_WRAPPED_PROTOCOL_ASSET_ID,
+  nearConfidentialPortfolioAssetId
+} from '@/core/chains/near/near-portfolio-assets'
 import type { SwapToken } from '@/core/services/intents-api'
 import { isDeprecatedIntentsToken } from '@/core/services/intents-evm-assets'
 import type { IntentsManagedAsset } from '@/core/services/intents-managed-assets'
@@ -40,6 +44,40 @@ export function confidentialPrivateTokenId(protocolAssetId: string): string {
   return `imt:${CONFIDENTIAL_PRIVATE_TREASURY_ACCOUNT_ID}:${protocolAssetId}`
 }
 
+function confidentialProtocolAssetId(tokenId: string): string | null {
+  const treasuryPrefix = `imt:${CONFIDENTIAL_PRIVATE_TREASURY_ACCOUNT_ID}:`
+  if (!tokenId.startsWith(treasuryPrefix)) return tokenId || null
+  const protocolAssetId = tokenId.slice(treasuryPrefix.length)
+  return protocolAssetId || null
+}
+
+function lookupConfidentialAsset(
+  assets: AssetRegistry,
+  assetId: string
+): AssetRegistryEntry | undefined {
+  const entry = typeof assets.inspect === 'function' ? assets.inspect(assetId) : assets.get(assetId)
+  return entry && entry.verification !== 'blocked' ? entry : undefined
+}
+
+function withNearConfidentialMappings(
+  mappings: readonly ConfidentialPortfolioAssetMapping[],
+  protocolAssetIds: readonly string[],
+  hasAsset: (assetId: string) => boolean
+): readonly ConfidentialPortfolioAssetMapping[] {
+  const usedProtocolIds = new Set(mappings.map(mapping => mapping.protocolAssetId))
+  const usedAssetIds = new Set(mappings.map(mapping => mapping.assetId))
+  const extra: ConfidentialPortfolioAssetMapping[] = []
+  for (const protocolAssetId of protocolAssetIds) {
+    if (usedProtocolIds.has(protocolAssetId)) continue
+    const assetId = nearConfidentialPortfolioAssetId(protocolAssetId)
+    if (!assetId || usedAssetIds.has(assetId) || !hasAsset(assetId)) continue
+    usedProtocolIds.add(protocolAssetId)
+    usedAssetIds.add(assetId)
+    extra.push(Object.freeze({ assetId, protocolAssetId }))
+  }
+  return extra.length === 0 ? mappings : Object.freeze([...mappings, ...extra])
+}
+
 export function getConfidentialAvailableForAsset(
   balances: readonly ConfidentialPortfolioBalance[],
   protocolAssetId: string
@@ -48,6 +86,76 @@ export function getConfidentialAvailableForAsset(
     balances.find(balance => balance.tokenId === confidentialPrivateTokenId(protocolAssetId)) ??
     balances.find(balance => balance.tokenId === protocolAssetId)
   return row && /^(0|[1-9][0-9]*)$/.test(row.available) ? row.available : null
+}
+
+function confidentialBalanceChoice(
+  balances: readonly ConfidentialPortfolioBalance[]
+): ReadonlyMap<string, Readonly<{ amount: bigint; tokenId: string; priority: number }>> {
+  const byProtocol = new Map<string, { amount: bigint; tokenId: string; priority: number }>()
+  for (const balance of balances) {
+    if (!/^(0|[1-9][0-9]*)$/.test(balance.available)) {
+      throw new Error('Invalid Confidential balance')
+    }
+    const protocolAssetId = confidentialProtocolAssetId(balance.tokenId)
+    if (!protocolAssetId) throw new Error('Invalid Confidential token ID')
+    const priority = balance.tokenId.startsWith(`imt:${CONFIDENTIAL_PRIVATE_TREASURY_ACCOUNT_ID}:`)
+      ? 1
+      : 0
+    const current = byProtocol.get(protocolAssetId)
+    if (current && current.priority === priority) {
+      throw new Error('Duplicate Confidential balance')
+    }
+    if (!current || priority > current.priority) {
+      byProtocol.set(protocolAssetId, {
+        amount: BigInt(balance.available),
+        tokenId: balance.tokenId,
+        priority
+      })
+    }
+  }
+  return byProtocol
+}
+
+export function confidentialAvailableByProtocolAsset(
+  balances: readonly ConfidentialPortfolioBalance[]
+): ReadonlyMap<string, bigint> {
+  return new Map(
+    [...confidentialBalanceChoice(balances)].map(([protocolAssetId, row]) => [
+      protocolAssetId,
+      row.amount
+    ])
+  )
+}
+
+// Sum the same token across signer snapshots. Each signer contributes its own
+// amount once; an EVM record is never reused as another signer's balance.
+export function combineConfidentialSignerBalances(
+  groups: readonly Readonly<{ balances: readonly ConfidentialPortfolioBalance[] }>[]
+): readonly ConfidentialPortfolioBalance[] {
+  const totals = new Map<string, { amount: bigint; tokenId: string; priority: number }>()
+  for (const group of groups) {
+    for (const [protocolAssetId, row] of confidentialBalanceChoice(group.balances)) {
+      const current = totals.get(protocolAssetId)
+      if (!current) {
+        totals.set(protocolAssetId, {
+          amount: row.amount,
+          tokenId: row.tokenId,
+          priority: row.priority
+        })
+        continue
+      }
+      current.amount += row.amount
+      if (row.priority > current.priority) {
+        current.tokenId = row.tokenId
+        current.priority = row.priority
+      }
+    }
+  }
+  return Object.freeze(
+    [...totals].map(([, row]) =>
+      Object.freeze({ tokenId: row.tokenId, available: row.amount.toString() })
+    )
+  )
 }
 
 export function buildConfidentialPortfolioView(
@@ -82,16 +190,30 @@ export function buildConfidentialPortfolioView(
 
   const tokenById = new Map(tokens.map(token => [token.assetId, token]))
   const managedById = new Map(managedAssets.map(asset => [asset.protocolAssetId, asset]))
-  const mappedById = new Map(mappings.map(mapping => [mapping.protocolAssetId, mapping.assetId]))
+  const portfolioMappings = withNearConfidentialMappings(
+    mappings,
+    [...byProtocolId.keys()],
+    assetId => lookupConfidentialAsset(assets, assetId) !== undefined
+  )
+  const mappedById = new Map(
+    portfolioMappings.map(mapping => [mapping.protocolAssetId, mapping.assetId])
+  )
   const entries = [...byProtocolId].flatMap(([protocolAssetId, { balance }]) => {
     if (balance.available === '0') return []
     const token = tokenById.get(protocolAssetId)
     if (isDeprecatedIntentsToken({ assetId: protocolAssetId, symbol: token?.symbol })) return []
     const managed = managedById.get(protocolAssetId)
     const mappedAssetId = mappedById.get(protocolAssetId)
-    const registered = mappedAssetId ? assets.get(mappedAssetId) : undefined
-    const assetId = managed?.assetId ?? registered?.asset.id
-    const chainId = managed?.chainId ?? registered?.asset.chainId
+    const registered = mappedAssetId ? lookupConfidentialAsset(assets, mappedAssetId) : undefined
+    // Native NEAR and wNEAR share nep141:wrap.near. Keep the registered native asset.
+    const registeredNativeNear =
+      protocolAssetId === NEAR_WRAPPED_PROTOCOL_ASSET_ID &&
+      registered?.asset.id === nearConfidentialPortfolioAssetId(protocolAssetId)
+        ? registered
+        : undefined
+    const assetId = registeredNativeNear?.asset.id ?? managed?.assetId ?? registered?.asset.id
+    const chainId =
+      registeredNativeNear?.asset.chainId ?? managed?.chainId ?? registered?.asset.chainId
     const bundledMetadata =
       token &&
       registered?.source === 'bundled' &&
@@ -178,7 +300,15 @@ export function mergeConfidentialBalancesIntoPortfolio(
   balances: readonly ConfidentialPortfolioBalance[],
   snapshot?: Readonly<{ freshness: 'fresh' | 'stale'; updatedAt: number }>
 ): PortfolioReadModel {
-  const assets = model.assets.map(asset => mergeAsset(asset, mappings, balances, snapshot))
+  const portfolioMappings = withNearConfidentialMappings(
+    mappings,
+    balances.flatMap(balance => {
+      const protocolAssetId = confidentialProtocolAssetId(balance.tokenId)
+      return protocolAssetId ? [protocolAssetId] : []
+    }),
+    assetId => model.assets.some(asset => asset.asset.id === assetId)
+  )
+  const assets = model.assets.map(asset => mergeAsset(asset, portfolioMappings, balances, snapshot))
   const byId = new Map(assets.map(asset => [asset.asset.id, asset]))
   const chains = model.chains.map(chain =>
     Object.freeze({

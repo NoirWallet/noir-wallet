@@ -36,6 +36,8 @@ import {
   buildShieldSwapPreviewRequest,
   buildShieldSwapRequest,
   matchesShieldSwapReview,
+  resolveShieldFormCatalogToken,
+  shieldFormDisplaySymbol,
   sortShieldSwapPickerRows
 } from '../../../src/popup/services/shield-swap-form.ts'
 import {
@@ -1395,4 +1397,30 @@ it('only routes same-asset Confidential ZEC to the account Unified Address and b
   ]) {
     assert.equal(matchesShieldSwapReview({ ...review, ...change }, request), false)
   }
+})
+
+it('shows native NEAR on the shield form when the catalog row is wNEAR', () => {
+  const asset = {
+    asset: {
+      asset: {
+        id: 'near:mainnet/slip44:397',
+        chainId: 'near:mainnet',
+        kind: 'native',
+        reference: '397'
+      },
+      metadata: { symbol: 'NEAR' }
+    },
+    managed: { protocolAssetId: 'nep141:wrap.near' }
+  }
+  const wrapped = {
+    assetId: 'nep141:wrap.near',
+    rheaChainId: 'near',
+    rheaAddress: 'wrap.near',
+    isNative: false,
+    symbol: 'wNEAR'
+  }
+  const native = { ...wrapped, isNative: true, symbol: 'NEAR' }
+  assert.equal(shieldFormDisplaySymbol(asset), 'NEAR')
+  assert.equal(resolveShieldFormCatalogToken([wrapped], asset)?.symbol, 'wNEAR')
+  assert.equal(resolveShieldFormCatalogToken([wrapped, native], asset), native)
 })

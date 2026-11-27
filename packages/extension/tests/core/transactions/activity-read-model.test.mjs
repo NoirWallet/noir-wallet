@@ -37,6 +37,129 @@ const zecAssetId = `${zcashChainId}/slip44:133`
 const btcAssetId = `${bitcoinChainId}/slip44:0`
 const evmHash = `0x${'A'.repeat(64)}`
 const peaAddress = '0x9999999999999999999999999999999999999999'
+const nearChainId = parseChainId('near:mainnet').id
+const nearPea = '3'.repeat(64)
+const nearMain = '9'.repeat(64)
+const nearUsdtAssetId = `${nearChainId}/nep141:usdt.tether-token.near`
+const nearWithdrawHash = 'z596xHJoyJNKaKrjZP476naVT7x7mM1mbQ6oLotgiPix'
+const nearReceiptHash = 'Gd18Na5zUyecR8qBdfe7afFP47d7EvLq55pmM3NjcRfX'
+
+test('Activity notifications baseline historical receipts and deduplicate route payouts', () => {
+  const receipt = (id, status, hash, createdAt) => ({
+    id,
+    source: 'rpc',
+    kind: 'transfer',
+    status,
+    createdAt,
+    scope,
+    snapshot: { schemaVersion: 1, direction: 'incoming' },
+    segments: [
+      {
+        role: 'origin',
+        status,
+        target: { kind: 'onchain', chainId: evmChainId },
+        evidence: { transactionHash: hash }
+      }
+    ]
+  })
+  const historical = receipt('old', 'final', '0x1', 10)
+  const pending = new Set()
+  expect(
+    collectActivityReceiptNotifications(
+      [historical, receipt('pending', 'confirming', '0x2', 10)],
+      {},
+      pending
+    )
+  ).toEqual([])
+  const walletSwap = {
+    source: 'wallet-v2',
+    kind: 'swap',
+    segments: [
+      {
+        role: 'destination',
+        target: { kind: 'onchain', chainId: evmChainId },
+        evidence: { transactionHash: '0x3' }
+      }
+    ]
+  }
+  expect(
+    collectActivityReceiptNotifications(
+      [
+        historical,
+        receipt('confirmed', 'final', '0x2', 10),
+        receipt('wallet payout', 'final', '0x3', 20),
+        receipt('new', 'final', '0x4', 20),
+        walletSwap
+      ],
+      { [`${evmChainId}:main`]: 15 },
+      pending
+    ).map(outcome => outcome.item.id)
+  ).toEqual(['confirmed', 'new'])
+})
+
+test('Activity notifications report settlement amounts and wait for a refund outcome', () => {
+  const origin = {
+    role: 'origin',
+    status: 'final',
+    target: { kind: 'onchain', chainId: evmChainId },
+    evidence: { transactionHash: evmHash }
+  }
+  const destination = {
+    role: 'destination',
+    status: 'confirming',
+    target: { kind: 'onchain', chainId: arbitrumChainId }
+  }
+  const swap = {
+    id: 'swap',
+    source: 'wallet-v2',
+    kind: 'swap',
+    status: 'confirming',
+    scope,
+    snapshot: {
+      direction: 'outgoing',
+      primaryAmount: { assetId: ethAssetId, amountRaw: '50000000000000000' },
+      counterAmount: { assetId: usdcAssetId, amountRaw: '91000000' }
+    },
+    segments: [origin, destination]
+  }
+  expect(resolveActivityNotification(swap)).toBeUndefined()
+  const settled = { assetId: usdcAssetId, amountRaw: '90000000' }
+  const confirmation = resolveActivityNotification({
+    ...swap,
+    status: 'final',
+    segments: [origin, { ...destination, status: 'final', evidence: { settledAmount: settled } }]
+  })
+  expect(
+    formatActivityNotification(confirmation, {
+      asset: assetId =>
+        assetId === ethAssetId ? { symbol: 'ETH', decimals: 18 } : { symbol: 'USDC', decimals: 6 },
+      chain: () => 'Ethereum'
+    })
+  ).toEqual({ title: 'Swap completed', message: '0.05 ETH → 90 USDC' })
+
+  const refund = { ...origin, role: 'refund', status: 'confirming' }
+  const failed = { ...swap, status: 'failed', failureCode: 'relay-failed' }
+  expect(resolveActivityNotification({ ...failed, segments: [origin, refund] })).toBeUndefined()
+  expect(
+    resolveActivityNotification({ ...failed, segments: [origin, { ...refund, status: 'final' }] })
+      ?.result
+  ).toBe('refunded')
+  expect(
+    resolveActivityNotification({ ...failed, failureCode: 'user-rejected', segments: [] })
+  ).toBeUndefined()
+  expect(
+    resolveActivityNotification({
+      ...failed,
+      id: 'tx:confidential-external:demo',
+      kind: 'shield',
+      failureCode: 'refunded',
+      snapshot: {
+        direction: 'incoming',
+        shield: { operation: 'deposit', destinationDomain: 'shield' }
+      }
+    })?.result
+  ).toBe('refunded')
+})
 
 test('Activity notifications baseline historical receipts and deduplicate route payouts', () => {
   const receipt = (id, status, hash, createdAt) => ({
@@ -483,6 +606,137 @@ test.describe('Activity read model', () => {
     expect(model.items.find(item => item.id === 'transaction:private')?.accountMode).toBe('private')
     expect(model.items.find(item => item.id === 'rpc:evm:private')?.accountMode).toBe('private')
     expect(model.items.find(item => item.id === 'transaction:main')?.accountMode).toBeUndefined()
+    expect(parseActivityReadModel(structuredClone(model))).toEqual(model)
+  })
+
+  test('attributes a NEAR Incognito direct withdrawal to Incognito and keeps the public receipt', () => {
+    const withdrawal = graph({
+      id: 'transaction:near-incognito-withdraw',
+      chainId: nearChainId,
+      assetId: nearUsdtAssetId,
+      hash: nearWithdrawHash,
+      updatedAt: 1_200
+    })
+    withdrawal.root.intent = {
+      ...withdrawal.root.intent,
+      counterAmount: { assetId: nearUsdtAssetId, amountRaw: '154600' },
+      sender: { chainId: nearChainId, address: nearPea },
+      recipient: { chainId: nearChainId, address: nearMain },
+      protocol: {
+        schemaVersion: 1,
+        provider: 'rhea-cross-chain-dex',
+        kind: 'swap',
+        userAction: 'transfer',
+        quoteHandle: 'quote-near-withdraw',
+        executionId: 'execution-near-withdraw',
+        router: 'near-intents',
+        sourceTarget: 'source-near-withdraw',
+        sender: nearPea,
+        originAmountRaw: '155000',
+        expiresAt: 1_900_000_000_000,
+        isCrossChain: false,
+        origin: {
+          chainId: nearChainId,
+          assetId: nearUsdtAssetId,
+          protocolChainId: 'near',
+          protocolAssetId: 'nep141:usdt.tether-token.near'
+        },
+        destination: {
+          chainId: nearChainId,
+          assetId: nearUsdtAssetId,
+          protocolChainId: 'near',
+          protocolAssetId: 'nep141:usdt.tether-token.near',
+          recipient: nearMain,
+          expectedAmountRaw: '154600',
+          minimumAmountRaw: '154000'
+        }
+      }
+    }
+    const publicSend = graph({
+      id: 'transaction:near-public-send',
+      chainId: nearChainId,
+      assetId: nearUsdtAssetId,
+      hash: 'public-near-send-hash',
+      updatedAt: 1_100
+    })
+    publicSend.root.intent.sender = { chainId: nearChainId, address: nearMain }
+    const privateIndexer = {
+      ...supplemental({
+        id: 'rpc:near:private:withdraw',
+        source: 'rpc',
+        chainId: nearChainId,
+        assetId: nearUsdtAssetId,
+        hash: nearWithdrawHash,
+        createdAt: 1_100,
+        updatedAt: 1_400
+      }),
+      accountMode: 'private',
+      snapshot: {
+        schemaVersion: 1,
+        direction: 'outgoing',
+        primaryAmount: { assetId: nearUsdtAssetId, amountRaw: '155000' },
+        sender: { chainId: nearChainId, address: nearPea },
+        recipient: { chainId: nearChainId, address: '68c8e6306188817.near' }
+      }
+    }
+    const publicSameHash = supplemental({
+      id: 'rpc:near:public:same-hash',
+      source: 'rpc',
+      chainId: nearChainId,
+      assetId: nearUsdtAssetId,
+      hash: nearWithdrawHash,
+      createdAt: 1_300,
+      updatedAt: 1_300
+    })
+    const publicReceipt = supplemental({
+      id: 'rpc:near:public:receipt',
+      source: 'rpc',
+      chainId: nearChainId,
+      assetId: nearUsdtAssetId,
+      hash: nearReceiptHash,
+      createdAt: 1_500,
+      updatedAt: 1_500
+    })
+
+    expect(() =>
+      buildActivityReadModel({
+        scope,
+        localGraphs: [],
+        privateExecutionAddresses: ['alice.near']
+      })
+    ).toThrow(/Invalid Activity Private Execution Address set/)
+
+    const model = buildActivityReadModel({
+      scope,
+      localGraphs: [withdrawal, publicSend],
+      supplementalItems: [privateIndexer, publicSameHash, publicReceipt],
+      privateExecutionAddresses: [nearPea]
+    })
+    const selection = { items: model.items, selectedChainIds: [nearChainId] }
+
+    expect(model.items.map(item => item.id)).toEqual([
+      'rpc:near:public:receipt',
+      'rpc:near:public:same-hash',
+      'transaction:near-incognito-withdraw',
+      'transaction:near-public-send'
+    ])
+    expect(
+      model.items.find(item => item.id === 'transaction:near-incognito-withdraw')
+    ).toMatchObject({
+      source: 'wallet-v2',
+      accountMode: 'private'
+    })
+    expect(
+      model.items.find(item => item.id === 'transaction:near-public-send')?.accountMode
+    ).toBeUndefined()
+    expect(filterActivityItems({ ...selection, domain: 'private' }).map(item => item.id)).toEqual([
+      'transaction:near-incognito-withdraw'
+    ])
+    expect(filterActivityItems({ ...selection, domain: 'public' }).map(item => item.id)).toEqual([
+      'rpc:near:public:receipt',
+      'rpc:near:public:same-hash',
+      'transaction:near-public-send'
+    ])
     expect(parseActivityReadModel(structuredClone(model))).toEqual(model)
   })
 

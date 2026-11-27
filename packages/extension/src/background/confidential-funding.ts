@@ -1,4 +1,6 @@
 import { getConfidentialFundingNetworkConfig } from '@/config/intents'
+import { NEAR_CHAIN_FEATURE_FLAG } from '@/config/multichain-feature-flags'
+import { readEnabledChainFeatureFlags } from '@/config/enabled-chain-feature-flags'
 import { getAssetProtocolSourceMappings } from '@/core/prices/asset-market-mappings'
 import type { ChainEndpointSettings } from '@/core/chains/chain-endpoint-settings'
 import type { EvmNetworkConfig } from '@/config/networks'
@@ -10,12 +12,25 @@ import {
   createInitialProductChainRegistry,
   getBundledInitialProductAssetDefinitions,
   parseAssetDisplayMetadata,
-  type AssetDefinitionInput
+  parseAssetId,
+  type AssetDefinitionInput,
+  type AssetRegistry
 } from '@/core/chains/registry'
+import { nearConfidentialPortfolioAssetId } from '@/core/chains/near/near-portfolio-assets'
 import { getCachedTokens, type SwapToken } from '@/core/services/intents-api'
-import { resolveIntentsEvmAssets } from '@/core/services/intents-evm-assets'
+import {
+  isDeprecatedIntentsToken,
+  resolveIntentsEvmAssets
+} from '@/core/services/intents-evm-assets'
 import { loadActiveEvmPortfolioContext } from '@/infrastructure/chains/evm'
+import {
+  createConfiguredNearRpcClient,
+  type PreparedNearConfidentialDeposit
+} from '@/infrastructure/chains/near'
 import { EvmMultichainSigningClient } from '@/infrastructure/keyring/multichain/evm-signing-client'
+import { NearMultichainSigningClient } from '@/infrastructure/keyring/multichain/near-signing-client'
+import { parseChainId } from '@/core/chains/registry'
+import { parseSigningCommandId } from '@/core/keyring/ports/signing'
 import { HardwareEvmSigningContextResolver } from '@/infrastructure/keyring/hardware-evm-signing-context'
 import {
   IndexedDbCredentialRepository,
@@ -31,6 +46,17 @@ import {
   type ConfidentialFundingCoordinatorOptions
 } from './confidential-funding-coordinator'
 import { ConfidentialFundingSigner } from './confidential-funding-signer'
+import type { ConfidentialSigningIdentity } from './confidential-funding-signer'
+import {
+  NearConfidentialDepositAdapter,
+  type NearConfidentialAccount,
+  type NearConfidentialDepositSigning
+} from './confidential-funding-adapters'
+import {
+  NEAR_CONFIDENTIAL_CHAIN_ASSET_ID,
+  NEAR_CONFIDENTIAL_PROTOCOL_ASSET_ID
+} from './confidential-near-quote'
+import { loadActiveNearTransferContext } from './near-transfer'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
 import { requestLedgerSignature } from './ledger-signing-coordinator'
 import {
@@ -38,6 +64,177 @@ import {
   requestKeystoneEvmTransactionSignature
 } from './keystone-evm-message-signing'
 import { queryOneClickOrderStatus } from './one-click-status'
+
+function createNearShieldDeposit(
+  storage: IndexedDbStorageV2Repository,
+  rpcUrl: string
+): NonNullable<ConfidentialFundingCoordinatorOptions['nearDeposit']> {
+  const rpc = createConfiguredNearRpcClient({ chainId: 'near:mainnet', rpcUrl })
+  const signer = new NearMultichainSigningClient({ credentials: credentialSession })
+  const resolveAccount = async (
+    identity: ConfidentialSigningIdentity
+  ): Promise<NearConfidentialAccount> => {
+    const context = await loadActiveNearTransferContext(storage, 'near:mainnet')
+    const source = context?.keyDomainSource
+    const importedNearKey =
+      source?.kind === 'private-key' && source.chainFamily === 'near' && context?.accountIndex === 0
+    if (
+      !context ||
+      !source ||
+      context.chainAccount.identity.kind !== 'account-identifier' ||
+      (source.kind !== 'software' && !importedNearKey) ||
+      context.chainAccount.scope.keyDomainId !== identity.context.chainAccount.scope.keyDomainId ||
+      context.chainAccount.scope.accountId !== identity.context.chainAccount.scope.accountId
+    ) {
+      throw new Error('NEAR Shield deposit requires the active NEAR account')
+    }
+    let peaAccountId: string | null = null
+    try {
+      peaAccountId = (
+        await signer.deriveNearPea(context.chainAccount.scope.keyDomainId, context.accountIndex)
+      ).address
+    } catch {
+      peaAccountId = null
+    }
+    return {
+      accountIndex: context.accountIndex,
+      mainAccountId: context.chainAccount.identity.value,
+      publicKey: context.publicKey,
+      peaAccountId,
+      walletSource:
+        source.kind === 'software'
+          ? { kind: 'software' }
+          : {
+              kind: 'private-key',
+              chainFamily: 'near',
+              accountIndex: context.accountIndex
+            }
+    }
+  }
+  const signing: NearConfidentialDepositSigning = {
+    async prepare(input: {
+      readonly identity: ConfidentialSigningIdentity
+      readonly kind: 'near-transaction' | 'pea-near-transaction'
+      readonly prepared: PreparedNearConfidentialDeposit
+    }) {
+      return accountContextTransition.runActiveOperation(async () => {
+        const keyDomainId = input.identity.context.chainAccount.scope.keyDomainId
+        const prepared = await signer.prepare(keyDomainId, {
+          kind: input.kind,
+          chainId: parseChainId(input.prepared.chainId).id,
+          accountIndex: input.prepared.accountIndex,
+          transaction: {
+            chainId: input.prepared.transaction.chainId,
+            accountIndex: input.prepared.transaction.accountIndex,
+            signerId: input.prepared.transaction.signerId,
+            receiverId: input.prepared.transaction.receiverId,
+            nonce: input.prepared.transaction.nonce,
+            blockHash: input.prepared.transaction.blockHash,
+            actions: input.prepared.transaction.actions
+          }
+        })
+        if (
+          prepared.execution.kind !== 'internal' ||
+          prepared.operation !== 'transaction' ||
+          prepared.expiresAt <= Date.now()
+        ) {
+          await signer.cancel(keyDomainId, prepared.commandId).catch(() => undefined)
+          throw new Error('NEAR Shield signing request cannot be approved')
+        }
+        return {
+          commandId: prepared.commandId,
+          payloadFingerprint: prepared.payloadFingerprint.digestHex,
+          expiresAt: prepared.expiresAt
+        }
+      })
+    },
+    async confirm(input: {
+      readonly identity: ConfidentialSigningIdentity
+      readonly commandId: string
+      readonly prepared: PreparedNearConfidentialDeposit
+    }) {
+      return accountContextTransition.runActiveOperation(async () => {
+        const signed = await signer.confirm(
+          input.identity.context.chainAccount.scope.keyDomainId,
+          parseSigningCommandId(input.commandId)
+        )
+        if (
+          signed.kind !== 'signed-payload' ||
+          signed.payload.encoding !== 'base64' ||
+          signed.transactionId === undefined
+        ) {
+          throw new Error('Signed NEAR Shield deposit failed integrity validation')
+        }
+        return {
+          rawTransaction: signed.payload.value,
+          transactionHash: signed.transactionId
+        }
+      })
+    },
+    cancel(input: { readonly identity: ConfidentialSigningIdentity; readonly commandId: string }) {
+      return accountContextTransition.runActiveOperation(() =>
+        signer.cancel(
+          input.identity.context.chainAccount.scope.keyDomainId,
+          parseSigningCommandId(input.commandId)
+        )
+      )
+    }
+  }
+  return {
+    resolveAccount,
+    adapter: new NearConfidentialDepositAdapter({ resolve: resolveAccount }, signing, rpc),
+    broadcastSignedTransaction: rawTransaction => rpc.broadcastSignedTransaction(rawTransaction),
+    getTransactionStatus: (transactionHash, signerId) =>
+      rpc.getTransactionStatus(transactionHash, signerId)
+  }
+}
+
+function nearConfidentialCatalogDefinitions(
+  tokens: readonly SwapToken[],
+  existing: AssetRegistry
+): readonly AssetDefinitionInput[] {
+  if (
+    DEFAULT_NETWORK !== 'mainnet' ||
+    !readEnabledChainFeatureFlags().includes(NEAR_CHAIN_FEATURE_FLAG)
+  ) {
+    return []
+  }
+  return tokens.flatMap(token => {
+    const assetId = nearConfidentialPortfolioAssetId(token.assetId)
+    if (
+      !assetId ||
+      assetId === NEAR_CONFIDENTIAL_CHAIN_ASSET_ID ||
+      token.blockchain !== 'near' ||
+      isDeprecatedIntentsToken(token) ||
+      existing.inspect(assetId)
+    ) {
+      return []
+    }
+    try {
+      const parsed = parseAssetId(assetId)
+      if (parsed.namespace !== 'nep141' || parsed.chainId !== 'near:mainnet') return []
+      const metadata = parseAssetDisplayMetadata({
+        name: token.symbol,
+        symbol: token.symbol,
+        decimals: token.decimals,
+        ...(token.icon ? { iconUrl: token.icon } : {})
+      })
+      return [
+        Object.freeze({
+          chainId: parsed.chainId,
+          namespace: 'nep141' as const,
+          reference: parsed.reference,
+          kind: 'token' as const,
+          metadata,
+          source: 'protocol' as const,
+          verification: 'trusted' as const
+        })
+      ]
+    } catch {
+      return []
+    }
+  })
+}
 
 export function createBackgroundConfidentialFundingCoordinator(
   evmNetworks: readonly EvmNetworkConfig[],
@@ -101,9 +298,11 @@ export function createBackgroundConfidentialFundingCoordinator(
       }
     })
   const protocolDefinitionIds = new Set(confidentialEvmDefinitions.map(definitionId))
+  const nearTokenDefinitions = nearConfidentialCatalogDefinitions(protocolTokens, existingAssets)
   const assets = createAssetRegistry(chains, [
     ...existingDefinitions.filter(asset => !protocolDefinitionIds.has(definitionId(asset))),
-    ...confidentialEvmDefinitions
+    ...confidentialEvmDefinitions,
+    ...nearTokenDefinitions
   ])
   const storage = new IndexedDbStorageV2Repository()
   const signerClient = new EvmMultichainSigningClient({ credentials: credentialSession })
@@ -123,6 +322,40 @@ export function createBackgroundConfidentialFundingCoordinator(
       }))
     ].map(mapping => [mapping.assetId, Object.freeze(mapping)])
   )
+  const nearShieldEnabled =
+    DEFAULT_NETWORK === 'mainnet' &&
+    readEnabledChainFeatureFlags().includes(NEAR_CHAIN_FEATURE_FLAG) &&
+    near.chainId === 'near:mainnet' &&
+    assets.get(NEAR_CONFIDENTIAL_CHAIN_ASSET_ID) !== undefined
+  if (nearShieldEnabled) {
+    if (
+      ![...mappings.values()].some(
+        mapping => mapping.protocolAssetId === NEAR_CONFIDENTIAL_PROTOCOL_ASSET_ID
+      )
+    ) {
+      mappings.set(
+        NEAR_CONFIDENTIAL_CHAIN_ASSET_ID,
+        Object.freeze({
+          assetId: NEAR_CONFIDENTIAL_CHAIN_ASSET_ID,
+          protocolAssetId: NEAR_CONFIDENTIAL_PROTOCOL_ASSET_ID
+        })
+      )
+    }
+    for (const token of protocolTokens) {
+      const assetId = nearConfidentialPortfolioAssetId(token.assetId)
+      if (
+        !assetId ||
+        assetId === NEAR_CONFIDENTIAL_CHAIN_ASSET_ID ||
+        mappings.has(assetId) ||
+        assets.get(assetId) === undefined ||
+        token.blockchain !== 'near' ||
+        isDeprecatedIntentsToken(token)
+      ) {
+        continue
+      }
+      mappings.set(assetId, Object.freeze({ assetId, protocolAssetId: token.assetId }))
+    }
+  }
   return new ConfidentialFundingCoordinator({
     network: DEFAULT_NETWORK,
     api: new ConfidentialFundingApi(config, near.rpcUrl, __RHEA_SWAP_ACCESS_TOKEN__),
@@ -132,6 +365,23 @@ export function createBackgroundConfidentialFundingCoordinator(
       signerClient,
       chainId => loadActiveEvmPortfolioContext(storage, chainId),
       operation => accountContextTransition.runActiveOperation(operation),
+      {
+        client: new NearMultichainSigningClient({ credentials: credentialSession }),
+        rpc: createConfiguredNearRpcClient({ chainId: near.chainId, rpcUrl: near.rpcUrl }),
+        chainId: parseChainId(near.chainId).id,
+        loadContext: async chainId => {
+          const context = await loadActiveNearTransferContext(storage, chainId)
+          const pointer = await storage.getActivePointer()
+          if (!context || !pointer) return null
+          return Object.freeze({
+            generationId: pointer.generationId,
+            chainAccount: context.chainAccount,
+            keyDomainSource: context.keyDomainSource,
+            accountIndex: context.accountIndex,
+            publicKey: context.publicKey
+          })
+        }
+      },
       DEFAULT_NETWORK === 'mainnet'
         ? {
             resolve: chainAccount => hardware.resolve(chainAccount),
@@ -162,6 +412,7 @@ export function createBackgroundConfidentialFundingCoordinator(
     },
     ...nativeZecFunding,
     assetMappings: Object.freeze([...mappings.values()]),
+    ...(nearShieldEnabled ? { nearDeposit: createNearShieldDeposit(storage, near.rpcUrl) } : {}),
     scheduleMonitoring: async (delayInMinutes = 0.1) => {
       const alarm = await chrome.alarms.get(CONFIDENTIAL_FUNDING_MONITOR_ALARM)
       if (

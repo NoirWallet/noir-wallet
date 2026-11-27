@@ -10,7 +10,7 @@ import { ASSET_PRICE_FRESH_MS, findAssetPrice, type AssetPriceReadModel } from '
 import { getAssetProtocolSourceMappings } from '@/core/prices/asset-market-mappings'
 import Big from '@/lib/big'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
-import { formatSymbol } from '@/lib/format'
+import { formatShieldSymbol } from '@/lib/format'
 import { resolveEvmChainIconAlias } from '@/config/icons'
 import type { Network } from '@/types'
 import { excludeDeprecatedConfidentialAssets } from '@/core/services/confidential-funding/confidential-funding-portfolio'
@@ -245,7 +245,8 @@ export function listStandaloneNearConfidentialHoldings(
 ): readonly StandaloneNearConfidentialHolding[] {
   const mergedAssets = new Map<string, string>(
     displayedModel.assets.flatMap(asset =>
-      asset.asset.chainId.startsWith('eip155:') && BigInt(asset.balance.confidentialRaw ?? '0') > 0n
+      (asset.asset.chainId.startsWith('eip155:') || asset.asset.chainId.startsWith('near:')) &&
+      BigInt(asset.balance.confidentialRaw ?? '0') > 0n
         ? [[asset.asset.id, asset.balance.confidentialRaw ?? '0'] as const]
         : []
     )
@@ -364,8 +365,8 @@ function holdingIdentityLabel(
   assets: readonly ConfidentialAsset[]
 ): string | null {
   if (!asset.symbol) return null
-  const symbol = formatSymbol(asset.symbol).toLowerCase()
-  const siblings = assets.filter(item => formatSymbol(item.symbol).toLowerCase() === symbol)
+  const symbol = formatShieldSymbol(asset.symbol).toLowerCase()
+  const siblings = assets.filter(item => formatShieldSymbol(item.symbol).toLowerCase() === symbol)
   if (siblings.length < 2) return null
   const network = asset.blockchain ?? asset.chainId
   if (

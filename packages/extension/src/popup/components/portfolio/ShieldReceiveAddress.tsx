@@ -9,7 +9,7 @@ import {
   shouldAutoRefreshExternalShieldDeposit
 } from '@/core/services/confidential-funding/confidential-external-deposit'
 import type { Network } from '@/types'
-import { formatSortAddress, formatSymbol } from '@/lib/format'
+import { formatSortAddress, formatShieldSymbol } from '@/lib/format'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { resolveEvmChainIconAlias } from '@/config/icons'
 import { cn } from '@/lib/utils'
@@ -148,7 +148,12 @@ export function ShieldReceiveAddress({
       : null
   const payment = currentRecord ? depositPaymentProgress(currentRecord, now) : null
   const canPay = payment?.canPay ?? false
-  const appFeeBps = currentRecord?.quoteAppFeeBps ?? 0
+  const appFeeBps =
+    currentRecord &&
+    'quoteAppFeeBps' in currentRecord &&
+    typeof currentRecord.quoteAppFeeBps === 'number'
+      ? currentRecord.quoteAppFeeBps
+      : 0
   const refundAddress = defaultDepositRefundAddress(asset?.chain ?? null, account?.networks ?? [])
   const sourceAssetId = asset ? depositSourceAssetId(asset.token, asset.chain) : null
   const nearReady =
@@ -358,24 +363,31 @@ export function ShieldReceiveAddress({
     }
   }
 
+  const nearRefund = currentRecord?.source.chainId.startsWith('near:') === true
   const refundAccount = currentRecord
     ? accountCatalog?.accounts.find(candidate =>
         candidate.networks.some(
           item =>
-            item.chain.id === currentRecord.source.chainId &&
+            (item.chain.id === currentRecord.source.chainId ||
+              (nearRefund && item.chain.family === 'evm')) &&
             (item.privateExecutionAddress?.toLowerCase() ===
               currentRecord.refundAddress.toLowerCase() ||
               item.addresses.some(
                 address =>
                   address.value === currentRecord.refundAddress ||
-                  (item.chain.family === 'evm' &&
+                  ((item.chain.family === 'evm' || nearRefund) &&
                     address.value.toLowerCase() === currentRecord.refundAddress.toLowerCase())
               ))
         )
       )
     : undefined
-  const refundNetwork = refundAccount?.networks.find(
-    item => item.chain.id === currentRecord?.source.chainId
+  const refundNetwork = refundAccount?.networks.find(item =>
+    nearRefund
+      ? item.chain.family === 'evm' &&
+        item.addresses.some(
+          address => address.value.toLowerCase() === currentRecord?.refundAddress.toLowerCase()
+        )
+      : item.chain.id === currentRecord?.source.chainId
   )
   const refundIsPrivate =
     Boolean(currentRecord) &&
@@ -438,7 +450,7 @@ export function ShieldReceiveAddress({
               {currentRecord ? (
                 <TokenIcon
                   assetId={currentRecord.source.assetId}
-                  symbol={formatSymbol(symbol)}
+                  symbol={formatShieldSymbol(symbol)}
                   icon={asset ? resolveSwapTokenIconUrl(asset.token) : undefined}
                   blockchain={sourceChain ? chainIcon(sourceChain) : undefined}
                   size={40}

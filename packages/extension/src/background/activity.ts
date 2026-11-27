@@ -3,6 +3,7 @@ import {
   hasExternalShieldDepositFunding,
   isLegacyShieldWithdrawActivityGraph,
   isLegacyUnifiedZecMoveActivityGraph,
+  projectConfidentialAppFeeRejection,
   projectExternalShieldDepositActivityGraph,
   projectLegacyShieldWithdrawActivityGraph,
   projectLegacyUnifiedZecSwapActivityGraph,
@@ -232,9 +233,27 @@ function solanaSignature(item: ActivityItem): string | null {
   return item.id.startsWith(prefix) ? item.id.slice(prefix.length) : null
 }
 
+function withNearPrivateAccountMode(items: readonly ActivityItem[]): readonly ActivityItem[] {
+  return Object.freeze(
+    items.map(item =>
+      Object.freeze({
+        ...item,
+        id: item.id.startsWith('rpc:near:')
+          ? `rpc:near:private:${item.id.slice('rpc:near:'.length)}`
+          : `${item.id}:private`,
+        accountMode: 'private' as const
+      })
+    )
+  )
+}
+
 export function createBackgroundActivityCoordinator(
   bitcoinCustomRpcUrl?: string,
   endpointSettings?: ChainEndpointSettings,
+  readNearPrivateExecutionAddress?: (
+    scope: ActivityScope,
+    chainId: string
+  ) => Promise<string | null>,
   onHistoryRead?: (scope: ActivityScope, chainId: string, mode?: 'main' | 'private') => void
 ): ActivityCoordinator {
   const storageRepository = new IndexedDbStorageV2Repository()
@@ -582,13 +601,40 @@ export function createBackgroundActivityCoordinator(
     scope: ActivityScope,
     fallbackItems: readonly ActivityItem[]
   ): Promise<readonly ActivityItem[]> => {
-    if (!nearHistory) return Object.freeze([])
+    if (!nearHistory || DEFAULT_NETWORK !== 'mainnet') return Object.freeze([])
     const address = await resolveChainAddress(storageRepository, scope, 'near', nearNetwork.chainId)
     if (!address) return Object.freeze([])
+    const privateAddress = readNearPrivateExecutionAddress
+      ? await readNearPrivateExecutionAddress(scope, nearNetwork.chainId)
+          .then(value =>
+            value && value !== address && /^[0-9a-f]{64}$/.test(value) ? value : null
+          )
+          .catch(() => null)
+      : null
     try {
-      const fresh = await nearHistory.readAddressActivity({ scope, address })
-      onHistoryRead?.(scope, nearNetwork.chainId)
-      return mergeActivityHistoryItems(fallbackItems, fresh, ACTIVITY_HISTORY_CACHE_ITEM_LIMIT)
+      const mainItems = await nearHistory.readAddressActivity({ scope, address })
+      onHistoryRead?.(scope, nearNetwork.chainId, 'main')
+      let privateItems: readonly ActivityItem[] = []
+      if (privateAddress) {
+        try {
+          privateItems = withNearPrivateAccountMode(
+            await nearHistory.readAddressActivity({ scope, address: privateAddress })
+          )
+          onHistoryRead?.(scope, nearNetwork.chainId, 'private')
+        } catch (error) {
+          logger.warn(
+            `NEAR private activity refresh failed: ${error instanceof Error ? error.name : 'UnknownError'}`,
+            scope.keyDomainId,
+            scope.accountId
+          )
+          privateItems = fallbackItems.filter(item => item.accountMode === 'private')
+        }
+      }
+      return mergeActivityHistoryItems(
+        fallbackItems,
+        [...mainItems, ...privateItems],
+        ACTIVITY_HISTORY_CACHE_ITEM_LIMIT
+      )
     } catch (error) {
       logger.warn(
         `NEAR activity refresh failed: ${formatLogError(error)}`,
@@ -793,6 +839,7 @@ export function createBackgroundActivityCoordinator(
       .filter(
         graph =>
           (graph.root.status === 'final' && graph.root.intent?.shield?.operation === 'deposit') ||
+          (graph.root.status === 'failed' && graph.root.intent?.shield !== undefined) ||
           isLegacyUnifiedZecMoveActivityGraph(graph) ||
           (privateExecutionAddresses.length > 0 && isLegacyShieldWithdrawActivityGraph(graph))
       )
@@ -830,7 +877,7 @@ export function createBackgroundActivityCoordinator(
         projectedGraphs.push(projectLegacyUnifiedZecSwapActivityGraph(graph, plan, DEFAULT_NETWORK))
         continue
       }
-      projectedGraphs.push(
+      const routed =
         graph.root.intent?.shield?.operation === 'deposit'
           ? projectShieldDepositSettlement(graph, plan, DEFAULT_NETWORK)
           : projectLegacyShieldWithdrawActivityGraph(
@@ -839,7 +886,7 @@ export function createBackgroundActivityCoordinator(
               DEFAULT_NETWORK,
               privateExecutionAddresses
             )
-      )
+      projectedGraphs.push(projectConfidentialAppFeeRejection(routed, plan, DEFAULT_NETWORK))
     }
     if (!bitcoinDiscovery) return projectedGraphs
     const context = await loadActiveBitcoinDiscoveryContext(
@@ -900,21 +947,36 @@ export function createBackgroundActivityCoordinator(
     loadSupplementalItems,
     loadCachedSupplementalItems,
     loadSupplementalHasMore,
-    ...(evmHistorySources.length > 0
+    ...(evmHistorySources.length > 0 || readNearPrivateExecutionAddress
       ? {
           loadPrivateExecutionAddresses: async (
             scope: ActivityScope,
             localGraphs: readonly TransactionGraph[]
           ) => {
+            const nearPrivateAddress = readNearPrivateExecutionAddress
+              ? await readNearPrivateExecutionAddress(scope, nearNetwork.chainId)
+                  .then(value => (value && /^[0-9a-f]{64}$/.test(value) ? value : null))
+                  .catch(error => {
+                    logger.warn(
+                      `Activity NEAR private address lookup failed: ${formatLogError(error)}`,
+                      scope.keyDomainId,
+                      scope.accountId
+                    )
+                    return null
+                  })
+              : null
+            const withNearPrivateAddress = (addresses: readonly string[]) =>
+              Object.freeze([...addresses, ...(nearPrivateAddress ? [nearPrivateAddress] : [])])
+            if (evmHistorySources.length === 0) return withNearPrivateAddress([])
             const account = await resolveEvmMainAddress(storageRepository, scope)
-            if (!account?.privateAvailable) return Object.freeze([])
+            if (!account?.privateAvailable) return withNearPrivateAddress([])
             if (await credentialSession.hasUnlockSession()) {
               try {
                 const derived = await peaSigner.deriveGlobalPea(
                   scope.keyDomainId,
                   account.addressIndex
                 )
-                return Object.freeze([derived.address.toLowerCase()])
+                return withNearPrivateAddress([derived.address.toLowerCase()])
               } catch (error) {
                 logger.warn(
                   `Activity Private address derivation failed: ${formatLogError(error)}`,
@@ -928,7 +990,7 @@ export function createBackgroundActivityCoordinator(
               scope,
               account.main
             )
-            return Object.freeze(inferred ? [inferred] : [])
+            return withNearPrivateAddress(inferred ? [inferred] : [])
           }
         }
       : {}),

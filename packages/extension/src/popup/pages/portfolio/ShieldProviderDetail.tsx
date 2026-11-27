@@ -25,6 +25,7 @@ import {
   getConfidentialWalletDetailAssetId,
   summarizeNearConfidentialHoldings
 } from '@/popup/services/near-confidential-holdings'
+import { getPrivateTransferChainIds } from '@/popup/services/private-balance-transfer'
 import { getShieldTransferChainIds } from '@/popup/services/shield-transfer'
 import { buildShieldProviderGroups, type ShieldProvider } from '@/popup/services/asset-domains'
 import { NearConfidentialHoldingRow } from '@/popup/components/portfolio/NearConfidentialHoldingRow'
@@ -136,6 +137,7 @@ function ShieldProviderContent() {
     [directoryTokens]
   )
   const canManageNear =
+    getPrivateTransferChainIds(activeAccount, currentNetwork === 'mainnet').length > 0 ||
     getShieldTransferChainIds(activeAccount, currentNetwork === 'mainnet').length > 0
   const {
     connecting,
