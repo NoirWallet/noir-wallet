@@ -344,6 +344,7 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
   let switchDuringAuthorization = false
   let switchDuringIdentityResolution = false
   let identityResolutionCount = 0
+  let hardwareViewer
   const originalChrome = globalThis.chrome
   const originalFetch = globalThis.fetch
   const originalLocks = Object.getOwnPropertyDescriptor(globalThis.navigator, 'locks')
@@ -390,7 +391,7 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
                 quoteRequest.refundTo === shieldedRefundAddress
                   ? shieldedDepositAddress
                   : depositAddress,
-              depositMemo: ' ref+id '
+              ...(!hardwareViewer && { depositMemo: ' ref+id ' })
             }),
             deadline: quoteRequest.deadline
           }
@@ -434,6 +435,7 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
           activeAccountId = 'account-two'
         return recipient
       },
+      resolveHardwareConfidentialViewer: async () => hardwareViewer,
       authorizeConfidentialIdentity: async () => {
         if (switchDuringAuthorization) activeAccountId = 'account-two'
       },
@@ -546,6 +548,32 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
       referral: 'noir_receive',
       appFees: [{ recipient: 'noir_swap.near', fee: 2 }]
     })
+    const priorReview = await coordinator.prepare({ ...request, userAction: undefined })
+    expect(await coordinator.cancel(priorReview.quoteId)).toBe(true)
+
+    hardwareViewer = { chainFamily: 'evm', walletAddress: recipient, signingMode: 'public' }
+    await expect(coordinator.prepare({ ...request, fundingSource: 'shielded' })).rejects.toThrow(
+      'Ledger requires transparent ZEC'
+    )
+    switchDuringAuthorization = true
+    const hardwareReview = await coordinator.prepare(request)
+    expect(quoteRequests.at(-1)).toMatchObject({
+      refundTo: refundAddress,
+      recipient,
+      user: recipient,
+      userChainFamily: 'evm'
+    })
+    expect(
+      (await coordinator.get(hardwareReview.quoteId)).quoteBinding.oneClickOrder.viewer
+    ).toEqual(hardwareViewer)
+    const storedKey = `native_zec_intents_swap:${hardwareReview.quoteId}`
+    values.get(storedKey).quoteBinding.oneClickOrder.viewer = {
+      ...hardwareViewer,
+      walletAddress: `0x${'2'.repeat(40)}`
+    }
+    await expect(coordinator.get(hardwareReview.quoteId)).rejects.toThrow(
+      'Native ZEC 1Click order binding is invalid'
+    )
   } finally {
     globalThis.chrome = originalChrome
     globalThis.fetch = originalFetch

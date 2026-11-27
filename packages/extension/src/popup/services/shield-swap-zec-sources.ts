@@ -2,7 +2,10 @@ import { ZEC_ZCASH_ASSET } from '@/config/intents'
 import { getEvmNetworkConfigs } from '@/config/networks'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { getZcashChainId } from '@/core/chains/registry'
-import { supportsEvmPrivateExecution } from '@/core/chains/evm'
+import {
+  supportsEvmPrivateExecution,
+  supportsLedgerTransparentZecConfidentialSwap
+} from '@/core/chains/evm/execution-capability'
 import {
   isNewWalletFamilyEnabled,
   resolveEvmFeatureRuntimePolicy
@@ -101,13 +104,19 @@ export function resolveShieldNativeZecSwapAvailable(input: {
 export function hasNativeZecConfidentialSwapRoute(
   account: AccountNetworksView | null,
   network: Network,
-  enabledFlags: readonly ChainFeatureFlagValue[]
+  enabledFlags: readonly ChainFeatureFlagValue[],
+  fundingSource: 'transparent' | 'shielded' = 'shielded'
 ): boolean {
   const settlementChainId = getEvmNetworkConfigs(network)[0]?.chainId
   return Boolean(
     resolveEvmFeatureRuntimePolicy(enabledFlags).newOperationsEnabled &&
-    supportsEvmPrivateExecution(account?.walletSource) &&
-    account?.networks.some(entry => entry.chain.id === settlementChainId)
+    (supportsEvmPrivateExecution(account?.walletSource)
+      ? account?.networks.some(entry => entry.chain.id === settlementChainId)
+      : fundingSource === 'transparent' &&
+        network === 'mainnet' &&
+        supportsLedgerTransparentZecConfidentialSwap(account?.walletSource) &&
+        account?.networks.some(entry => entry.chain.id === getZcashChainId(network)) &&
+        account.networks.some(entry => entry.chain.family === 'evm'))
   )
 }
 
@@ -116,12 +125,13 @@ export function canSwapNativeShieldZec(input: {
   readonly network: Network
   readonly enabledFlags: readonly ChainFeatureFlagValue[]
   readonly keySource: KeySource | undefined
+  readonly fundingSource?: 'transparent' | 'shielded'
 }): boolean {
-  const { account, network, enabledFlags, keySource } = input
+  const { account, network, enabledFlags, keySource, fundingSource = 'shielded' } = input
   return (
     network === 'mainnet' &&
-    !getFundingSourceUnavailableReason(keySource, 'shielded') &&
-    hasNativeZecConfidentialSwapRoute(account, network, enabledFlags) &&
+    !getFundingSourceUnavailableReason(keySource, fundingSource) &&
+    hasNativeZecConfidentialSwapRoute(account, network, enabledFlags, fundingSource) &&
     resolveShieldNativeZecSwapAvailable({
       network,
       portfolio: null,

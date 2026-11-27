@@ -1,8 +1,9 @@
 import { getConfidentialFundingNetworkConfig } from '@/config/intents'
-import type { OneClickOrder } from '@/core/services/near-intents/one-click-order'
+import type { OneClickOrder, OneClickViewer } from '@/core/services/near-intents/one-click-order'
 import {
   OneClickStatusClient,
-  type OneClickAccount
+  type OneClickAccount,
+  type OneClickChallenge
 } from '@/core/services/near-intents/one-click-status-client'
 import { loadOneClickWallet, resolveOneClickSigner } from './one-click-status-signing'
 import { oneClickStatusTokens } from './one-click-status-tokens'
@@ -13,6 +14,20 @@ const client = new OneClickStatusClient({
   tokens: oneClickStatusTokens,
   resolveSigner: resolveOneClickSigner
 })
+
+export async function authorizeOneClickOrderOwner(
+  scope: OneClickAccount & { readonly viewer: OneClickViewer },
+  sign: (challenge: OneClickChallenge) => Promise<Record<string, string>>
+): Promise<void> {
+  const config = getConfidentialFundingNetworkConfig(scope.network)
+  if (
+    !config ||
+    !(await loadOneClickWallet(scope)) ||
+    !(await client.authorizeOwner({ ...scope, endpoint: config.oneClickApiUrl }, sign))
+  ) {
+    throw new Error('Could not authorize access to the Confidential order.')
+  }
+}
 
 export async function queryOneClickOrderStatus(
   input: OneClickAccount & {

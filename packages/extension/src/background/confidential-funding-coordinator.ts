@@ -22,7 +22,8 @@ import {
   ExternalShieldDepositError,
   type ExternalShieldDepositFailureStage
 } from '@/core/services/confidential-funding/confidential-external-deposit'
-import { isAddress } from 'viem'
+import { isAddress, toHex } from 'viem'
+import { supportsLedgerTransparentZecConfidentialSwap } from '@/core/chains/evm/execution-capability'
 import { parseZcashAddress } from '@/core/address-book/address-book'
 import { isValidExternalRecipient } from './confidential-funding-recipient'
 import type { PortfolioReadModel } from '@/core/portfolio'
@@ -130,8 +131,12 @@ import {
 } from './native-zec-intents-swap'
 import { ShieldDappCoordinator } from './shield-dapp-coordinator'
 import type { ShieldDappOperationReport } from '@/core/services/confidential-funding/shield-dapp-projection'
-import type { queryOneClickOrderStatus } from './one-click-status'
-import type { PrepareNativeZecIntentsSwapInput } from '@/core/services/native-zec-intents-swap'
+import { authorizeOneClickOrderOwner, type queryOneClickOrderStatus } from './one-click-status'
+import {
+  sameNativeZecQuoteBinding,
+  zecToZats,
+  type PrepareNativeZecIntentsSwapInput
+} from '@/core/services/native-zec-intents-swap'
 import type { QuoteBinding } from '@/types/wallet'
 
 const SESSION_REFRESH_BUFFER_MS = 60_000
@@ -703,6 +708,17 @@ export class ConfidentialFundingCoordinator {
       ...options,
       getActiveAccount: options.getNativeZecActiveAccount,
       resolveConfidentialIdentity: async scope => (await nativeIdentity(scope)).address,
+      resolveHardwareConfidentialViewer: async scope => {
+        const identity = await nativeIdentity(scope)
+        const source = identity.context.keyDomainSource
+        if (source.kind !== 'hardware') return undefined
+        if (
+          !supportsLedgerTransparentZecConfidentialSwap(source) ||
+          identity.address !== scope.recipient
+        )
+          throw new Error('Native ZEC Confidential account is unavailable')
+        return { chainFamily: 'evm', signingMode: 'public', walletAddress: identity.address }
+      },
       authorizeConfidentialIdentity: async scope => {
         const identity = await nativeIdentity(scope)
         if (identity.address !== scope.recipient)
@@ -782,6 +798,69 @@ export class ConfidentialFundingCoordinator {
 
   cancelNativeZecIntentsSwap(quoteId: string) {
     return this.nativeZecIntents.cancel(quoteId)
+  }
+
+  async authorizeNativeZecHardwareSpend(
+    input: Readonly<{
+      walletId: string
+      accountId: string
+      binding: QuoteBinding
+      to?: string
+      amount?: string
+      fundingSource?: string
+      expiresAt: number
+    }>
+  ): Promise<void> {
+    const review = await this.nativeZecIntents.get(input.binding.quoteHandle ?? '')
+    const viewer = review.quoteBinding.oneClickOrder?.viewer
+    const expiresAt = Math.min(review.expiresAt, input.expiresAt)
+    if (
+      review.walletId !== input.walletId ||
+      review.accountId !== input.accountId ||
+      review.fundingSource !== 'transparent' ||
+      input.fundingSource !== review.fundingSource ||
+      input.to !== review.depositAddress ||
+      !input.amount ||
+      zecToZats(input.amount) !== review.amountZats ||
+      expiresAt <= this.now() ||
+      viewer?.chainFamily !== 'evm' ||
+      viewer.walletAddress !== review.destination.recipient ||
+      !sameNativeZecQuoteBinding(input.binding, review.quoteBinding)
+    )
+      throw new Error('Native ZEC Confidential quote changed. Review again.')
+
+    const identity = await this.resolveShieldAccountIdentity()
+    const { chainAccount, keyDomainSource } = identity.context
+    if (
+      !supportsLedgerTransparentZecConfidentialSwap(keyDomainSource) ||
+      chainAccount.scope.keyDomainId !== input.walletId ||
+      chainAccount.scope.accountId !== input.accountId ||
+      identity.address !== viewer.walletAddress
+    )
+      throw new Error('Native ZEC Confidential account changed')
+
+    await this.ensureSession(identity, true, expiresAt)
+    await authorizeOneClickOrderOwner(
+      {
+        network: this.options.network,
+        walletId: input.walletId,
+        accountId: input.accountId,
+        viewer
+      },
+      async challenge => {
+        const signature = await this.options.signer.signHardwarePersonalMessage({
+          identity,
+          chainId: chainAccount.scope.chainId,
+          payload: challenge.message,
+          expiresAt: Math.min(expiresAt, challenge.expiresAt)
+        })
+        signature[64] += 27
+        return { signature: toHex(signature) }
+      }
+    )
+    await this.nativeZecIntents.get(review.quoteId)
+    if (expiresAt <= this.now())
+      throw new Error('Native ZEC Confidential quote expired. Review again.')
   }
 
   claimNativeZecIntentsSpend(

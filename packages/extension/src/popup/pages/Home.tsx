@@ -10,6 +10,7 @@ import { useIncognitoSetup } from '@/popup/hooks/useIncognitoSetup'
 import { addIncognitoNetworkPath } from '@/popup/services/account-network-presentation'
 import { availableSoftwareAccountFamilies } from '@/popup/services/account-network-selection-client'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
+import { supportsLedgerTransparentZecConfidentialSwap } from '@/core/chains/evm/execution-capability'
 import { HomeBalanceOverview } from '../components/portfolio/HomeBalanceOverview'
 import { openModal } from '../provider/ModalManager'
 import { useDAppConnection } from '../hooks/useDAppConnection'
@@ -339,12 +340,17 @@ export function Home() {
     evmOperationsEnabled &&
     getPrivateTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length > 0
   const canSwapShield = shieldActions.providersFor('swap').length > 0
-  const canSwapNativeZec = canSwapNativeShieldZec({
+  const nativeZecSwapContext = {
     account: storageV2Account,
     network: currentNetwork,
     enabledFlags: __ENABLED_CHAIN_FEATURE_FLAGS__,
     keySource: currentWallet?.keySource
-  })
+  }
+  const canSwapNativeZec = canSwapNativeShieldZec(nativeZecSwapContext)
+  const canSwapTransparentZecToShield =
+    isShieldView &&
+    supportsLedgerTransparentZecConfidentialSwap(storageV2Account?.walletSource) &&
+    canSwapNativeShieldZec({ ...nativeZecSwapContext, fundingSource: 'transparent' })
   const openSend = () => {
     const sendPath = isShieldView ? buildShieldActionPath('send') : '/send?mode=public'
     navigate.navigate(sendPath, {
@@ -369,7 +375,8 @@ export function Home() {
       navigate.navigate(
         buildShieldActionPath('swap', {
           account,
-          provider: !canSwapShield && canSwapNativeZec ? 'zcash-shield' : undefined
+          provider: !canSwapShield && canSwapNativeZec ? 'zcash-shield' : undefined,
+          shieldZecSource: canSwapTransparentZecToShield ? 'native-transparent' : undefined
         })
       )
       return
@@ -983,7 +990,10 @@ export function Home() {
                 isTestnet ||
                 !supportsSwap ||
                 (assetDomain === 'private' && !canMoveEvm) ||
-                (isShieldView && !canSwapShield && !canSwapNativeZec)
+                (isShieldView &&
+                  !canSwapShield &&
+                  !canSwapNativeZec &&
+                  !canSwapTransparentZecToShield)
               }
               onClick={openSwap}
             />
