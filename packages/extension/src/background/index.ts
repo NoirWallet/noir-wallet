@@ -119,6 +119,7 @@ import { getRetryableWalletRpcUserMessage } from '@/core/zcash/wallet-rpc-errors
 import {
   clearPreparedHardwareSignRequest,
   consumePreparedHardwareSignRequest,
+  HARDWARE_SIGN_REQUEST_TTL_MS,
   isHardwareDAppAuthorizationCurrent,
   isHardwareSignRequestFresh,
   readHardwareSignRequest,
@@ -6429,53 +6430,74 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     }
     // Build the hardware PCZT in the background so sync is paused and the
     // account is restored before building (avoids "Account not initialized").
-    accountContextTransition
-      .runActiveOperation(async () => {
-        const request = await readHardwareSignRequest(message.requestId)
+    const readMatchingRequest = async () => {
+      const request = await readHardwareSignRequest(message.requestId)
+      if (
+        !request ||
+        !isHardwareSignRequestFresh(request) ||
+        request.kind !== message.kind ||
+        request.walletId !== message.walletId ||
+        request.accountId !== message.accountId ||
+        request.to !== message.to ||
+        request.amount !== message.amount ||
+        request.maxTransfer !== message.maxTransfer ||
+        request.memo !== message.memo ||
+        request.fundingSource !== message.fundingSource ||
+        request.marginalFeeZats !== message.marginalFeeZats ||
+        request.feeQuoteId !== message.feeQuoteId
+      ) {
+        throw new Error('Hardware signing request expired or does not match this transaction.')
+      }
+      return request
+    }
+    void readMatchingRequest()
+      .then(async request => {
         if (
-          !request ||
-          !isHardwareSignRequestFresh(request) ||
-          request.kind !== message.kind ||
-          request.walletId !== message.walletId ||
-          request.accountId !== message.accountId ||
-          request.to !== message.to ||
-          request.amount !== message.amount ||
-          request.maxTransfer !== message.maxTransfer ||
-          request.memo !== message.memo ||
-          request.fundingSource !== message.fundingSource ||
-          request.marginalFeeZats !== message.marginalFeeZats ||
-          request.feeQuoteId !== message.feeQuoteId
+          request.quoteBinding?.provider === 'near-intents' &&
+          request.quoteBinding.recipientType === 'CONFIDENTIAL_INTENTS'
         ) {
-          throw new Error('Hardware signing request expired or does not match this transaction.')
+          const coordinator = confidentialFundingCoordinator
+          if (!coordinator || request.kind !== 'swap' || request.dappRequestId)
+            throw new Error('Native ZEC Confidential swap is unavailable')
+          await coordinator.authorizeNativeZecHardwareSpend({
+            ...request,
+            binding: request.quoteBinding,
+            expiresAt: request.createdAt + HARDWARE_SIGN_REQUEST_TTL_MS
+          })
         }
-        await clearPreparedHardwareSignRequest(message.requestId)
-        if (request.dappRequestId) await assertHardwareDAppBinding(request)
-        const built = await handleHardwarePcztBuild(message, Boolean(request.dappRequestId))
-        if (!built.success) return built
-        if (request.dappRequestId) await assertHardwareDAppBinding(request)
-        await writePreparedHardwareSignRequest(message.requestId, {
-          request,
-          fullPcztBase64: built.full,
-          vendor: built.vendor,
-          ...(built.vendor === 'ledger' ? { redactedPcztBase64: built.redacted } : {})
+        return accountContextTransition.runActiveOperation(async () => {
+          const current = await readMatchingRequest()
+          if (JSON.stringify(current) !== JSON.stringify(request))
+            throw new Error('Hardware signing request changed. Review again.')
+          await clearPreparedHardwareSignRequest(message.requestId)
+          if (request.dappRequestId) await assertHardwareDAppBinding(request)
+          const built = await handleHardwarePcztBuild(message, Boolean(request.dappRequestId))
+          if (!built.success) return built
+          if (request.dappRequestId) await assertHardwareDAppBinding(request)
+          await writePreparedHardwareSignRequest(message.requestId, {
+            request,
+            fullPcztBase64: built.full,
+            vendor: built.vendor,
+            ...(built.vendor === 'ledger' ? { redactedPcztBase64: built.redacted } : {})
+          })
+          return {
+            success: true as const,
+            redacted: built.redacted,
+            feeZats: built.feeZats,
+            amount: built.amount,
+            vendor: built.vendor,
+            ...(built.ledgerDisplayAddress === undefined
+              ? {}
+              : { ledgerDisplayAddress: built.ledgerDisplayAddress }),
+            ...(built.vendor === 'ledger' ? { ledgerPayload: built.ledgerPayload } : {}),
+            ...(built.ledgerDeviceModel === undefined
+              ? {}
+              : { ledgerDeviceModel: built.ledgerDeviceModel }),
+            ...(built.ledgerSigningTransport === undefined
+              ? {}
+              : { ledgerSigningTransport: built.ledgerSigningTransport })
+          }
         })
-        return {
-          success: true as const,
-          redacted: built.redacted,
-          feeZats: built.feeZats,
-          amount: built.amount,
-          vendor: built.vendor,
-          ...(built.ledgerDisplayAddress === undefined
-            ? {}
-            : { ledgerDisplayAddress: built.ledgerDisplayAddress }),
-          ...(built.vendor === 'ledger' ? { ledgerPayload: built.ledgerPayload } : {}),
-          ...(built.ledgerDeviceModel === undefined
-            ? {}
-            : { ledgerDeviceModel: built.ledgerDeviceModel }),
-          ...(built.ledgerSigningTransport === undefined
-            ? {}
-            : { ledgerSigningTransport: built.ledgerSigningTransport })
-        }
       })
       .then(sendResponse)
       .catch(err =>

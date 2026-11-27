@@ -659,7 +659,8 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   const nativeZecConfidentialAvailable = hasNativeZecConfidentialSwapRoute(
     storageV2Account,
     currentNetwork,
-    __ENABLED_CHAIN_FEATURE_FLAGS__
+    __ENABLED_CHAIN_FEATURE_FLAGS__,
+    shieldZecSource === 'native-transparent' ? 'transparent' : 'shielded'
   )
   const nativeZecShieldAvailable = resolveShieldNativeZecSwapAvailable({
     network: currentNetwork,
@@ -776,7 +777,11 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   const activeSharedPair = swapPreferenceScope ? displaySharedPair : undefined
   const defaultShieldZecSource: ShieldSwapZecSourceKind =
     nativeZecShieldAvailable &&
-    nativeZecConfidentialAvailable &&
+    hasNativeZecConfidentialSwapRoute(
+      storageV2Account,
+      currentNetwork,
+      __ENABLED_CHAIN_FEATURE_FLAGS__
+    ) &&
     isSameSwapAsset(ZEC_ZCASH_ASSET, sharedSwapPair.tokenInId) &&
     searchParams.get('provider') !== 'near-confidential' &&
     !searchParams.has('assetId') &&
@@ -1128,11 +1133,13 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
             portfolio,
             nativeIntentsManagedAssets,
             nativeIntentsCatalog,
-            currentNetwork
+            currentNetwork,
+            { zcashOnly: isLedgerWallet }
           )
         : [],
     [
       shieldNativeZecSwap,
+      isLedgerWallet,
       portfolio,
       nativeIntentsManagedAssets,
       nativeIntentsCatalog,
@@ -2471,7 +2478,9 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         nativeIntentsCatalog,
         nativeConfidentialDestinations
       )
-    const preferredDestinationId = requestedDestinationAssetId ?? activeSharedPair?.tokenOutId
+    const preferredDestinationId = isLedgerWallet
+      ? nativeConfidentialDestinationTokens[0]?.assetId
+      : (requestedDestinationAssetId ?? activeSharedPair?.tokenOutId)
     const saved = findSavedSwapToken(nativeConfidentialDestinationTokens, preferredDestinationId)
     if (
       initializedNativeDestinationScope.current !== swapPreferenceScope &&
@@ -2505,6 +2514,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     if (swap.tokenOut?.assetId !== selected.assetId) swap.selectTokenOutForFlow(selected)
   }, [
     shieldNativeZecSwap,
+    isLedgerWallet,
     swapPreferencesHydrated,
     swapPreferenceScope,
     swap.selectionReady,

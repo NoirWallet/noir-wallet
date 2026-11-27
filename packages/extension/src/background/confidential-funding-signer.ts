@@ -168,26 +168,7 @@ export class ConfidentialFundingSigner {
     readonly expiresAt?: number
   }): Promise<ConfidentialSignedPayload> {
     if (input.identity.context.keyDomainSource.kind === 'hardware') {
-      const bytes = new TextEncoder().encode(input.payload)
-      const messageHex = toHex(bytes)
-      const signatureHex = await this.requestDeviceSignature(
-        input.identity,
-        input.chainId,
-        { kind: 'personal-sign', messageHex },
-        await ledgerEvmPersonalSummary(input.chainId, input.identity.address, bytes),
-        await digestLedgerPayload(bytes),
-        Math.min(input.expiresAt ?? Infinity, Date.now() + 5 * 60_000)
-      )
-      const signature = parseSignature(signatureHex)
-      const messageHash = hashMessage({ raw: messageHex })
-      const publicKey = secp256k1.Signature.fromCompact(signature.subarray(0, 64))
-        .addRecoveryBit(signature[64])
-        .recoverPublicKey(messageHash.slice(2))
-        .toHex(false)
-      if (publicKeyToAddress(`0x${publicKey}`).toLowerCase() !== input.identity.address) {
-        throw new Error('Confidential signature does not match the active EVM account')
-      }
-      await this.assertCurrentIdentity(input.identity, input.chainId)
+      const signature = await this.signHardwarePersonalMessage(input)
       return Object.freeze({
         standard: 'erc191',
         payload: input.payload,
@@ -394,6 +375,35 @@ export class ConfidentialFundingSigner {
         transactionHash: result.transactionId
       })
     })
+  }
+
+  async signHardwarePersonalMessage(input: {
+    readonly identity: ConfidentialSigningIdentity
+    readonly chainId: ChainId
+    readonly payload: string
+    readonly expiresAt?: number
+  }): Promise<Uint8Array> {
+    const bytes = new TextEncoder().encode(input.payload)
+    const messageHex = toHex(bytes)
+    const signatureHex = await this.requestDeviceSignature(
+      input.identity,
+      input.chainId,
+      { kind: 'personal-sign', messageHex },
+      await ledgerEvmPersonalSummary(input.chainId, input.identity.address, bytes),
+      await digestLedgerPayload(bytes),
+      Math.min(input.expiresAt ?? Infinity, Date.now() + 5 * 60_000)
+    )
+    const signature = parseSignature(signatureHex)
+    const messageHash = hashMessage({ raw: messageHex })
+    const publicKey = secp256k1.Signature.fromCompact(signature.subarray(0, 64))
+      .addRecoveryBit(signature[64])
+      .recoverPublicKey(messageHash.slice(2))
+      .toHex(false)
+    if (publicKeyToAddress(`0x${publicKey}`).toLowerCase() !== input.identity.address) {
+      throw new Error('Confidential signature does not match the active EVM account')
+    }
+    await this.assertCurrentIdentity(input.identity, input.chainId)
+    return signature
   }
 
   private async requestDeviceSignature(
