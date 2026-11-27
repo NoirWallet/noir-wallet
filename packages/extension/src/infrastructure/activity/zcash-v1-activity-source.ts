@@ -16,6 +16,7 @@ import type { Transaction, TransactionType } from '@/types'
 import { safeBig } from '@/lib/big'
 import { getZcashIntentsOriginStatus } from '@/lib/cross-chain-transaction'
 import { parseDisplayUnitAmount } from '@/lib/number-format'
+import { resolveZcashReceiveStatus } from '@/lib/transaction-status'
 
 const ZCASH_DECIMALS = 8
 const RAW_AMOUNT_PATTERN = /^(?:0|[1-9][0-9]{0,77})$/
@@ -49,8 +50,11 @@ function mapKind(
     : transaction.type
 }
 
-function mapStatus(transaction: Transaction): TransactionLifecycleStatus {
-  switch (transaction.status) {
+function mapStatus(
+  status: Transaction['status'],
+  hasTransactionHash: boolean
+): TransactionLifecycleStatus {
+  switch (status) {
     case 'success':
       return 'final'
     case 'failed':
@@ -59,7 +63,7 @@ function mapStatus(transaction: Transaction): TransactionLifecycleStatus {
     case 'relay_confirmed':
       return 'confirming'
     case 'pending':
-      return transaction.txHash ? 'broadcast' : 'created'
+      return hasTransactionHash ? 'broadcast' : 'created'
   }
 }
 
@@ -83,7 +87,13 @@ export function mapZcashSelfTransferReceipt(
 ): ActivityItem | undefined {
   if (transaction.type !== 'shield' && transaction.type !== 'unshield') return undefined
   const segment = sourceItem.segments[0]
-  if (segment?.status !== 'final' || !segment.evidence?.transactionHash) return undefined
+  if (!segment?.evidence?.transactionHash || segment.status === 'failed') return undefined
+  const confirmations = segment.evidence.confirmations
+  if (confirmations === undefined && segment.status !== 'final') return undefined
+
+  const receiptState =
+    confirmations === undefined ? undefined : resolveZcashReceiveStatus(confirmations, 'trusted')
+  const status = receiptState ? mapStatus(receiptState.status, true) : segment.status
 
   const amount =
     transaction.type === 'shield' && transaction.id.startsWith('wasm_')
@@ -99,6 +109,7 @@ export function mapZcashSelfTransferReceipt(
     ...sourceItem,
     id: `receive:${transaction.id}`,
     kind: 'receive',
+    status,
     assetDomains: Object.freeze([domain]),
     snapshot: Object.freeze({
       schemaVersion: 1,
@@ -106,7 +117,17 @@ export function mapZcashSelfTransferReceipt(
       primaryAmount: Object.freeze({ assetId, amountRaw }),
       ...(sourceItem.snapshot?.recipient ? { recipient: sourceItem.snapshot.recipient } : {})
     }),
-    segments: Object.freeze([Object.freeze({ ...segment, id: `receive:${segment.id}` })])
+    segments: Object.freeze([
+      Object.freeze({
+        ...segment,
+        id: `receive:${segment.id}`,
+        status,
+        evidence: Object.freeze({
+          ...segment.evidence,
+          ...(receiptState ? { requiredConfirmations: receiptState.requiredConfirmations } : {})
+        })
+      })
+    ])
   })
 }
 
@@ -359,7 +380,7 @@ export function mapZcashV1TransactionToActivityItem(
 ): ActivityItem {
   const chainId = parseChainId(getZcashChainId(transaction.network)).id
   const assetId = createAssetId(chainId, 'slip44', '133')
-  const status = mapStatus(transaction)
+  const status = mapStatus(transaction.status, Boolean(transaction.txHash))
   const transactionHash = transaction.destinationTxHash || transaction.txHash
   const crossChain = isCrossChain(transaction.type)
   const failureCode = crossChain

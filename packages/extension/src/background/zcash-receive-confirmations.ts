@@ -1,7 +1,7 @@
 import { buildAccountKey } from '@/core/wallet/account-scope'
 import {
   fetchTransparentReceiveTransactions,
-  readExternalReceiveConfirmations
+  readZcashReceiveObservations
 } from '@/core/wallet/transparent-history'
 import { DedupPromise } from '@/lib/async-utils'
 import { loadTransactions } from '@/lib/indexed-db'
@@ -55,7 +55,7 @@ export async function refreshZcashReceiveConfirmations(
       if (!baseUrl) return transactions
 
       // Bound the whole batch, including the time spent waiting for an RPC slot.
-      const observed = await readExternalReceiveConfirmations(
+      const observed = await readZcashReceiveObservations(
         transactions,
         baseUrl,
         AbortSignal.timeout(8_000)

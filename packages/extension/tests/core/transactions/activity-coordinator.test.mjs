@@ -13,6 +13,10 @@ import {
   parseTransactionSegmentId
 } from '../../../src/core/transactions/domain/index.ts'
 import { ActivityCoordinator } from '../../../src/infrastructure/activity/index.ts'
+import {
+  applyZcashReceiveObservations,
+  readZcashReceiveObservations
+} from '../../../src/core/wallet/transparent-history.ts'
 import { createEvmTransferGraph } from '../../../src/infrastructure/chains/evm/index.ts'
 import { InMemoryTransactionRepository } from '../../../src/infrastructure/persistence/repositories/index.ts'
 
@@ -279,6 +283,49 @@ test.describe('Activity coordinator', () => {
     expect(await readCredits([unshield])).toMatchObject([
       { id: `receive:${unshield.id}`, assetDomains: ['public'] }
     ])
+  })
+
+  test('shows a native Shield credit as soon as RPC sees it and tracks its confirmations', async () => {
+    const txHash = 'e'.repeat(64)
+    let transactions = [
+      zcashTransaction({ id: 'tx_shield', type: 'shield', txHash, status: 'pending' })
+    ]
+    const coordinator = new ActivityCoordinator({
+      storageRepository: storage(),
+      transactionRepository: new InMemoryTransactionRepository(),
+      loadZcashTransactions: async () => transactions
+    })
+    const readCredit = async () =>
+      (await coordinator.readActive()).items.find(item => item.kind === 'receive')
+
+    expect(await readCredit()).toBeUndefined()
+    const originalFetch = globalThis.fetch
+    try {
+      for (const [confirmations, status] of [
+        [0, 'broadcast'],
+        [1, 'confirming'],
+        [3, 'final']
+      ]) {
+        globalThis.fetch = async () =>
+          Response.json({
+            result: { txid: txHash, confirmations, orchard: { valueBalanceZat: -99000 } }
+          })
+        const observations = await readZcashReceiveObservations(
+          transactions,
+          'https://node.example'
+        )
+        transactions = applyZcashReceiveObservations(transactions, observations)
+        expect(await readCredit()).toMatchObject({
+          status,
+          assetDomains: ['shield'],
+          snapshot: { primaryAmount: { amountRaw: '99000' } },
+          segments: [{ status, evidence: { confirmations, requiredConfirmations: 3 } }]
+        })
+        expect(transactions[0].status).toBe('pending')
+      }
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 
   test('returns null without an active generation or Account', async () => {

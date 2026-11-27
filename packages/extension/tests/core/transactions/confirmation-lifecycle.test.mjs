@@ -106,7 +106,7 @@ test.describe('ZIP-315 confirmation lifecycle', () => {
         'untrusted',
         101
       )
-    ).toEqual({ status: 'confirming', confirmations: 10, requiredConfirmations: 10 })
+    ).toEqual({ status: 'success', confirmations: 10, requiredConfirmations: 10 })
     expect(
       resolveMinedTransactionStatus('mined', minedHeight, 109, 'receive', 'untrusted', 109)
     ).toEqual({
@@ -125,7 +125,7 @@ test.describe('ZIP-315 confirmation lifecycle', () => {
 })
 
 test.describe('Transaction status monotonicity', () => {
-  test('internal transfer confirmations do not finalize before the sending wallet settles', () => {
+  test('internal receipts finalize from chain confirmations while the sending wallet settles', () => {
     const send = tx({ status: 'confirming', confirmations: 7, requiredConfirmations: 3 })
     const receive = tx({
       id: 'rpc_treceive_abc123',
@@ -138,7 +138,7 @@ test.describe('Transaction status monotonicity', () => {
 
     expect(synchronizeInternalTransferConfirmations([send, receive])).toMatchObject([
       { status: 'confirming', confirmations: 7 },
-      { status: 'confirming', confirmations: 7 }
+      { status: 'success', confirmations: 7 }
     ])
     expect(
       synchronizeInternalTransferConfirmations([{ ...send, status: 'success' }, receive])
