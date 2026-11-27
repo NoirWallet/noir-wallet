@@ -258,6 +258,7 @@ export {
   parseEvmTransferIntent,
   parsePreparedEvmTransfer,
   type BuildEvmContractCallInput,
+  type EvmReviewedFeeBudget,
   type BuildEvmCancelInput,
   type BuildEvmNonceRecoveryInput,
   type BuildEvmSpeedUpInput,
