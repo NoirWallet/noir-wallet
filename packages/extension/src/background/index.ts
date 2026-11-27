@@ -19,7 +19,11 @@ import {
   parseSelectedNetworkFamilies
 } from '@/core/wallet/account-network-selection'
 import { setAccountNetworkSelection } from '@/lib/wallet-metadata-storage'
-import { COMBINED_EVM_SWAP_ALARM, CombinedEvmSwap } from './combined-evm-swap'
+import {
+  COMBINED_EVM_SWAP_ALARM,
+  CombinedEvmSwap,
+  CombinedEvmSwapReviewError
+} from './combined-evm-swap'
 import {
   saveSwapApprovalContinuation,
   readSwapApprovalContinuation,
@@ -535,14 +539,15 @@ subscribeTransactionPortfolioInvalidations(async ({ scope, chainIds }) => {
   }
 })
 let activityCoordinator!: ReturnType<typeof createBackgroundActivityCoordinator>
-const activityStorageRepository = new IndexedDbStorageV2Repository()
+const walletStorageRepository = new IndexedDbStorageV2Repository()
+async function readActiveWalletScope() {
+  if (networkRestartRequired) return null
+  const active = (await readActiveStorageV2Snapshot(walletStorageRepository))?.manifest
+    .activeAccount
+  return active ? { ...active, network: DEFAULT_NETWORK } : null
+}
 const activityNotifications = new ActivityNotifications({
-  activeScope: async () => {
-    if (networkRestartRequired) return null
-    const active = (await readActiveStorageV2Snapshot(activityStorageRepository))?.manifest
-      .activeAccount
-    return active ? { ...active, network: DEFAULT_NETWORK } : null
-  },
+  activeScope: readActiveWalletScope,
   hasUnlockSession: () =>
     walletLockCleanupPending ? Promise.resolve(false) : credentialSession.hasUnlockSession(),
   assetMetadata: assetId =>
@@ -554,7 +559,7 @@ const activityNotifications = new ActivityNotifications({
     await rehydrateWalletStore()
     const { network, keyDomainId, accountId } = scope
     const account = useWalletStore.getState().getAccount(keyDomainId, accountId)
-    const snapshot = await readActiveStorageV2Snapshot(activityStorageRepository)
+    const snapshot = await readActiveStorageV2Snapshot(walletStorageRepository)
     const storedChains = (snapshot?.chainAccounts ?? [])
       .filter(
         chain => chain.scope.keyDomainId === keyDomainId && chain.scope.accountId === accountId
@@ -638,14 +643,13 @@ const combinedEvmSwap = new CombinedEvmSwap({
   router: () => evmTransferRouter,
   quote: rheaSwapService,
   readAccount: async () => {
-    await rehydrateWalletStore()
-    const state = useWalletStore.getState()
+    const active = await readActiveWalletScope()
     return {
-      network: state.currentNetwork,
-      walletId: state.currentWalletId,
-      accountId: state.currentAccountId,
+      network: DEFAULT_NETWORK,
+      walletId: active?.keyDomainId ?? null,
+      accountId: active?.accountId ?? null,
       unlockEpoch:
-        networkRestartRequired || walletLockCleanupPending
+        !active || networkRestartRequired || walletLockCleanupPending
           ? null
           : await credentialSession.getUnlockEpoch()
     }
@@ -3164,7 +3168,16 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       )
       .then(
         result => sendResponse({ result }),
-        () => sendResponse({ error: 'Swap review is unavailable. Review the Swap again.' })
+        error => {
+          if (runtimeMessage.type === 'START_COMBINED_EVM_SWAP') {
+            const reason =
+              error instanceof CombinedEvmSwapReviewError
+                ? error.reason
+                : mapEvmWalletRuntimeError(error).code
+            logger.warn(`[Swap] ${runtimeMessage.type} failed (${reason})`)
+          }
+          sendResponse({ error: 'Swap review is unavailable. Review the Swap again.' })
+        }
       )
     return true
   }
