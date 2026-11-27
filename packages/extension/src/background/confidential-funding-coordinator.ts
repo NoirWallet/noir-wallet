@@ -149,6 +149,7 @@ const EXTERNAL_DEPOSIT_STATUS_BACKOFF_INITIAL_MS = 10_000
 const EXTERNAL_DEPOSIT_STATUS_BACKOFF_MAX_MS = 120_000
 const EXTERNAL_DEPOSIT_STATUS_FRESH_MS = 20_000
 const CONFIDENTIAL_FUNDING_MONITOR_DELAY_MINUTES = 20 / 60
+const INTENT_QUOTE_EXPIRED = 'INTENT_QUOTE_EXPIRED'
 export type ClusterRejectionReason = 'APP_FEE_REJECTED_2002' | 'BACKEND_CONFIRMED_REJECTION'
 const TERMINAL_PHASES = new Set<ConfidentialFundingPlan['phase']>([
   'ready',
@@ -486,6 +487,23 @@ function definitiveHistoryAuthRejection(error: unknown): boolean {
 
 function normalizeStatus(value: string): string {
   return value.trim().toUpperCase()
+}
+
+function isIntentQuoteExpiry(error: unknown): boolean {
+  return (
+    error instanceof ConfidentialFundingApiError &&
+    !retryableFundingError(error) &&
+    /^quote has expired\.?$/i.test(error.message.trim())
+  )
+}
+
+function isUnfundedIntentStatus(status: ConfidentialStatus): boolean {
+  return (
+    ['PENDING_DEPOSIT', 'EXPIRED', 'CANCELLED'].includes(normalizeStatus(status.status)) &&
+    !status.transactionHash &&
+    !/[1-9]/.test(status.depositedAmountRaw ?? '') &&
+    !/[1-9]/.test(status.settledAmountOutRaw ?? '')
+  )
 }
 
 function confirmationFailureDetails(error: unknown): string {
@@ -4516,6 +4534,7 @@ export class ConfidentialFundingCoordinator {
     if ((await fingerprintConfidentialValue(frozenRequest)) !== plan.requestFingerprint) {
       throw new Error('Frozen private withdraw request was modified')
     }
+    const shieldIntent = plan.operation === 'swap' || plan.operation === 'confidential-transfer'
     let current = plan
     for (const requestRow of frozenRequest.withdraws) {
       const row = current.withdraws[requestRow.sequence]
@@ -4531,11 +4550,20 @@ export class ConfidentialFundingCoordinator {
         if (!needsConfidentialSubmissionCheck(current)) await this.scheduleMonitoring()
         return current
       }
-      const prior = normalizeStatus(priorStatus?.status ?? '')
+      const prior = normalizeStatus(priorStatus.status)
+      let expiredQuote =
+        row.errorStatus === INTENT_QUOTE_EXPIRED ||
+        (shieldIntent &&
+          (prior === 'EXPIRED' ||
+            (plan.swapQuote !== undefined && quoteDeadline(plan.swapQuote) <= this.now())))
       let intentHash: string | undefined
       let observedStatus: Awaited<ReturnType<ConfidentialFundingApi['getStatus']>> | null =
         priorStatus
-      if (!prior || prior === 'PENDING_DEPOSIT' || prior === 'INCOMPLETE_DEPOSIT') {
+      if (
+        !expiredQuote &&
+        (!prior || prior === 'PENDING_DEPOSIT' || prior === 'INCOMPLETE_DEPOSIT') &&
+        (!shieldIntent || isUnfundedIntentStatus(priorStatus))
+      ) {
         if (row.deadline <= this.now()) {
           if (!needsConfidentialSubmissionCheck(current)) await this.scheduleMonitoring()
           return current
@@ -4556,17 +4584,31 @@ export class ConfidentialFundingCoordinator {
           })
         } catch (error) {
           if (authenticationError(error)) throw error
+          if (shieldIntent && isIntentQuoteExpiry(error)) {
+            expiredQuote = true
+            current = await this.updatePlan(current, {
+              withdraws: Object.freeze(
+                current.withdraws.map(item =>
+                  item.sequence === row.sequence
+                    ? Object.freeze({ ...item, errorStatus: INTENT_QUOTE_EXPIRED })
+                    : item
+                )
+              )
+            })
+          }
           observedStatus = await this.readStatus(
             current,
             row.depositAddress,
             'submit-recovery',
             row.sequence
           )
+          if (expiredQuote && !observedStatus) return current
           const recoveredStatus = normalizeStatus(observedStatus?.status ?? '')
           if (
-            !recoveredStatus ||
-            recoveredStatus === 'PENDING_DEPOSIT' ||
-            recoveredStatus === 'INCOMPLETE_DEPOSIT'
+            !expiredQuote &&
+            (!recoveredStatus ||
+              recoveredStatus === 'PENDING_DEPOSIT' ||
+              recoveredStatus === 'INCOMPLETE_DEPOSIT')
           ) {
             if (error instanceof ConfidentialFundingApiError && error.ambiguous) {
               await this.scheduleMonitoring()
@@ -4577,16 +4619,22 @@ export class ConfidentialFundingCoordinator {
         }
       }
 
+      const cancelled =
+        expiredQuote && observedStatus !== null && isUnfundedIntentStatus(observedStatus)
       const nextRows = current.withdraws.map(item =>
         item.sequence === requestRow.sequence
           ? Object.freeze({
               ...item,
-              status: observedStatus?.status ?? 'PROCESSING',
+              status: cancelled ? 'CANCELLED' : (observedStatus?.status ?? 'PROCESSING'),
               ...(intentHash ? { intentHash } : {}),
               ...(observedStatus?.transactionHash
                 ? { transactionHash: observedStatus.transactionHash }
                 : {}),
-              ...(observedStatus?.errorStatus ? { errorStatus: observedStatus.errorStatus } : {})
+              ...(cancelled
+                ? { errorStatus: INTENT_QUOTE_EXPIRED }
+                : observedStatus?.errorStatus
+                  ? { errorStatus: observedStatus.errorStatus }
+                  : {})
             })
           : item
       )
@@ -5003,7 +5051,9 @@ export class ConfidentialFundingCoordinator {
     }
     const statuses = await Promise.all(
       plan.withdraws.map(row =>
-        this.readStatus(plan, row.depositAddress, 'settlement', row.sequence)
+        row.status === 'CANCELLED' && row.errorStatus === INTENT_QUOTE_EXPIRED
+          ? null
+          : this.readStatus(plan, row.depositAddress, 'settlement', row.sequence)
       )
     )
     const rows = plan.withdraws.map((row, index) => {
