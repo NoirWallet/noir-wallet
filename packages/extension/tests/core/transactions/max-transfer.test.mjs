@@ -43,6 +43,23 @@ function deferred() {
 }
 
 describe('dynamic maximum transfer regressions', () => {
+  it('exposes a timed-out Max request without applying a late WASM estimate', async () => {
+    const quote = { id: 'quote-1', standardMarginalFeeZats: 5000, expiresAt: Date.now() + 60_000 }
+    const stalled = deferred()
+    let attempts = 0
+    const cache = new MaxTransferEstimateCache(maxContext({ timeoutMs: 20 }), undefined, {
+      getFeeQuote: async () => quote,
+      estimateMaxTransfer: async () => (++attempts === 1 ? stalled.promise : maxEstimate(quote))
+    })
+    assert.equal(await cache.get('recipient-a', 'standard'), null)
+    assert.equal(cache.peek('recipient-a', 'standard').timedOut, true)
+    const fresh = await cache.get('recipient-a', 'standard', true)
+    assert.equal(fresh.maxAmountZats, '90000000')
+    stalled.resolve(maxEstimate(quote, '99990000'))
+    await stalled.promise
+    assert.equal(cache.peek('recipient-a', 'standard').estimate.maxAmountZats, '90000000')
+  })
+
   it('skips empty funding sources and becomes ready when spendable funds arrive', async () => {
     let calls = 0
     const quote = { id: 'quote-1', standardMarginalFeeZats: 5000, expiresAt: Date.now() + 60_000 }

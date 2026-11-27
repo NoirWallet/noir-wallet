@@ -100,9 +100,13 @@ export function mapZcashSelfTransferReceipt(
       ? transaction.amount
       : transaction.settledSelfTransferAmount
   const assetId = sourceItem.snapshot?.primaryAmount?.assetId
-  if (!amount || !assetId) return undefined
-  const amountRaw = decimalToRaw(amount)
-  if (amountRaw === '0') return undefined
+  const amountRaw = amount ? decimalToRaw(amount) : undefined
+  if (
+    !assetId ||
+    amountRaw === '0' ||
+    (!amountRaw && (transaction.type !== 'shield' || confirmations === undefined))
+  )
+    return undefined
 
   const domain: 'shield' | 'public' = transaction.type === 'shield' ? 'shield' : 'public'
   return Object.freeze({
@@ -114,7 +118,7 @@ export function mapZcashSelfTransferReceipt(
     snapshot: Object.freeze({
       schemaVersion: 1,
       direction: 'incoming',
-      primaryAmount: Object.freeze({ assetId, amountRaw }),
+      ...(amountRaw ? { primaryAmount: Object.freeze({ assetId, amountRaw }) } : {}),
       ...(sourceItem.snapshot?.recipient ? { recipient: sourceItem.snapshot.recipient } : {})
     }),
     segments: Object.freeze([
