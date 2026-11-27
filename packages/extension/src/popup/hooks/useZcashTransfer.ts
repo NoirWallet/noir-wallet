@@ -437,6 +437,7 @@ export function useZcashTransfer({
     feeTier,
     fundingSource,
     scopeKey: feeSyncScope,
+    timeoutMs: isNativeMove ? 3_000 : undefined,
     enabled:
       active &&
       balanceKnown &&
@@ -453,10 +454,13 @@ export function useZcashTransfer({
     : maxTransfer.maxAmount
   const nativeShieldMaxExceedsBalance =
     isTransparentToShieldMove && maxTransfer.maxAmount !== null && exactMaximum === null
+  const nativeMaxFallback = isNativeMove && (syncBlocked || maxTransfer.timedOut)
   const isMaxTransferAmount = !!exactMaximum && safeBig(amount || '0').eq(exactMaximum)
   const staleSelectedMax = maxSelected && !!exactMaximum && !isMaxTransferAmount
   const isMaxFeeMode =
-    nativeMoveMax || (maxSelected && exactMaximum !== null) || isMaxTransferAmount
+    (nativeMoveMax && !nativeMaxFallback) ||
+    (maxSelected && exactMaximum !== null) ||
+    isMaxTransferAmount
   const feeEstimate = useFeeEstimate({
     type: 'send',
     to: effectiveToAddress,
@@ -488,7 +492,7 @@ export function useZcashTransfer({
   const feeRequired =
     !moveUnavailable &&
     !!effectiveToAddress &&
-    (nativeMoveMax || safeBig(amount || '0').gt(0)) &&
+    ((nativeMoveMax && !nativeMaxFallback) || safeBig(amount || '0').gt(0)) &&
     recipientFormatError === null
   const feeError =
     feeRequired &&
@@ -502,7 +506,7 @@ export function useZcashTransfer({
     feeRequired &&
     !feeError &&
     !staleSelectedMax &&
-    (!nativeMoveMax || isMaxTransferAmount) &&
+    (!nativeMoveMax || nativeMaxFallback || isMaxTransferAmount) &&
     !!(isMaxFeeMode ? maxTransfer.feeQuote : feeEstimate.feeQuote) &&
     (isMaxFeeMode ? maxTransfer.feeQuote!.expiresAt : feeEstimate.feeQuote!.expiresAt) >
       Date.now() &&
@@ -512,11 +516,11 @@ export function useZcashTransfer({
         !!maxTransfer.fee &&
         safeBig(maxTransfer.fee).gt(0)
       : !feeEstimate.loading && !!feeEstimate.feeQuote && feeEstimate.feeZats !== null)
-  const displayedFeeLoading = feeRequired && !feeReady && !feeError
+  const displayedFeeLoading = feeRequired && !syncBlocked && !feeReady && !feeError
   const retryFeeEstimate = () => {
     if (moveUnavailable) return
     if (isMaxFeeMode) void maxTransfer.request()
-    else if (maxSelected && !usesBufferedMaximum) {
+    else if (maxSelected && !usesBufferedMaximum && !nativeMaxFallback) {
       const retryAccountScope = getActiveAccountScopeKey()
       const retryTarget = effectiveToAddress
       const retryAmount = amount
@@ -576,6 +580,22 @@ export function useZcashTransfer({
     maximumAmount: exactMaximum,
     capTransparentToShieldable: isTransparentToShieldMove
   })
+  const nativeBufferedMaximum = nativeMaxFallback
+    ? formatBaseUnitDecimalAmount(
+        resolveTransferMaximum({
+          mode: 'reserve',
+          family: 'zcash',
+          availableRaw: parseDisplayUnitAmount(
+            isTransparentToShieldMove && safeBig(shieldableBalance).lt(sourceBalance.available)
+              ? shieldableBalance
+              : sourceBalance.available,
+            ZEC_DECIMALS
+          ),
+          decimals: ZEC_DECIMALS
+        }),
+        ZEC_DECIMALS
+      )
+    : null
   const effectiveMaxStr = usesBufferedMaximum
     ? formatBaseUnitDecimalAmount(
         resolveTransferMaximum({
@@ -591,7 +611,11 @@ export function useZcashTransfer({
         ZEC_DECIMALS
       )
     : isNativeMove
-      ? (exactMaximum ?? '')
+      ? nativeBufferedMaximum === null
+        ? (exactMaximum ?? '')
+        : safeBig(nativeBufferedMaximum).lt(feeAdjustedAvailable)
+          ? nativeBufferedMaximum
+          : feeAdjustedAvailable
       : feeAdjustedAvailable
   const amountError = isTransparentToShieldMove
     ? null
@@ -997,7 +1021,9 @@ export function useZcashTransfer({
                 destinationChain: 'zcash'
               }
             }
-          : {}),
+          : isTransparentToShieldMove
+            ? { txType: 'shield' as const }
+            : {}),
         ...(isSelfMove ? { expectedAccountKey: executionScope.accountKey } : {}),
         memo: effectiveMemo,
         fee: selectedFeeZec,
@@ -1166,8 +1192,8 @@ export function useZcashTransfer({
         !fromAddress ||
         !balanceKnown ||
         (isNativeMove
-          ? syncBlocked ||
-            safeBig(displayedBalance).lte(0) ||
+          ? safeBig(displayedBalance).lte(0) ||
+            (nativeMaxFallback && safeBig(effectiveMaxStr).lte(0)) ||
             (exactMaximum !== null && safeBig(exactMaximum).lte(0))
           : safeBig(effectiveMaxStr).lte(0)) ||
         (isSelfMove
@@ -1176,7 +1202,7 @@ export function useZcashTransfer({
       onClick: () => {
         setMaxSelected(true)
         setAmount(effectiveMaxStr)
-        if (!usesBufferedMaximum) void maxTransfer.request()
+        if (!usesBufferedMaximum && !nativeMaxFallback) void maxTransfer.request()
       }
     },
     privacy: privateSendAvailable

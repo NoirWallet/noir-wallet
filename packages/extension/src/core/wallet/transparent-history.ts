@@ -39,18 +39,55 @@ export interface ZcashReceiveObservation {
   shieldAmount?: string
 }
 
+export function resolveZcashReceiveObservation(
+  lookup: Awaited<ReturnType<typeof lookupTransaction>>
+): ZcashReceiveObservation | undefined {
+  if (lookup.status !== 'confirmed' && lookup.status !== 'mempool') return undefined
+  return {
+    confirmations: lookup.status === 'confirmed' ? lookup.confirmations : 0,
+    ...(lookup.shieldedNetZatoshis === undefined
+      ? {}
+      : {
+          shieldAmount: formatBaseUnitDecimalAmount(
+            String(lookup.shieldedNetZatoshis),
+            ZEC_DECIMALS
+          )
+        })
+  }
+}
+
 function receiveConfirmationTrust(transaction: Transaction): ConfirmationTrust {
   return transaction.requiredConfirmations === getRequiredConfirmations('receive', 'trusted')
     ? 'trusted'
     : 'untrusted'
 }
 
-function receivesAwaitingObservation(transactions: Transaction[]): Transaction[] {
+export function isLocalZcashShield(
+  transaction: Transaction,
+  addresses?: AccountAddresses
+): boolean {
+  return (
+    transaction.type === 'shield' ||
+    (transaction.type === 'send' &&
+      transaction.fromType === 'transparent' &&
+      !transaction.id.startsWith('wasm_') &&
+      !transaction.quoteBinding &&
+      (transaction.chainHashes?.length ?? 0) <= 1 &&
+      !!transaction.to &&
+      (transaction.to === addresses?.shielded || transaction.to === addresses?.fullUnified))
+  )
+}
+
+function receivesAwaitingObservation(
+  transactions: Transaction[],
+  addresses?: AccountAddresses
+): Transaction[] {
   return transactions.filter(tx => {
     const hash = normalizeTxHash(tx.txHash)
     if (!/^[0-9a-f]{64}$/.test(hash) || tx.status === 'failed') return false
-    if (tx.type === 'shield') {
+    if (isLocalZcashShield(tx, addresses)) {
       return (
+        tx.type !== 'shield' ||
         (tx.confirmations ?? -1) < getRequiredConfirmations('receive', 'trusted') ||
         (!tx.id.startsWith('wasm_') && !tx.settledSelfTransferAmount)
       )
@@ -67,52 +104,48 @@ function receivesAwaitingObservation(transactions: Transaction[]): Transaction[]
 export async function readZcashReceiveObservations(
   transactions: Transaction[],
   baseUrl: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  addresses?: AccountAddresses
 ): Promise<ReadonlyMap<string, ZcashReceiveObservation>> {
   const hashes = Array.from(
-    new Set(receivesAwaitingObservation(transactions).map(tx => normalizeTxHash(tx.txHash)))
+    new Set(
+      receivesAwaitingObservation(transactions, addresses).map(tx => normalizeTxHash(tx.txHash))
+    )
   ).slice(0, MAX_RECENT_TXS)
   const observed = new Map<string, ZcashReceiveObservation>()
   await mapWithConcurrency(hashes, FETCH_CONCURRENCY, async hash => {
     if (signal?.aborted) return
-    const lookup = await lookupTransaction(baseUrl, hash, signal)
-    if (lookup.status !== 'confirmed' && lookup.status !== 'mempool') return
-    observed.set(hash, {
-      confirmations: lookup.status === 'confirmed' ? lookup.confirmations : 0,
-      ...(lookup.shieldedNetZatoshis === undefined
-        ? {}
-        : {
-            shieldAmount: formatBaseUnitDecimalAmount(
-              String(lookup.shieldedNetZatoshis),
-              ZEC_DECIMALS
-            )
-          })
-    })
+    const observation = resolveZcashReceiveObservation(
+      await lookupTransaction(baseUrl, hash, signal)
+    )
+    if (observation) observed.set(hash, observation)
   })
   return observed
 }
 
 export function applyZcashReceiveObservations(
   transactions: Transaction[],
-  observed: ReadonlyMap<string, ZcashReceiveObservation>
+  observed: ReadonlyMap<string, ZcashReceiveObservation>,
+  addresses?: AccountAddresses
 ): Transaction[] {
-  const eligible = new Set(receivesAwaitingObservation(transactions))
+  const eligible = new Set(receivesAwaitingObservation(transactions, addresses))
   let changed = false
-  const updated = transactions.map(transaction => {
+  const updated = transactions.map<Transaction>(transaction => {
     if (!eligible.has(transaction)) return transaction
     const observation = observed.get(normalizeTxHash(transaction.txHash))
     if (!observation) return transaction
     const confirmations = Math.max(observation.confirmations, transaction.confirmations ?? 0)
-    if (transaction.type === 'shield') {
+    if (isLocalZcashShield(transaction, addresses)) {
       const amount = transaction.settledSelfTransferAmount ?? observation.shieldAmount
       if (
+        transaction.type === 'shield' &&
         confirmations === transaction.confirmations &&
         amount === transaction.settledSelfTransferAmount
       ) {
         return transaction
       }
       changed = true
-      return { ...transaction, confirmations, settledSelfTransferAmount: amount }
+      return { ...transaction, type: 'shield', confirmations, settledSelfTransferAmount: amount }
     }
     const state = resolveZcashReceiveStatus(confirmations, receiveConfirmationTrust(transaction))
     if (
@@ -521,12 +554,9 @@ export function mergeTransactionsWithWasmHistory(
   for (const transaction of refreshedCurrentTransactions) {
     if (
       transaction.type === 'send' &&
-      transaction.fromType === 'transparent' &&
-      !transaction.id.startsWith('wasm_') &&
       transaction.txHash &&
       transaction.to &&
-      (transaction.to === accountAddresses?.shielded ||
-        transaction.to === accountAddresses?.fullUnified)
+      isLocalZcashShield(transaction, accountAddresses)
     ) {
       localShieldRecipients.set(
         `${transaction.network}:${normalizeTxHash(transaction.txHash)}`,

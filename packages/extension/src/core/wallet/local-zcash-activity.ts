@@ -47,7 +47,11 @@ export type LocalZcashActivityWrite =
       receipts: Transaction[]
       addresses?: AccountAddresses
     }
-  | { kind: 'receive-confirmations'; observed: ReadonlyMap<string, ZcashReceiveObservation> }
+  | {
+      kind: 'receive-confirmations'
+      observed: ReadonlyMap<string, ZcashReceiveObservation>
+      addresses?: AccountAddresses
+    }
   | {
       kind: 'recipients'
       addresses: ReadonlyMap<string, string>
@@ -128,7 +132,7 @@ export function applyLocalZcashActivityWrite(
       next = applyZcashWorkerBroadcast(current, write.context, write.walletId, write.result)
       break
     case 'receive-confirmations':
-      next = applyZcashReceiveObservations(current, write.observed)
+      next = applyZcashReceiveObservations(current, write.observed, write.addresses)
       break
     case 'recipients':
       next = updateRows(current, transaction => {
