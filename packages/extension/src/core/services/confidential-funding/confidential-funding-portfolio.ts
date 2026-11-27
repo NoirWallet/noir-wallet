@@ -92,10 +92,9 @@ export function buildConfidentialPortfolioView(
     const assetId = managed?.assetId ?? registered?.asset.id
     const chainId = managed?.chainId ?? registered?.asset.chainId
     const bundledMetadata =
-      token &&
       registered?.source === 'bundled' &&
       assetId === registered.asset.id &&
-      token.decimals === registered.metadata.decimals
+      (!token || token.decimals === registered.metadata.decimals)
         ? registered.metadata
         : null
     const iconUrl = token ? (token.icon ?? token.coingeckoIcon ?? undefined) : undefined
@@ -115,7 +114,14 @@ export function buildConfidentialPortfolioView(
               ...(iconUrl ? { iconUrl } : {}),
               ...(token.coingeckoId ? { coingeckoId: token.coingeckoId } : {})
             }
-          : {})
+          : bundledMetadata
+            ? {
+                symbol: bundledMetadata.symbol,
+                name: bundledMetadata.name,
+                decimals: bundledMetadata.decimals,
+                ...(bundledMetadata.iconUrl ? { iconUrl: bundledMetadata.iconUrl } : {})
+              }
+            : {})
       })
     ]
   })

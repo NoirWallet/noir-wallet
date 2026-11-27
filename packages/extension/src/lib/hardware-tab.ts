@@ -12,6 +12,10 @@ import type { TransactionId } from '@/core/transactions/domain'
 import { launchHardwareSignSurface, type HardwareSignSurface } from './hardware-sign-launcher'
 import { waitForHardwareSignResult, type HardwareSignResult } from './hardware-sign-result'
 import { hardwareConnectRoute, type HardwareConnectVendor } from './hardware-connect-options'
+import {
+  createOneClickOrder,
+  parseOneClickViewer
+} from '@/core/services/near-intents/one-click-order'
 
 export type HardwareSignKind = 'send' | 'shield' | 'unshield' | 'swap'
 
@@ -140,6 +144,7 @@ function parseQuoteBinding(value: unknown): QuoteBinding | undefined {
         'isCrossChain',
         'destinationChain',
         'depositAddress',
+        'oneClickOrder',
         'originAsset',
         'destinationAsset',
         'expectedAmountOut',
@@ -184,6 +189,17 @@ function parseQuoteBinding(value: unknown): QuoteBinding | undefined {
   if (value.isCrossChain !== undefined && typeof value.isCrossChain !== 'boolean') {
     throw new Error('Invalid hardware quote route kind')
   }
+  const oneClickOrder = value.oneClickOrder
+  if (
+    oneClickOrder !== undefined &&
+    (value.provider !== 'near-intents' ||
+      !isRecord(oneClickOrder) ||
+      !hasExactKeys(oneClickOrder, ['depositAddress'], ['depositMemo', 'viewer']) ||
+      typeof oneClickOrder.depositAddress !== 'string' ||
+      oneClickOrder.depositAddress !== value.depositAddress)
+  ) {
+    throw new Error('Invalid hardware 1Click order binding')
+  }
   return {
     ...(value.provider === undefined ? {} : { provider: value.provider }),
     ...(value.userAction === undefined ? {} : { userAction: value.userAction }),
@@ -211,6 +227,19 @@ function parseQuoteBinding(value: unknown): QuoteBinding | undefined {
     ...(value.depositAddress === undefined
       ? {}
       : { depositAddress: parseString(value.depositAddress, 'hardware deposit address', 1_024) }),
+    ...(oneClickOrder === undefined
+      ? {}
+      : {
+          oneClickOrder: createOneClickOrder(
+            oneClickOrder.depositAddress as string,
+            oneClickOrder.depositMemo === undefined
+              ? undefined
+              : parseString(oneClickOrder.depositMemo, 'hardware 1Click deposit memo', 512),
+            oneClickOrder.viewer === undefined
+              ? undefined
+              : parseOneClickViewer(oneClickOrder.viewer)
+          )
+        }),
     ...(value.originAsset === undefined
       ? {}
       : { originAsset: parseString(value.originAsset, 'hardware origin asset', 512) }),
@@ -407,25 +436,6 @@ export function parseHardwareSignRequest(value: unknown): HardwareSignRequest {
   }
 }
 
-export function isHardwareDAppAuthorizationCurrent(
-  request: HardwareSignRequest,
-  authorization: {
-    readonly revision: number
-    readonly accounts: readonly Readonly<{ walletId: string; accountId: string }>[]
-  }
-): boolean {
-  return (
-    request.kind === 'send' &&
-    request.dappRequestId !== undefined &&
-    request.origin !== undefined &&
-    request.authorizationRevision !== undefined &&
-    authorization.revision === request.authorizationRevision &&
-    authorization.accounts.some(
-      account => account.walletId === request.walletId && account.accountId === request.accountId
-    )
-  )
-}
-
 export function parsePreparedHardwareSignRequest(value: unknown): PreparedHardwareSignRequest {
   if (
     !isRecord(value) ||
@@ -471,7 +481,14 @@ export function isHardwareSignRequestFresh(
   request: HardwareSignRequest,
   now = Date.now()
 ): boolean {
-  return request.createdAt <= now && now - request.createdAt <= HARDWARE_SIGN_REQUEST_TTL_MS
+  return request.createdAt <= now && now < hardwareSignRequestDeadline(request)
+}
+
+export function hardwareSignRequestDeadline(request: HardwareSignRequest): number {
+  const deadline = request.createdAt + HARDWARE_SIGN_REQUEST_TTL_MS
+  return request.quoteBinding?.recipientType === 'CONFIDENTIAL_INTENTS'
+    ? Math.min(deadline, request.quoteBinding.deadline ?? deadline)
+    : deadline
 }
 
 export function openHardwareConnectTab(

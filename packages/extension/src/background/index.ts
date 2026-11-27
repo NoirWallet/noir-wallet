@@ -119,8 +119,7 @@ import { getRetryableWalletRpcUserMessage } from '@/core/zcash/wallet-rpc-errors
 import {
   clearPreparedHardwareSignRequest,
   consumePreparedHardwareSignRequest,
-  HARDWARE_SIGN_REQUEST_TTL_MS,
-  isHardwareDAppAuthorizationCurrent,
+  hardwareSignRequestDeadline,
   isHardwareSignRequestFresh,
   readHardwareSignRequest,
   writePreparedHardwareSignRequest,
@@ -6452,6 +6451,11 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     }
     void readMatchingRequest()
       .then(async request => {
+        const validateReview = async () => {
+          const current = await readMatchingRequest()
+          if (JSON.stringify(current) !== JSON.stringify(request))
+            throw new Error('Hardware signing request changed. Review again.')
+        }
         if (
           request.quoteBinding?.provider === 'near-intents' &&
           request.quoteBinding.recipientType === 'CONFIDENTIAL_INTENTS'
@@ -6459,16 +6463,17 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
           const coordinator = confidentialFundingCoordinator
           if (!coordinator || request.kind !== 'swap' || request.dappRequestId)
             throw new Error('Native ZEC Confidential swap is unavailable')
-          await coordinator.authorizeNativeZecHardwareSpend({
-            ...request,
-            binding: request.quoteBinding,
-            expiresAt: request.createdAt + HARDWARE_SIGN_REQUEST_TTL_MS
-          })
+          await coordinator.authorizeNativeZecHardwareSpend(
+            {
+              ...request,
+              binding: request.quoteBinding,
+              expiresAt: hardwareSignRequestDeadline(request)
+            },
+            validateReview
+          )
         }
         return accountContextTransition.runActiveOperation(async () => {
-          const current = await readMatchingRequest()
-          if (JSON.stringify(current) !== JSON.stringify(request))
-            throw new Error('Hardware signing request changed. Review again.')
+          await validateReview()
           await clearPreparedHardwareSignRequest(message.requestId)
           if (request.dappRequestId) await assertHardwareDAppBinding(request)
           const built = await handleHardwarePcztBuild(message, Boolean(request.dappRequestId))
@@ -8024,27 +8029,21 @@ async function assertHardwareDAppBinding(
   request: NonNullable<Awaited<ReturnType<typeof readHardwareSignRequest>>>
 ): Promise<void> {
   if (walletLockCleanupPending) throw new Error('Wallet is locked')
-  if (request.kind !== 'send' || !request.origin || !request.dappRequestId) {
+  if (
+    request.kind !== 'send' ||
+    !request.origin ||
+    !request.dappRequestId ||
+    request.authorizationRevision === undefined
+  ) {
     throw new Error('Invalid dApp hardware signing request.')
   }
   if (
-    !isHardwareDAppAuthorizationCurrent(request, await dappManager.getAuthorization(request.origin))
-  ) {
-    throw new Error('This site authorization changed. Review the request again.')
-  }
-  const snapshot = await dappHandler.getAuthorizedActiveAccountSnapshot(request.origin)
-  const connection = await dappManager.getConnection(request.origin)
-  const boundAccount =
-    connection?.boundWalletId && connection.boundAccountId
-      ? useWalletStore.getState().getAccount(connection.boundWalletId, connection.boundAccountId)
-      : null
-  if (
-    connection?.boundWalletId !== request.walletId ||
-    connection.boundAccountId !== request.accountId ||
-    !boundAccount ||
-    snapshot?.transparent !== boundAccount.addresses.transparent ||
-    snapshot.shielded !== boundAccount.addresses.shielded ||
-    !isHardwareDAppAuthorizationCurrent(request, await dappManager.getAuthorization(request.origin))
+    !(await dappHandler.isAuthorizedZcashAccountCurrent(
+      request.origin,
+      request.walletId,
+      request.accountId,
+      request.authorizationRevision
+    ))
   ) {
     throw new Error('This site is no longer authorized. Review the request again.')
   }

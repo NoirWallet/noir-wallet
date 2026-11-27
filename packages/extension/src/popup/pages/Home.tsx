@@ -11,6 +11,7 @@ import { useIncognitoSetup } from '@/popup/hooks/useIncognitoSetup'
 import { addIncognitoNetworkPath } from '@/popup/services/account-network-presentation'
 import { availableSoftwareAccountFamilies } from '@/popup/services/account-network-selection-client'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
+import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { HomeBalanceOverview } from '../components/portfolio/HomeBalanceOverview'
 import { openModal } from '../provider/ModalManager'
 import { useDAppConnection } from '../hooks/useDAppConnection'
@@ -57,6 +58,7 @@ import { summarizePortfolioFiat } from '@/popup/services/portfolio-prices'
 import { useActiveAccountNetworks } from '../hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '../hooks/useHomePortfolio'
 import { useHomeZcashTipProbe } from '../hooks/useHomeZcashTipProbe'
+import { useShieldBalances } from '../hooks/useShieldBalances'
 import { useHomeScrollPosition } from '../hooks/useHomeScrollPosition'
 import { getAssetDomainRaw } from '../services/asset-domains'
 import { useSettingsStore } from '@/store/settings-store'
@@ -150,6 +152,9 @@ export function Home() {
 
   const currentAccount = getCurrentAccount()
   const currentWallet = getCurrentWallet()
+  const hardwareWallet =
+    storageV2Account?.walletSource.kind === 'hardware' ||
+    isZcashHardwareKeySource(currentWallet?.keySource)
   const homeCapabilities = getHomeAccountCapabilities({
     account: storageV2Account,
     retainedAccount: currentAccount,
@@ -352,10 +357,36 @@ export function Home() {
     account: storageV2Account,
     network: currentNetwork
   })
+  const shieldBalanceScope =
+    !accountContextChanging &&
+    effectiveWalletId &&
+    effectiveAccountId &&
+    storageV2Account?.walletId === effectiveWalletId &&
+    storageV2Account.accountId === effectiveAccountId
+      ? { network: currentNetwork, keyDomainId: effectiveWalletId, accountId: effectiveAccountId }
+      : null
+  const shieldBalances = useShieldBalances({
+    active: isShieldView && shieldBalanceScope !== null,
+    enabled: shieldActions.canManageNear,
+    scopeKey: modeScopeKey,
+    scope: shieldBalanceScope,
+    hardware: hardwareWallet,
+    authorizationPath: '/shield-provider?provider=near-confidential'
+  })
+  const showShieldBalanceLoading = shieldBalances.balances === null && shieldBalances.loading
+  const shieldBalanceAction =
+    shieldBalances.balances === null && !shieldBalances.loading
+      ? shieldBalances.errorCode === 'authorization_required' && hardwareWallet
+        ? 'Sign to load balances'
+        : shieldBalances.errorCode === 'balance_unavailable' ||
+            shieldBalances.errorCode === 'authorization_required'
+          ? 'Retry balances'
+          : null
+      : null
   const canMoveEvm =
     evmOperationsEnabled &&
     getPrivateTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length > 0
-  const canSwapShield = homeCapabilities.confidentialHome
+  const canSwapShield = shieldActions.providersFor('swap').length > 0
   const canSwapNativeZec = canSwapNativeShieldZec({
     account: storageV2Account,
     network: currentNetwork,
@@ -696,14 +727,20 @@ export function Home() {
     multichainPortfolio !== null &&
     multichainPortfolio.assets.every(asset => getAssetDomainRaw(asset, 'shield') === '0') &&
     !multichainPortfolio.confidential?.assets.some(asset => BigInt(asset.availableRaw) > 0n)
-  const showShieldEmpty = isShieldView && quickShield.eligible && shieldPortfolioEmpty
-  const dappModeControl = supportsEvmDAppExecutionMode
-    ? {
-        busy: !modeActionsReady || dappExecutionMode.updating || modeSwitchPending,
-        incognitoAvailable: dappExecutionMode.state?.privateAvailable === true,
-        onChange: handleDAppExecutionModeChange
-      }
-    : undefined
+  const showShieldEmpty =
+    isShieldView &&
+    quickShield.eligible &&
+    shieldPortfolioEmpty &&
+    !showShieldBalanceLoading &&
+    !shieldBalances.errorCode
+  const dappModeControl =
+    !hardwareWallet && supportsEvmDAppExecutionMode
+      ? {
+          busy: !modeActionsReady || dappExecutionMode.updating || modeSwitchPending,
+          incognitoAvailable: dappExecutionMode.state?.privateAvailable === true,
+          onChange: handleDAppExecutionModeChange
+        }
+      : undefined
   const darkDAppBar = assetDomain !== 'public'
 
   const retryZcashSync = async () => {
@@ -1012,6 +1049,19 @@ export function Home() {
                   )}
                 </div>
               )}
+              {isShieldView &&
+                (activeTab === 'assets' || activeTab === 'providers') &&
+                (showShieldBalanceLoading ? (
+                  <p role="status" className="px-5 pt-3 text-xs text-wallet-secondary">
+                    Loading Shield balances…
+                  </p>
+                ) : shieldBalanceAction ? (
+                  <div className="px-5 pt-3">
+                    <Button size="wallet" onClick={() => void shieldBalances.refreshBalances()}>
+                      {shieldBalanceAction}
+                    </Button>
+                  </div>
+                ) : null)}
               {showProviders ? (
                 <TabsContent value="providers" className="mt-0">
                   {activeTab === 'providers' && (
@@ -1024,6 +1074,7 @@ export function Home() {
                       prices={assetPrices}
                       pricesLoading={assetPriceStatus === 'loading'}
                       balancesHidden={balancesHidden}
+                      loadingShieldBalances={showShieldBalanceLoading}
                       actions={shieldActions}
                     />
                   )}

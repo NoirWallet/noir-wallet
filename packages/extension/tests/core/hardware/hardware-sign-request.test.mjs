@@ -6,7 +6,6 @@ import { proveHardwarePczt } from '../../../src/core/zcash/hardware-pczt.ts'
 
 import {
   consumePreparedHardwareSignRequest,
-  isHardwareDAppAuthorizationCurrent,
   isHardwareSignRequestFresh,
   openHardwareSignTab,
   parsePreparedHardwareSignRequest,
@@ -399,6 +398,51 @@ test.describe('Hardware sign request handoff', () => {
     expect(isHardwareSignRequestFresh(request, 999)).toBe(false)
   })
 
+  test('preserves the Confidential order and its deadline in the hardware signing request', () => {
+    const order = {
+      depositAddress: 't1deposit',
+      viewer: {
+        chainFamily: 'evm',
+        walletAddress: '0x0000000000000000000000000000000000000001',
+        signingMode: 'public'
+      }
+    }
+    const request = {
+      kind: 'swap',
+      walletId: 'wallet-1',
+      accountId: 'account-1',
+      amount: '1',
+      to: order.depositAddress,
+      fundingSource: 'transparent',
+      createdAt: 1_000,
+      quoteBinding: {
+        provider: 'near-intents',
+        userAction: 'swap',
+        recipientType: 'CONFIDENTIAL_INTENTS',
+        fundingSource: 'transparent',
+        depositAddress: order.depositAddress,
+        oneClickOrder: order,
+        deadline: 2_000
+      }
+    }
+    const parsed = parsePreparedHardwareSignRequest({
+      request: parseHardwareSignRequest(request),
+      fullPcztBase64: 'YWJjZA=='
+    }).request
+    expect(parsed.quoteBinding.oneClickOrder).toEqual(order)
+    expect(isHardwareSignRequestFresh(parsed, 1_999)).toBe(true)
+    expect(isHardwareSignRequestFresh(parsed, 2_000)).toBe(false)
+    expect(() =>
+      parseHardwareSignRequest({
+        ...request,
+        quoteBinding: {
+          ...request.quoteBinding,
+          oneClickOrder: { ...order, depositAddress: 't1different' }
+        }
+      })
+    ).toThrow('Invalid hardware 1Click order binding')
+  })
+
   test('accepts only the supported field combinations for every Zcash flow', () => {
     const base = { walletId: 'wallet-1', accountId: 'account-1', amount: '1', createdAt: 1_000 }
     expect(parseHardwareSignRequest({ ...base, kind: 'shield' })).toMatchObject({ kind: 'shield' })
@@ -461,30 +505,6 @@ test.describe('Hardware sign request handoff', () => {
       displayTo: '0xrecipient',
       quoteBinding: { userAction: 'transfer' }
     })
-  })
-
-  test('binds a dApp hardware request to its original authorization revision and account', () => {
-    const request = parseHardwareSignRequest({
-      kind: 'send',
-      walletId: 'wallet-1',
-      accountId: 'account-1',
-      to: 'u1recipient',
-      amount: '1',
-      createdAt: 1_000,
-      dappRequestId: 'dapp-request-1',
-      authorizationRevision: 7,
-      origin: 'https://dapp.example'
-    })
-    const accounts = [{ walletId: 'wallet-1', accountId: 'account-1' }]
-    expect(isHardwareDAppAuthorizationCurrent(request, { revision: 7, accounts })).toBe(true)
-    expect(isHardwareDAppAuthorizationCurrent(request, { revision: 8, accounts })).toBe(false)
-    expect(
-      isHardwareDAppAuthorizationCurrent(request, {
-        revision: 7,
-        accounts: [{ walletId: 'wallet-1', accountId: 'account-2' }]
-      })
-    ).toBe(false)
-    expect(isHardwareDAppAuthorizationCurrent(request, { revision: 7, accounts: [] })).toBe(false)
   })
 
   test('deletes corrupted prepared session state instead of returning it', async () => {

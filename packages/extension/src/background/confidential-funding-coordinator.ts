@@ -22,7 +22,7 @@ import {
   type ExternalShieldDepositFailureStage
 } from '@/core/services/confidential-funding/confidential-external-deposit'
 import { isAddress, toHex } from 'viem'
-import { supportsLedgerTransparentZecConfidentialSwap } from '@/core/chains/evm/execution-capability'
+import { supportsLedgerNativeZecConfidentialSwap } from '@/core/chains/evm/execution-capability'
 import { parseZcashAddress } from '@/core/address-book/address-book'
 import { isValidExternalRecipient } from './confidential-funding-recipient'
 import type { PortfolioReadModel } from '@/core/portfolio'
@@ -123,6 +123,7 @@ import {
 import {
   ConfidentialFundingSigner,
   requireConfidentialPea,
+  type ConfidentialHardwareMessageReview,
   type ConfidentialSigningIdentity
 } from './confidential-funding-signer'
 import { ChromeConfidentialFundingStore } from './confidential-funding-store'
@@ -150,6 +151,7 @@ const EXTERNAL_DEPOSIT_STATUS_BACKOFF_MAX_MS = 120_000
 const EXTERNAL_DEPOSIT_STATUS_FRESH_MS = 20_000
 const CONFIDENTIAL_FUNDING_MONITOR_DELAY_MINUTES = 20 / 60
 const PENDING_WITHDRAW_BALANCE_REFRESH_MS = 60_000
+const INTENT_QUOTE_EXPIRED = 'INTENT_QUOTE_EXPIRED'
 export type ClusterRejectionReason = 'APP_FEE_REJECTED_2002' | 'BACKEND_CONFIRMED_REJECTION'
 const TERMINAL_PHASES = new Set<ConfidentialFundingPlan['phase']>([
   'ready',
@@ -515,6 +517,23 @@ function normalizeStatus(value: string): string {
   return value.trim().toUpperCase()
 }
 
+function isIntentQuoteExpiry(error: unknown): boolean {
+  return (
+    error instanceof ConfidentialFundingApiError &&
+    !retryableFundingError(error) &&
+    /^quote has expired\.?$/i.test(error.message.trim())
+  )
+}
+
+function isUnfundedIntentStatus(status: ConfidentialStatus): boolean {
+  return (
+    ['PENDING_DEPOSIT', 'EXPIRED', 'CANCELLED'].includes(normalizeStatus(status.status)) &&
+    !status.transactionHash &&
+    !/[1-9]/.test(status.depositedAmountRaw ?? '') &&
+    !/[1-9]/.test(status.settledAmountOutRaw ?? '')
+  )
+}
+
 function confirmationFailureDetails(error: unknown): string {
   if (error instanceof ConfidentialFundingApiError)
     return `source=confidential-api httpStatus=${error.status ?? 'unavailable'} businessCode=${error.businessCode ?? 'unavailable'}`
@@ -754,7 +773,7 @@ export class ConfidentialFundingCoordinator {
         const source = identity.context.keyDomainSource
         if (source.kind !== 'hardware') return undefined
         if (
-          !supportsLedgerTransparentZecConfidentialSwap(source) ||
+          !supportsLedgerNativeZecConfidentialSwap(source) ||
           identity.address !== scope.recipient
         )
           throw new Error('Native ZEC Confidential account is unavailable')
@@ -850,7 +869,8 @@ export class ConfidentialFundingCoordinator {
       amount?: string
       fundingSource?: string
       expiresAt: number
-    }>
+    }>,
+    validateReview: () => Promise<void>
   ): Promise<void> {
     const review = await this.nativeZecIntents.get(input.binding.quoteHandle ?? '')
     const viewer = review.quoteBinding.oneClickOrder?.viewer
@@ -858,13 +878,14 @@ export class ConfidentialFundingCoordinator {
     if (
       review.walletId !== input.walletId ||
       review.accountId !== input.accountId ||
-      review.fundingSource !== 'transparent' ||
+      !review.fundingSource ||
       input.fundingSource !== review.fundingSource ||
       input.to !== review.depositAddress ||
       !input.amount ||
       zecToZats(input.amount) !== review.amountZats ||
       expiresAt <= this.now() ||
       viewer?.chainFamily !== 'evm' ||
+      viewer.signingMode !== 'public' ||
       viewer.walletAddress !== review.destination.recipient ||
       !sameNativeZecQuoteBinding(input.binding, review.quoteBinding)
     )
@@ -873,14 +894,18 @@ export class ConfidentialFundingCoordinator {
     const identity = await this.resolveShieldAccountIdentity()
     const { chainAccount, keyDomainSource } = identity.context
     if (
-      !supportsLedgerTransparentZecConfidentialSwap(keyDomainSource) ||
+      !supportsLedgerNativeZecConfidentialSwap(keyDomainSource) ||
       chainAccount.scope.keyDomainId !== input.walletId ||
       chainAccount.scope.accountId !== input.accountId ||
       identity.address !== viewer.walletAddress
     )
       throw new Error('Native ZEC Confidential account changed')
 
-    await this.ensureSession(identity, true, expiresAt)
+    await this.ensureSession(identity, true, expiresAt, {
+      purpose: 'confidential-session',
+      validate: validateReview
+    })
+    await validateReview()
     await authorizeOneClickOrderOwner(
       {
         network: this.options.network,
@@ -893,7 +918,8 @@ export class ConfidentialFundingCoordinator {
           identity,
           chainId: chainAccount.scope.chainId,
           payload: challenge.message,
-          expiresAt: Math.min(expiresAt, challenge.expiresAt)
+          expiresAt: Math.min(expiresAt, challenge.expiresAt),
+          hardwareReview: { purpose: 'confidential-order-status', validate: validateReview }
         })
         signature[64] += 27
         return { signature: toHex(signature) }
@@ -3265,11 +3291,24 @@ export class ConfidentialFundingCoordinator {
 
   async refreshBalances(
     scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>,
-    authorize: boolean
+    authorize: boolean,
+    notifyPortfolio = false
   ): Promise<readonly Readonly<{ tokenId: string; available: string; source: string }>[]> {
     const { identity, session } = await this.requireConfidentialSession(scope, authorize)
     try {
-      return await this.refreshPortfolioBalances(identity, session.accessToken)
+      const balances = await this.refreshPortfolioBalances(identity, session.accessToken)
+      if (notifyPortfolio) {
+        await this.options
+          .refreshPortfolio?.({
+            keyDomainId: scope.keyDomainId,
+            accountId: scope.accountId,
+            chainIds: [],
+            domain: 'confidential',
+            balanceUpdated: true
+          })
+          .catch(() => {})
+      }
+      return balances
     } catch (error) {
       if (error instanceof ConfidentialFundingApiError && error.status === 401) {
         await withMetadataLock(async () => {
@@ -3684,11 +3723,30 @@ export class ConfidentialFundingCoordinator {
       this.confirmingByPlan.has(planId)
     )
       return plan
-    if (plan.phase === 'needs-auth') return plan
+    const settlementPhase = plan.phase === 'needs-auth' ? plan.resumePhase : plan.phase
+    const awaitingSettlement =
+      (settlementPhase === 'processing' || settlementPhase === 'partial') &&
+      plan.operation !== 'deposit' &&
+      plan.withdraws.length > 0
+    if (plan.phase === 'needs-auth' && !awaitingSettlement) {
+      if (!this.shieldDepositObservationPhase(plan)) return plan
+      const settled = await this.finishArrivedShieldDeposit(plan)
+      if (settled) return settled
+      await this.scheduleMonitoring()
+      return plan
+    }
     const session = await this.readUsableSessionForPlan(plan)
+    if (awaitingSettlement && (!session || plan.phase === 'needs-auth')) {
+      await this.ensureGraph(plan)
+      const observed = await this.refreshSettlement(plan, session?.accessToken, true)
+      if (!isTerminalPhase(observed.phase)) await this.scheduleMonitoring()
+      return observed
+    }
+    if (plan.phase === 'needs-auth') return plan
     if (!session) {
       const settled = await this.finishArrivedShieldDeposit(plan)
       if (settled) return settled
+      if (this.shieldDepositObservationPhase(plan)) await this.scheduleMonitoring()
       return this.updatePlan(plan, {
         phase: 'needs-auth',
         resumePhase: plan.phase
@@ -4628,6 +4686,7 @@ export class ConfidentialFundingCoordinator {
     if ((await fingerprintConfidentialValue(frozenRequest)) !== plan.requestFingerprint) {
       throw new Error('Frozen private withdraw request was modified')
     }
+    const shieldIntent = plan.operation === 'swap' || plan.operation === 'confidential-transfer'
     let current = plan
     for (const requestRow of frozenRequest.withdraws) {
       const row = current.withdraws[requestRow.sequence]
@@ -4643,11 +4702,20 @@ export class ConfidentialFundingCoordinator {
         if (!needsConfidentialSubmissionCheck(current)) await this.scheduleMonitoring()
         return current
       }
-      const prior = normalizeStatus(priorStatus?.status ?? '')
+      const prior = normalizeStatus(priorStatus.status)
+      let expiredQuote =
+        row.errorStatus === INTENT_QUOTE_EXPIRED ||
+        (shieldIntent &&
+          (prior === 'EXPIRED' ||
+            (plan.swapQuote !== undefined && quoteDeadline(plan.swapQuote) <= this.now())))
       let intentHash: string | undefined
       let observedStatus: Awaited<ReturnType<ConfidentialFundingApi['getStatus']>> | null =
         priorStatus
-      if (!prior || prior === 'PENDING_DEPOSIT' || prior === 'INCOMPLETE_DEPOSIT') {
+      if (
+        !expiredQuote &&
+        (!prior || prior === 'PENDING_DEPOSIT' || prior === 'INCOMPLETE_DEPOSIT') &&
+        (!shieldIntent || isUnfundedIntentStatus(priorStatus))
+      ) {
         if (row.deadline <= this.now()) {
           if (!needsConfidentialSubmissionCheck(current)) await this.scheduleMonitoring()
           return current
@@ -4668,17 +4736,31 @@ export class ConfidentialFundingCoordinator {
           })
         } catch (error) {
           if (authenticationError(error)) throw error
+          if (shieldIntent && isIntentQuoteExpiry(error)) {
+            expiredQuote = true
+            current = await this.updatePlan(current, {
+              withdraws: Object.freeze(
+                current.withdraws.map(item =>
+                  item.sequence === row.sequence
+                    ? Object.freeze({ ...item, errorStatus: INTENT_QUOTE_EXPIRED })
+                    : item
+                )
+              )
+            })
+          }
           observedStatus = await this.readStatus(
             current,
             row.depositAddress,
             'submit-recovery',
             row.sequence
           )
+          if (expiredQuote && !observedStatus) return current
           const recoveredStatus = normalizeStatus(observedStatus?.status ?? '')
           if (
-            !recoveredStatus ||
-            recoveredStatus === 'PENDING_DEPOSIT' ||
-            recoveredStatus === 'INCOMPLETE_DEPOSIT'
+            !expiredQuote &&
+            (!recoveredStatus ||
+              recoveredStatus === 'PENDING_DEPOSIT' ||
+              recoveredStatus === 'INCOMPLETE_DEPOSIT')
           ) {
             if (error instanceof ConfidentialFundingApiError && error.ambiguous) {
               await this.scheduleMonitoring()
@@ -4689,16 +4771,22 @@ export class ConfidentialFundingCoordinator {
         }
       }
 
+      const cancelled =
+        expiredQuote && observedStatus !== null && isUnfundedIntentStatus(observedStatus)
       const nextRows = current.withdraws.map(item =>
         item.sequence === requestRow.sequence
           ? Object.freeze({
               ...item,
-              status: observedStatus?.status ?? 'PROCESSING',
+              status: cancelled ? 'CANCELLED' : (observedStatus?.status ?? 'PROCESSING'),
               ...(intentHash ? { intentHash } : {}),
               ...(observedStatus?.transactionHash
                 ? { transactionHash: observedStatus.transactionHash }
                 : {}),
-              ...(observedStatus?.errorStatus ? { errorStatus: observedStatus.errorStatus } : {})
+              ...(cancelled
+                ? { errorStatus: INTENT_QUOTE_EXPIRED }
+                : observedStatus?.errorStatus
+                  ? { errorStatus: observedStatus.errorStatus }
+                  : {})
             })
           : item
       )
@@ -5116,7 +5204,9 @@ export class ConfidentialFundingCoordinator {
     }
     const statuses = await Promise.all(
       plan.withdraws.map(row =>
-        this.readStatus(plan, row.depositAddress, 'settlement', row.sequence)
+        row.status === 'CANCELLED' && row.errorStatus === INTENT_QUOTE_EXPIRED
+          ? null
+          : this.readStatus(plan, row.depositAddress, 'settlement', row.sequence)
       )
     )
     const rows = plan.withdraws.map((row, index) => {
@@ -5425,7 +5515,8 @@ export class ConfidentialFundingCoordinator {
   private async ensureSession(
     identity: ConfidentialSigningIdentity,
     authenticate: boolean,
-    expiresAt?: number
+    expiresAt?: number,
+    hardwareReview?: ConfidentialHardwareMessageReview
   ) {
     const session = await this.readUsableSession(identity)
     if (session || !authenticate) return session
@@ -5438,7 +5529,7 @@ export class ConfidentialFundingCoordinator {
     ])
     const pending = this.authenticating.get(key)
     if (pending) return pending
-    const operation = this.authenticateSession(identity, expiresAt)
+    const operation = this.authenticateSession(identity, expiresAt, hardwareReview)
     this.authenticating.set(key, operation)
     try {
       return await operation
@@ -5447,13 +5538,18 @@ export class ConfidentialFundingCoordinator {
     }
   }
 
-  private async authenticateSession(identity: ConfidentialSigningIdentity, expiresAt?: number) {
+  private async authenticateSession(
+    identity: ConfidentialSigningIdentity,
+    expiresAt?: number,
+    hardwareReview?: ConfidentialHardwareMessageReview
+  ) {
     const unsigned = await this.options.api.createAuthPayload(identity.address)
     const signed = await this.options.signer.signMessage({
       identity,
       chainId: identity.context.chainAccount.scope.chainId,
       payload: unsigned.payload,
-      expiresAt: Math.min(unsigned.expiresAt ?? Infinity, expiresAt ?? Infinity)
+      expiresAt: Math.min(unsigned.expiresAt ?? Infinity, expiresAt ?? Infinity),
+      hardwareReview
     })
     const authenticated = await this.options.api.authenticate(signed)
     const scope = identity.context.chainAccount.scope

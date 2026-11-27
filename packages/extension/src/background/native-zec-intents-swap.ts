@@ -105,7 +105,7 @@ function assertNativeZecOrder(
 function getConfidentialOrderRecipient(binding: QuoteBinding): string | undefined {
   return binding.recipientType === 'CONFIDENTIAL_INTENTS' &&
     binding.userAction === 'swap' &&
-    binding.fundingSource === 'transparent' &&
+    (binding.fundingSource === 'transparent' || binding.fundingSource === 'shielded') &&
     binding.destinationAsset === ZEC_ZCASH_ASSET
     ? binding.recipient
     : undefined
@@ -598,11 +598,10 @@ export class NativeZecIntentsSwapCoordinator {
       if (
         hardwareViewer &&
         (input.userAction !== 'swap' ||
-          input.fundingSource !== 'transparent' ||
           !confidentialZecDestination ||
           refund.scheme !== 'zcash-transparent-p2pkh')
       ) {
-        throw new Error('Ledger requires transparent ZEC for this Confidential swap')
+        throw new Error('Ledger Confidential swap requires a transparent ZEC refund address')
       }
       const viewer =
         hardwareViewer ?? (await resolveViewer(scope, input.refundAddress, refundSource))
@@ -673,7 +672,7 @@ export class NativeZecIntentsSwapCoordinator {
         throw new Error('Native ZEC Confidential quote requires a transparent deposit address')
       }
       if (hardwareViewer && quote.depositMemo !== undefined) {
-        throw new Error('Ledger cannot attach a memo to this transparent deposit')
+        throw new Error('Ledger Confidential swap requires a deposit without a memo')
       }
       if ((await this.list()).some(record => record.depositAddress === quote.depositAddress)) {
         throw new Error('Native ZEC Intents deposit address was reused')

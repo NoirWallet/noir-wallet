@@ -491,12 +491,6 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   )
   const ordinarySwapRequested =
     !crossChainSendRequested && !privateTransferRequested && !isPrivateFunding
-  const useSharedSwapPair =
-    ordinarySwapRequested &&
-    !searchParams.has('assetId') &&
-    !requestedSourceAssetId &&
-    !requestedDestinationAssetId
-  const restoreSavedSwapPair = useSharedSwapPair && !shieldSwapSelected
   const lockedAssetFlowRequested = isPrivateFunding || privateTransferRequested
   const privateBalanceTransferRequested = Boolean(
     searchParams.get('balanceTransfer') === '1' && lockedAssetFlowRequested
@@ -623,6 +617,13 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   const isLedgerWallet =
     storageV2Account?.walletSource.kind === 'hardware' &&
     storageV2Account.walletSource.hardware.vendor === 'ledger'
+  const useSharedSwapPair =
+    ordinarySwapRequested &&
+    !(isLedgerWallet && shieldNativeZecSwap) &&
+    !searchParams.has('assetId') &&
+    !requestedSourceAssetId &&
+    !requestedDestinationAssetId
+  const restoreSavedSwapPair = useSharedSwapPair && !shieldSwapSelected
   const feeTier = useSettingsStore(state => state.feeTier)
   const setFeeTier = useSettingsStore(state => state.setFeeTier)
   const balancesHidden = useSettingsStore(state => state.balancesHidden)
@@ -659,8 +660,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   const nativeZecConfidentialAvailable = hasNativeZecConfidentialSwapRoute(
     storageV2Account,
     currentNetwork,
-    __ENABLED_CHAIN_FEATURE_FLAGS__,
-    shieldZecSource === 'native-transparent' ? 'transparent' : 'shielded'
+    __ENABLED_CHAIN_FEATURE_FLAGS__
   )
   const nativeZecShieldAvailable = resolveShieldNativeZecSwapAvailable({
     network: currentNetwork,
@@ -848,6 +848,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
       : swapPreferenceScope,
     {
       catalogScope: walletSourcesScope,
+      allowSameZecAssetPair: shieldNativeZecSwap && nativeZecConfidentialAvailable,
       sourceAssetId: requestedSourceAssetId,
       destinationAssetId:
         crossChainWithdrawRoute?.destinationAssetId ??

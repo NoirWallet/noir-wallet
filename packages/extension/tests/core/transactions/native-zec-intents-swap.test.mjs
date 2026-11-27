@@ -331,6 +331,7 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
   const depositAddress = `t1${'B'.repeat(33)}`
   const shieldedRefundAddress = `u1${'q'.repeat(55)}`
   const shieldedDepositAddress = `t1${'C'.repeat(33)}`
+  const ledgerShieldedDepositAddress = `t1${'F'.repeat(33)}`
   const shieldedViewer = {
     chainFamily: 'zcash',
     walletAddress: `t1${'D'.repeat(33)}`,
@@ -390,7 +391,9 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
               depositAddress:
                 quoteRequest.refundTo === shieldedRefundAddress
                   ? shieldedDepositAddress
-                  : depositAddress,
+                  : quoteRequest.amount === '200000000'
+                    ? ledgerShieldedDepositAddress
+                    : depositAddress,
               ...(!hardwareViewer && { depositMemo: ' ref+id ' })
             }),
             deadline: quoteRequest.deadline
@@ -552,9 +555,6 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
     expect(await coordinator.cancel(priorReview.quoteId)).toBe(true)
 
     hardwareViewer = { chainFamily: 'evm', walletAddress: recipient, signingMode: 'public' }
-    await expect(coordinator.prepare({ ...request, fundingSource: 'shielded' })).rejects.toThrow(
-      'Ledger requires transparent ZEC'
-    )
     switchDuringAuthorization = true
     const hardwareReview = await coordinator.prepare(request)
     expect(quoteRequests.at(-1)).toMatchObject({
@@ -566,6 +566,34 @@ test('native ZEC Confidential destination binds the internal ZEC asset and activ
     expect(
       (await coordinator.get(hardwareReview.quoteId)).quoteBinding.oneClickOrder.viewer
     ).toEqual(hardwareViewer)
+    const ledgerShieldedReview = await coordinator.prepare({
+      ...request,
+      amountZats: '200000000',
+      fundingSource: 'shielded',
+      requestId: 'ledger-shielded-zec-confidential-swap'
+    })
+    const ledgerShieldedBinding = (await coordinator.get(ledgerShieldedReview.quoteId))
+      .quoteBinding
+    expect(ledgerShieldedBinding).toMatchObject({
+      fundingSource: 'shielded',
+      refundTo: refundAddress,
+      oneClickOrder: { depositAddress: ledgerShieldedDepositAddress, viewer: hardwareViewer }
+    })
+    expect(readNativeZecIntentsStatusViewer(ledgerShieldedBinding, 'mainnet')).toEqual(hardwareViewer)
+    const spend = {
+      walletId: request.walletId,
+      accountId: request.accountId,
+      transactionId: 'ledger-shielded-transaction',
+      binding: ledgerShieldedBinding,
+      to: ledgerShieldedDepositAddress,
+      amount: '2',
+      fundingSource: 'shielded'
+    }
+    await expect(coordinator.claimSpend({ ...spend, fundingSource: 'transparent' })).rejects.toThrow(
+      'quote changed or was already submitted'
+    )
+    expect(await coordinator.claimSpend(spend)).toBe(ledgerShieldedReview.expiresAt)
+
     const storedKey = `native_zec_intents_swap:${hardwareReview.quoteId}`
     values.get(storedKey).quoteBinding.oneClickOrder.viewer = {
       ...hardwareViewer,
