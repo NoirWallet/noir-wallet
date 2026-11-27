@@ -31,7 +31,7 @@ export function supportsEvmConfidentialShield(
   )
 }
 
-export function supportsLedgerTransparentZecConfidentialSwap(
+export function supportsLedgerNativeZecConfidentialSwap(
   source: ConfidentialShieldKeySource | null | undefined
 ): boolean {
   if (source?.kind !== 'hardware') return false

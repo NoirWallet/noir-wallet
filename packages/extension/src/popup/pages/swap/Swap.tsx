@@ -650,8 +650,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   const nativeZecConfidentialAvailable = hasNativeZecConfidentialSwapRoute(
     storageV2Account,
     currentNetwork,
-    __ENABLED_CHAIN_FEATURE_FLAGS__,
-    shieldZecSource === 'native-transparent' ? 'transparent' : 'shielded'
+    __ENABLED_CHAIN_FEATURE_FLAGS__
   )
   const nativeZecShieldAvailable = resolveShieldNativeZecSwapAvailable({
     network: currentNetwork,

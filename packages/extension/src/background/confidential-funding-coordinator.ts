@@ -23,7 +23,7 @@ import {
   type ExternalShieldDepositFailureStage
 } from '@/core/services/confidential-funding/confidential-external-deposit'
 import { isAddress, toHex } from 'viem'
-import { supportsLedgerTransparentZecConfidentialSwap } from '@/core/chains/evm/execution-capability'
+import { supportsLedgerNativeZecConfidentialSwap } from '@/core/chains/evm/execution-capability'
 import { parseZcashAddress } from '@/core/address-book/address-book'
 import { isValidExternalRecipient } from './confidential-funding-recipient'
 import type { PortfolioReadModel } from '@/core/portfolio'
@@ -715,7 +715,7 @@ export class ConfidentialFundingCoordinator {
         const source = identity.context.keyDomainSource
         if (source.kind !== 'hardware') return undefined
         if (
-          !supportsLedgerTransparentZecConfidentialSwap(source) ||
+          !supportsLedgerNativeZecConfidentialSwap(source) ||
           identity.address !== scope.recipient
         )
           throw new Error('Native ZEC Confidential account is unavailable')
@@ -820,13 +820,14 @@ export class ConfidentialFundingCoordinator {
     if (
       review.walletId !== input.walletId ||
       review.accountId !== input.accountId ||
-      review.fundingSource !== 'transparent' ||
+      !review.fundingSource ||
       input.fundingSource !== review.fundingSource ||
       input.to !== review.depositAddress ||
       !input.amount ||
       zecToZats(input.amount) !== review.amountZats ||
       expiresAt <= this.now() ||
       viewer?.chainFamily !== 'evm' ||
+      viewer.signingMode !== 'public' ||
       viewer.walletAddress !== review.destination.recipient ||
       !sameNativeZecQuoteBinding(input.binding, review.quoteBinding)
     )
@@ -835,7 +836,7 @@ export class ConfidentialFundingCoordinator {
     const identity = await this.resolveShieldAccountIdentity()
     const { chainAccount, keyDomainSource } = identity.context
     if (
-      !supportsLedgerTransparentZecConfidentialSwap(keyDomainSource) ||
+      !supportsLedgerNativeZecConfidentialSwap(keyDomainSource) ||
       chainAccount.scope.keyDomainId !== input.walletId ||
       chainAccount.scope.accountId !== input.accountId ||
       identity.address !== viewer.walletAddress

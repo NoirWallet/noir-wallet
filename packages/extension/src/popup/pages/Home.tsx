@@ -10,7 +10,6 @@ import { useIncognitoSetup } from '@/popup/hooks/useIncognitoSetup'
 import { addIncognitoNetworkPath } from '@/popup/services/account-network-presentation'
 import { availableSoftwareAccountFamilies } from '@/popup/services/account-network-selection-client'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
-import { supportsLedgerTransparentZecConfidentialSwap } from '@/core/chains/evm/execution-capability'
 import { HomeBalanceOverview } from '../components/portfolio/HomeBalanceOverview'
 import { openModal } from '../provider/ModalManager'
 import { useDAppConnection } from '../hooks/useDAppConnection'
@@ -347,10 +346,6 @@ export function Home() {
     keySource: currentWallet?.keySource
   }
   const canSwapNativeZec = canSwapNativeShieldZec(nativeZecSwapContext)
-  const canSwapTransparentZecToShield =
-    isShieldView &&
-    supportsLedgerTransparentZecConfidentialSwap(storageV2Account?.walletSource) &&
-    canSwapNativeShieldZec({ ...nativeZecSwapContext, fundingSource: 'transparent' })
   const openSend = () => {
     const sendPath = isShieldView ? buildShieldActionPath('send') : '/send?mode=public'
     navigate.navigate(sendPath, {
@@ -375,8 +370,7 @@ export function Home() {
       navigate.navigate(
         buildShieldActionPath('swap', {
           account,
-          provider: !canSwapShield && canSwapNativeZec ? 'zcash-shield' : undefined,
-          shieldZecSource: canSwapTransparentZecToShield ? 'native-transparent' : undefined
+          provider: !canSwapShield && canSwapNativeZec ? 'zcash-shield' : undefined
         })
       )
       return
@@ -990,10 +984,7 @@ export function Home() {
                 isTestnet ||
                 !supportsSwap ||
                 (assetDomain === 'private' && !canMoveEvm) ||
-                (isShieldView &&
-                  !canSwapShield &&
-                  !canSwapNativeZec &&
-                  !canSwapTransparentZecToShield)
+                (isShieldView && !canSwapShield && !canSwapNativeZec)
               }
               onClick={openSwap}
             />
