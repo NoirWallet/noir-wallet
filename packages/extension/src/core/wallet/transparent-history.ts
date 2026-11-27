@@ -17,6 +17,7 @@ import {
   getRequiredConfirmations,
   mergeTransactionUpdate,
   mergeZcashReceiveObservation,
+  resolveZcashReceiveStatus,
   synchronizeInternalTransferConfirmations,
   type ConfirmationTrust,
   type ZcashConfirmation
@@ -33,67 +34,97 @@ const FETCH_CONCURRENCY = 5
 const HISTORY_CACHE_TTL_MS = 30_000
 const ZATOSHIS_PER_ZEC = 10n ** BigInt(ZEC_DECIMALS)
 
-function externalReceivesAwaitingConfirmation(transactions: Transaction[]): Transaction[] {
-  const localHashes = localTxHashSet(transactions.filter(tx => tx.type !== 'receive'))
-  const required = getRequiredConfirmations('receive')
+export interface ZcashReceiveObservation {
+  confirmations: number
+  shieldAmount?: string
+}
+
+function receiveConfirmationTrust(transaction: Transaction): ConfirmationTrust {
+  return transaction.requiredConfirmations === getRequiredConfirmations('receive', 'trusted')
+    ? 'trusted'
+    : 'untrusted'
+}
+
+function receivesAwaitingObservation(transactions: Transaction[]): Transaction[] {
   return transactions.filter(tx => {
     const hash = normalizeTxHash(tx.txHash)
+    if (!/^[0-9a-f]{64}$/.test(hash) || tx.status === 'failed') return false
+    if (tx.type === 'shield') {
+      return (
+        (tx.confirmations ?? -1) < getRequiredConfirmations('receive', 'trusted') ||
+        (!tx.id.startsWith('wasm_') && !tx.settledSelfTransferAmount)
+      )
+    }
     return (
       tx.type === 'receive' &&
       (tx.id.startsWith('wasm_') ||
         (tx.id.startsWith('rpc_treceive_') && isTransparentReceive(tx))) &&
-      (tx.status === 'confirming' || tx.status === 'pending') &&
-      (tx.requiredConfirmations == null || tx.requiredConfirmations === required) &&
-      /^[0-9a-f]{64}$/.test(hash) &&
-      !localHashes.has(hash)
+      (tx.status === 'confirming' || tx.status === 'pending')
     )
   })
 }
 
-export async function readExternalReceiveConfirmations(
+export async function readZcashReceiveObservations(
   transactions: Transaction[],
   baseUrl: string,
   signal?: AbortSignal
-): Promise<ReadonlyMap<string, number>> {
+): Promise<ReadonlyMap<string, ZcashReceiveObservation>> {
   const hashes = Array.from(
-    new Set(
-      externalReceivesAwaitingConfirmation(transactions).map(tx => normalizeTxHash(tx.txHash))
-    )
+    new Set(receivesAwaitingObservation(transactions).map(tx => normalizeTxHash(tx.txHash)))
   ).slice(0, MAX_RECENT_TXS)
-  const observed = new Map<string, number>()
+  const observed = new Map<string, ZcashReceiveObservation>()
   await mapWithConcurrency(hashes, FETCH_CONCURRENCY, async hash => {
     if (signal?.aborted) return
     const lookup = await lookupTransaction(baseUrl, hash, signal)
-    if (lookup.status === 'confirmed') observed.set(hash, lookup.confirmations)
+    if (lookup.status !== 'confirmed' && lookup.status !== 'mempool') return
+    observed.set(hash, {
+      confirmations: lookup.status === 'confirmed' ? lookup.confirmations : 0,
+      ...(lookup.shieldedNetZatoshis === undefined
+        ? {}
+        : {
+            shieldAmount: formatBaseUnitDecimalAmount(
+              String(lookup.shieldedNetZatoshis),
+              ZEC_DECIMALS
+            )
+          })
+    })
   })
   return observed
 }
 
-export function applyExternalReceiveConfirmations(
+export function applyZcashReceiveObservations(
   transactions: Transaction[],
-  observed: ReadonlyMap<string, number>
+  observed: ReadonlyMap<string, ZcashReceiveObservation>
 ): Transaction[] {
-  const eligible = new Set(externalReceivesAwaitingConfirmation(transactions))
-  const requiredConfirmations = getRequiredConfirmations('receive')
+  const eligible = new Set(receivesAwaitingObservation(transactions))
   let changed = false
   const updated = transactions.map(transaction => {
     if (!eligible.has(transaction)) return transaction
-    const confirmations = observed.get(normalizeTxHash(transaction.txHash))
-    const status =
-      confirmations != null && confirmations >= requiredConfirmations ? 'success' : 'confirming'
+    const observation = observed.get(normalizeTxHash(transaction.txHash))
+    if (!observation) return transaction
+    const confirmations = Math.max(observation.confirmations, transaction.confirmations ?? 0)
+    if (transaction.type === 'shield') {
+      const amount = transaction.settledSelfTransferAmount ?? observation.shieldAmount
+      if (
+        confirmations === transaction.confirmations &&
+        amount === transaction.settledSelfTransferAmount
+      ) {
+        return transaction
+      }
+      changed = true
+      return { ...transaction, confirmations, settledSelfTransferAmount: amount }
+    }
+    const state = resolveZcashReceiveStatus(confirmations, receiveConfirmationTrust(transaction))
     if (
-      confirmations == null ||
-      confirmations < (transaction.confirmations ?? 0) ||
-      (confirmations === transaction.confirmations && status === transaction.status)
+      observation.confirmations < (transaction.confirmations ?? 0) ||
+      (confirmations === transaction.confirmations && state.status === transaction.status)
     ) {
       return transaction
     }
     changed = true
     return mergeZcashReceiveObservation(transaction, {
       ...transaction,
-      status,
-      confirmations,
-      requiredConfirmations
+      ...state
     })
   })
   return changed ? updated : transactions
@@ -172,19 +203,10 @@ export function mapVerboseTransactionToReceive(
 
   const blockTimeSec = tx.blocktime ?? tx.time
   const confirmations = Math.max(0, tx.confirmations ?? 0, confirmationHint)
-  const requiredConfirmations = getRequiredConfirmations('receive', trust)
-
   return {
     id: `rpc_treceive_${tx.txid}`,
     txHash: tx.txid,
-    status:
-      confirmations === 0
-        ? 'pending'
-        : confirmations >= requiredConfirmations
-          ? 'success'
-          : 'confirming',
-    confirmations,
-    requiredConfirmations,
+    ...resolveZcashReceiveStatus(confirmations, trust),
     type: 'receive',
     amount: formatBaseUnitDecimalAmount(amount, ZEC_DECIMALS),
     to: address,
@@ -298,7 +320,6 @@ function applyCurrentConfirmationPolicy(
   return transactions.map(transaction => {
     const txHash = normalizeTxHash(transaction.txHash)
     const trust = walletCreatedTxids.has(txHash) ? 'trusted' : 'untrusted'
-    const requiredConfirmations = getRequiredConfirmations('receive', trust)
     const confirmations = Math.max(
       0,
       transaction.confirmations ?? 0,
@@ -307,14 +328,7 @@ function applyCurrentConfirmationPolicy(
 
     return {
       ...transaction,
-      status:
-        confirmations === 0
-          ? 'pending'
-          : confirmations >= requiredConfirmations
-            ? 'success'
-            : 'confirming',
-      confirmations,
-      requiredConfirmations
+      ...resolveZcashReceiveStatus(confirmations, trust)
     }
   })
 }
@@ -475,18 +489,27 @@ export function mergeTransactionsWithWasmHistory(
         : undefined
     const shieldedOutput = transaction.type === 'shield' && walletHistory.type === 'shield'
     const transparentOutput = transaction.type === 'unshield' && isTransparentReceive(walletHistory)
+    const confirmations =
+      (shieldedOutput || transparentOutput) && transaction.confirmations !== undefined
+        ? Math.max(transaction.confirmations, walletHistory.confirmations ?? 0)
+        : walletHistory.confirmations
     return mergeTransactionUpdate(
       transaction,
       {
-        status: walletHistory.status,
-        confirmations: walletHistory.confirmations,
+        status:
+          transaction.status === 'confirming' &&
+          walletHistory.status === 'pending' &&
+          (confirmations ?? 0) > 0
+            ? 'confirming'
+            : walletHistory.status,
+        confirmations,
         requiredConfirmations: walletHistory.requiredConfirmations,
         amount: shieldedOutput
           ? safeBig(walletHistory.amount)
               .plus(walletHistory.fee ?? 0)
               .toFixed()
           : transaction.amount,
-        ...(walletHistory.status === 'success' && (shieldedOutput || transparentOutput)
+        ...((shieldedOutput || transparentOutput) && safeBig(walletHistory.amount).gt(0)
           ? { settledSelfTransferAmount: walletHistory.amount }
           : {})
       },
@@ -521,7 +544,7 @@ export function mergeTransactionsWithWasmHistory(
     const recipient = localShieldRecipients.get(key)
     const transaction: Transaction =
       wasmTransaction.type === 'shield' &&
-      wasmTransaction.status === 'success' &&
+      wasmTransaction.status !== 'failed' &&
       safeBig(wasmTransaction.amount).gt(0) &&
       recipient &&
       !observedShieldReceiptKeys.has(key)

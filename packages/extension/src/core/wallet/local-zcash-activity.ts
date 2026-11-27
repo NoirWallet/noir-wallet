@@ -11,9 +11,10 @@ import {
   type ZcashConfirmation
 } from '../../lib/transaction-status.ts'
 import {
-  applyExternalReceiveConfirmations,
+  applyZcashReceiveObservations,
   associateIncomingIntentsTransactions,
-  mergeTransactionsWithWasmHistory
+  mergeTransactionsWithWasmHistory,
+  type ZcashReceiveObservation
 } from './transparent-history.ts'
 
 type TerminalStatus = 'success' | 'failed'
@@ -46,7 +47,7 @@ export type LocalZcashActivityWrite =
       receipts: Transaction[]
       addresses?: AccountAddresses
     }
-  | { kind: 'receive-confirmations'; observed: ReadonlyMap<string, number> }
+  | { kind: 'receive-confirmations'; observed: ReadonlyMap<string, ZcashReceiveObservation> }
   | {
       kind: 'recipients'
       addresses: ReadonlyMap<string, string>
@@ -127,7 +128,7 @@ export function applyLocalZcashActivityWrite(
       next = applyZcashWorkerBroadcast(current, write.context, write.walletId, write.result)
       break
     case 'receive-confirmations':
-      next = applyExternalReceiveConfirmations(current, write.observed)
+      next = applyZcashReceiveObservations(current, write.observed)
       break
     case 'recipients':
       next = updateRows(current, transaction => {
