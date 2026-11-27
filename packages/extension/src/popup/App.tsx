@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { lazy, Suspense, useEffect, useRef, type ReactNode } from 'react'
 import { Navigate } from 'react-router-dom'
 import { ToastContainer } from './components/common/ToastContainer'
@@ -58,6 +59,7 @@ import { Receive } from './pages/portfolio/Receive'
 
 // Swap Page
 import { Swap } from './pages/swap/Swap'
+import { RETURN_TO_LEDGER_SWAP_EVENT } from './services/swap-approval-continuation-client'
 
 // Hardware Wallet Pages (full-tab flows)
 import { KeystoneConnect } from './pages/hardware/KeystoneConnect'
@@ -338,13 +340,21 @@ function AppContent() {
         } catch {
           return
         }
-        navigate(`/swap?resumeApproval=${encodeURIComponent(transactionId)}`)
+        const needsRestore = window.dispatchEvent(
+          new CustomEvent(RETURN_TO_LEDGER_SWAP_EVENT, { detail: transactionId, cancelable: true })
+        )
+        if (needsRestore) navigate(`/swap?resumeApproval=${encodeURIComponent(transactionId)}`)
         sendResponse(true)
         return
       }
       if (messageType === 'ACCOUNT_CONTEXT_CHANGED' && senderContext === 'service-worker') {
         void rehydrateWalletStore().catch(error => {
-          console.error('[Popup] Failed to refresh the active Account context:', error)
+          logger.error(
+            '[Popup] Failed to refresh the active Account context',
+            undefined,
+            undefined,
+            error
+          )
         })
         return
       }
@@ -359,7 +369,9 @@ function AppContent() {
             ? message.accountKey
             : undefined
         if (!accountKey) return
-        reloadTransactions(accountKey).catch(console.error)
+        reloadTransactions(accountKey).catch(error =>
+          logger.error('Activity refresh failed', undefined, undefined, error)
+        )
       }
     }
 
@@ -374,7 +386,9 @@ function AppContent() {
     const { currentAccountId, currentWalletId, currentNetwork } = useWalletStore.getState()
     if (currentAccountId && currentWalletId) {
       const accountKey = buildAccountKey(currentNetwork, currentWalletId, currentAccountId)
-      reloadTransactions(accountKey).catch(console.error)
+      reloadTransactions(accountKey).catch(error =>
+        logger.error('Activity refresh failed', undefined, undefined, error)
+      )
     }
   }, [reloadTransactions])
 

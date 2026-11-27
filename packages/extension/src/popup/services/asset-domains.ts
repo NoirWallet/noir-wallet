@@ -3,7 +3,6 @@ import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import type { PortfolioAssetView, PortfolioChainView, PortfolioReadModel } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { ZCASH_CHAIN_IDS } from '@/core/chains/registry/chain-ids'
-import { withConfidentialAssetPrices } from './portfolio-prices'
 import {
   summarizeNearConfidentialHoldings,
   type NearConfidentialSummary
@@ -231,7 +230,6 @@ export function summarizeAssetDomainsUsd(
   model: PortfolioReadModel,
   prices: AssetPriceReadModel | null
 ): AssetDomainFiatSummary {
-  const onchainPrices = withConfidentialAssetPrices(model, prices)
   const independentConfidential =
     model.confidential !== undefined ||
     model.chains?.some(
@@ -247,7 +245,7 @@ export function summarizeAssetDomainsUsd(
         ? BigInt(asset.balance.confidentialRaw ?? '0')
         : 0n
     if (BigInt(asset.balance.totalRaw) - embeddedConfidential === 0n) continue
-    const quote = findAssetPrice(onchainPrices, asset.asset.id)
+    const quote = findAssetPrice(prices, asset.asset.id)
     for (const domain of ['public', 'shield', 'private'] as const) {
       if (independentConfidential && domain === 'shield' && embeddedConfidential > 0n) continue
       const raw = getAssetDomainRaw(asset, domain)

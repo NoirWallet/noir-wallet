@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { useState } from 'react'
 import { Icon } from '@iconify/react'
 import { formatAccountName } from '@/lib/format'
@@ -36,7 +37,7 @@ export function DAppConnectPrompt({
     try {
       await onConnect()
     } catch (error) {
-      console.error('Failed to connect account to dApp:', error)
+      logger.error('Failed to connect account to dApp', undefined, undefined, error)
       toast.error(error instanceof Error ? error.message : 'Unable to connect this account')
     } finally {
       setConnecting(false)

@@ -20,7 +20,10 @@ import { NearMultichainSigningClient } from '@/infrastructure/keyring/multichain
 import { SolanaMultichainSigningClient } from '@/infrastructure/keyring/multichain/solana-signing-client'
 import { IndexedDbStorageV2Repository } from '@/infrastructure/persistence/repositories'
 import { DEFAULT_NETWORK } from '@/lib/runtime-network'
-import { readWalletMetadata, withUndeletedWalletAccountMetadata } from '@/lib/wallet-metadata-storage'
+import {
+  readWalletMetadata,
+  withUndeletedWalletAccountMetadata
+} from '@/lib/wallet-metadata-storage'
 import { credentialSession } from './credential-session'
 import type {
   OneClickAccount,

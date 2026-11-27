@@ -1,4 +1,4 @@
-import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
+import { DEFAULT_REQUEST_TIMEOUT_MS } from '../config/extension.ts'
 
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024
 const MAX_ERROR_BYTES = 16 * 1024
@@ -39,6 +39,27 @@ export class FetchHttpError extends Error {
 interface FetchOptions extends RequestInit {
   timeoutMs?: number
   maxBytes?: number
+  fetcher?: typeof fetch
+  acceptHttpErrors?: boolean | 'status-only'
+}
+
+export function getDefaultFetchTransportIdentity(): object {
+  return fetch
+}
+
+export function jsonRequestInit(
+  init: RequestInit = {},
+  payload?: unknown,
+  defaultHeaders?: HeadersInit
+): RequestInit {
+  const headers = new Headers(defaultHeaders)
+  new Headers(init.headers).forEach((value, name) => headers.set(name, value))
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json')
+  const body = payload === undefined ? init.body : JSON.stringify(payload)
+  if (body != null && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json')
+  }
+  return { ...init, headers, body }
 }
 
 function joinChunks(chunks: Uint8Array[], length: number): Uint8Array<ArrayBuffer> {
@@ -126,9 +147,12 @@ async function fetchBytes(
   const {
     timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
     maxBytes = DEFAULT_MAX_BYTES,
-    signal: externalSignal,
+    fetcher,
+    acceptHttpErrors = false,
+    signal,
     ...fetchInit
   } = init || {}
+  const externalSignal = signal === undefined && input instanceof Request ? input.signal : signal
   const controller = new AbortController()
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
   let rejectAbort: (reason: unknown) => void = () => {}
@@ -148,12 +172,17 @@ async function fetchBytes(
     return await Promise.race([
       (async () => {
         if (controller.signal.aborted) throw controller.signal.reason
-        const response = await fetch(input, { ...fetchInit, signal: controller.signal })
+        const requestInit = { ...fetchInit, signal: controller.signal }
+        const response = await (fetcher ? fetcher(input, requestInit) : fetch(input, requestInit))
         if (controller.signal.aborted) {
           void response.body?.cancel().catch(() => {})
           throw controller.signal.reason
         }
-        if (!response.ok) {
+        if (!response.ok && acceptHttpErrors === 'status-only') {
+          void response.body?.cancel().catch(() => {})
+          return { bytes: new Uint8Array(0), response }
+        }
+        if (!response.ok && !acceptHttpErrors) {
           let detail: string | undefined
           try {
             const body = await readBody(
@@ -206,6 +235,14 @@ export async function fetchJsonWithTimeout<T = unknown>(
   return JSON.parse(new TextDecoder().decode(bytes)) as T
 }
 
+export async function fetchArrayBufferWithTimeout(
+  input: RequestInfo | URL,
+  init?: FetchOptions
+): Promise<ArrayBuffer> {
+  const { bytes } = await fetchBytes(input, init)
+  return bytes.buffer
+}
+
 /** Retains the Response contract for clients while bounding the complete read. */
 export async function fetchWithTimeout(
   input: RequestInfo | URL,
@@ -217,18 +254,4 @@ export async function fetchWithTimeout(
     statusText: response.statusText,
     headers: response.headers
   })
-}
-
-export async function readBoundedResponseText(
-  response: Response,
-  maximumBytes: number,
-  responseTooLarge: () => Error
-): Promise<string> {
-  try {
-    const { bytes } = await readBody(response, maximumBytes, () => {})
-    return new TextDecoder().decode(bytes)
-  } catch (error) {
-    if (error instanceof FetchResponseTooLargeError) throw responseTooLarge()
-    throw error
-  }
 }

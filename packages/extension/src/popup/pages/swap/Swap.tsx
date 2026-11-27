@@ -1,3 +1,4 @@
+import { findCatalogPrice } from '@/core/prices/catalog-price-identity'
 import { ShieldSwap } from '../portfolio/ShieldSwap'
 import {
   ShieldTokenPicker,
@@ -99,8 +100,14 @@ import { sameNativeZecQuoteBinding } from '@/core/services/native-zec-intents-sw
 import {
   openHardwareSignAndWait,
   openHardwareSignTab,
-  openMultichainHardwareSignTab
+  openMultichainHardwareSignTab,
+  type HardwareSignRequest
 } from '@/lib/hardware-tab'
+import {
+  focusHardwareSignSurface,
+  waitForHardwareSignSurfaceClose,
+  type HardwareSignSurface
+} from '@/lib/hardware-sign-launcher'
 import { isSidePanelSurface } from '@/lib/extension-display-mode'
 import { ANALYTICS_EVENTS, PAGE_IDS, sendAnalyticsEvent, type TrackOptions } from '@/lib/analytics'
 import {
@@ -221,7 +228,7 @@ import {
 } from '@/popup/services/receive-targets-client'
 import { usePortfolioSnapshot } from '@/popup/hooks/usePortfolioSnapshot'
 import { useRestoreSwapPair } from '@/popup/hooks/useRestoreSwapPair'
-import { useCachedAssetPrices } from '@/popup/hooks/useCachedAssetPrices'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { findAssetPrice } from '@/core/prices'
 import { resolveRheaSwapCanonicalAssetId } from '@/core/services/rhea-swap/rhea-swap-asset-identity'
 import {
@@ -271,7 +278,10 @@ import {
   requiredRheaEvmApproval,
   type CombinedSwapFeeLimit
 } from '@/popup/services/rhea-evm-approval'
-import { swapApprovalContinuationClient } from '@/popup/services/swap-approval-continuation-client'
+import {
+  RETURN_TO_LEDGER_SWAP_EVENT,
+  swapApprovalContinuationClient
+} from '@/popup/services/swap-approval-continuation-client'
 import type { CombinedEvmSwapProgress } from '@/background/combined-evm-swap'
 import type { RheaSwapTransactionBinding } from '@/core/transactions/domain'
 import type { SwapApprovalContinuation } from '@/background/swap-approval-continuation'
@@ -828,7 +838,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         network => network.chain.family === 'evm' && network.privateExecutionAddress
       )?.chain.id)
     : undefined
-  const cachedAssetPrices = useCachedAssetPrices(currentNetwork)
+  const cachedAssetPrices = useAssetPrices(currentNetwork)
   const swap = useSwapState(
     lockedAssetFlowRequested ||
       crossChainSendRequested ||
@@ -907,6 +917,10 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   const feeConfirmationInFlight = useRef(false)
   const [isPrivateFundingSubmitting, setIsPrivateFundingSubmitting] = useState(false)
   const [transferPreparationError, setTransferPreparationError] = useState<string | null>(null)
+  const [swapFeeError, setSwapFeeError] = useState<{
+    quoteHandle: string
+    message: string
+  } | null>(null)
   const [networkFeeTier, setNetworkFeeTier] = useState<NetworkFeeTier>(DEFAULT_NETWORK_FEE_TIER)
   const [customReviewFee, setCustomReviewFee] = useState<{
     scope: string
@@ -1183,7 +1197,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
       shieldDestinationPickerReady
         ? buildShieldDestinationPickerRows({
             options: nativeConfidentialDestinations,
-            tokens: nativeIntentsCatalog,
+            prices: cachedAssetPrices,
             balances: shieldDisplayBalances,
             network: currentNetwork
           })
@@ -1191,7 +1205,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     [
       shieldDestinationPickerReady,
       nativeConfidentialDestinations,
-      nativeIntentsCatalog,
+      cachedAssetPrices,
       shieldDisplayBalances,
       currentNetwork
     ]
@@ -1244,12 +1258,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   const walletZecPrice = nativeZecAssetId
     ? findAssetPrice(cachedAssetPrices, nativeZecAssetId)?.priceUsd
     : undefined
-  const zecPickerPrice =
-    walletZecPrice && Number(walletZecPrice) > 0
-      ? walletZecPrice
-      : shieldCatalogTokens.find(token => token.assetId === ZEC_ZCASH_ASSET)?.price
   const shieldPickerRows = useMemo((): readonly ShieldTokenPickerItem[] => {
-    const pricesByAssetId = new Map(shieldCatalogTokens.map(token => [token.assetId, token.price]))
     return [
       ...(nativeZecShieldAvailable &&
       !getFundingSourceUnavailableReason(zcashKeySource, 'transparent')
@@ -1266,7 +1275,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
                 ZEC_DECIMALS
               ),
               decimals: ZEC_DECIMALS,
-              priceUsd: zecPickerPrice
+              priceUsd: walletZecPrice
             }
           ]
         : []),
@@ -1283,7 +1292,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         nativeIconChain: 'zcash',
         availableRaw: option.availableRaw,
         decimals: option.decimals,
-        priceUsd: zecPickerPrice,
+        priceUsd: walletZecPrice,
         disabledReason: option.disabledReason
       })),
       ...shieldSourceChoices
@@ -1304,7 +1313,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           ),
           availableRaw: shieldFundingAvailableRaw(asset, shieldDisplayBalances),
           decimals: asset.asset.metadata.decimals,
-          priceUsd: pricesByAssetId.get(asset.managed.protocolAssetId)
+          priceUsd: findAssetPrice(cachedAssetPrices, asset.asset.asset.id)?.priceUsd
         }))
     ]
   }, [
@@ -1315,8 +1324,8 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     shieldZecSourceOptions,
     shieldSourceChoices,
     shieldDisplayBalances,
-    shieldCatalogTokens,
-    zecPickerPrice
+    cachedAssetPrices,
+    walletZecPrice
   ])
   const nativeZecPickerRows = useMemo(
     () =>
@@ -1349,7 +1358,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
             ZEC_DECIMALS
           ),
           decimals: ZEC_DECIMALS,
-          priceUsd: zecPickerPrice
+          priceUsd: walletZecPrice
         }
       )
     })
@@ -1359,7 +1368,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     nativeZecShieldAvailable,
     nativeZecPickerRows,
     storeBalance,
-    zecPickerPrice
+    walletZecPrice
   ])
   const [walletSourcesTraceId] = useState(() => createDebugRequestId('swap-wallet-sources'))
   const selectedAssetRegistrationKey = useRef<string | null>(null)
@@ -1387,6 +1396,18 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     useState<PreparedQuoteDepositTransfer | null>(null)
   const [rheaSigningReview, setRheaSigningReview] = useState<PendingRheaSigningReview | null>(null)
   const [submittedApproval, setSubmittedApproval] = useState<SubmittedSwapApproval | null>(null)
+  const [approvalSigner, setApprovalSigner] = useState<HardwareSignSurface | null>(null)
+  const [externalSigner, setExternalSigner] = useState<HardwareSignSurface | null>(null)
+  const [signerFocusError, setSignerFocusError] = useState<string | null>(null)
+  const ledgerApprovalId = useRef<string | null>(null)
+  useEffect(() => {
+    const returnToSwap = (event: Event) => {
+      if ((event as CustomEvent<unknown>).detail === ledgerApprovalId.current)
+        event.preventDefault()
+    }
+    window.addEventListener(RETURN_TO_LEDGER_SWAP_EVENT, returnToSwap)
+    return () => window.removeEventListener(RETURN_TO_LEDGER_SWAP_EVENT, returnToSwap)
+  }, [])
   const [combinedApprovalNetwork, setCombinedApprovalNetwork] = useState<Pick<
     SwapApprovalProgress,
     'chainId' | 'networkName'
@@ -2412,6 +2433,8 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     setIsPrivateFundingSubmitting(false)
     setTransferPreparationError(null)
     setSubmittedApproval(null)
+    setApprovalSigner(null)
+    ledgerApprovalId.current = null
     setApprovalError(null)
     resetQuoteReview()
     void discardPreparedQuoteTransfer()
@@ -2954,16 +2977,23 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
       source: {
         assetId: resolveRheaSwapDestinationIdentity(swap.tokenIn, portfolio).assetId,
         decimals: swap.tokenIn.decimals,
-        price: swap.tokenIn.price
+        price: Number(
+          findCatalogPrice(cachedAssetPrices, swap.tokenIn, currentNetwork)?.priceUsd ?? 0
+        )
       },
       destination: {
         assetId: resolveRheaSwapDestinationIdentity(privateFundingDestinationToken, portfolio)
           .assetId,
         decimals: privateFundingDestinationToken.decimals,
-        price: privateFundingDestinationToken.price
+        price: Number(
+          findCatalogPrice(cachedAssetPrices, privateFundingDestinationToken, currentNetwork)
+            ?.priceUsd ?? 0
+        )
       }
     })
   }, [
+    cachedAssetPrices,
+    currentNetwork,
     portfolio,
     privateFundingDestinationToken,
     privateFundingRequestId,
@@ -3338,8 +3368,10 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     if (destination && isZecToken(destination) && !ordinarySwapRequested)
       setZecRecipientSelection({ scope: walletSourcesScope, address: record.recipientAddress })
     restoredApprovalId.current = record.transactionId
+    ledgerApprovalId.current = record.transactionId
     setSubmittedApproval({
       graph,
+      continuation: record,
       token: record.token,
       spender: record.spender,
       amountRaw: record.amountRaw,
@@ -3370,6 +3402,9 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   ])
 
   const swapEventBase = useCallback((): TrackOptions => {
+    const sourcePrice = swap.tokenIn
+      ? findCatalogPrice(cachedAssetPrices, swap.tokenIn, currentNetwork)
+      : null
     const context = resolveSwapAnalyticsContext({
       sourceFamily: walletOwnedSource?.family,
       sourceBlockchain: swap.tokenIn?.blockchain,
@@ -3386,8 +3421,10 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
       outputSymbol: swap.tokenOut?.symbol,
       collector: projectSwapCollector({
         amountIn: swap.amountIn,
-        sourcePrice: swap.tokenIn?.price,
-        sourcePriceUpdatedAt: swap.tokenIn?.priceUpdatedAt,
+        sourcePrice: sourcePrice ? Number(sourcePrice.priceUsd) : undefined,
+        sourcePriceUpdatedAt: sourcePrice
+          ? new Date(sourcePrice.sourceUpdatedAt).toISOString()
+          : undefined,
         now: Date.now(),
         purpose: quotePurpose,
         confidentiality: liveQuoteRequest?.confidentiality,
@@ -3408,6 +3445,8 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     }
   }, [
     swap,
+    cachedAssetPrices,
+    currentNetwork,
     walletOwnedSource?.family,
     isTransferAnalyticsFlow,
     executionSourceMode,
@@ -3697,6 +3736,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
       preparingReview.current = true
       setIsPreparingReview(true)
       setTransferPreparationError(null)
+      setSwapFeeError(null)
       if (feeTierOverride) setNetworkFeeTier(feeTierOverride)
       const requestSequence = ++quoteRequestSequence.current
       const requestId = createDebugRequestId('swap-prepare')
@@ -4192,6 +4232,20 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
             setIsPrivateFundingSubmitting(false)
           }
           const message = getRheaSwapErrorMessage(error)
+          if (
+            ordinarySwapRequested &&
+            executionSourceMode === 'main' &&
+            viewStep === 'input' &&
+            failedStage === 'evm-prepare-contract-call' &&
+            error instanceof EvmWalletClientError &&
+            error.code === 'insufficient-funds' &&
+            error.shortfallRaw &&
+            !newlyQuoted &&
+            resultToReview
+          ) {
+            setSwapFeeError({ quoteHandle: resultToReview.quoteHandle, message })
+            return
+          }
           if (viewStep === 'review' || lockedAssetFlowRequested || feeTierOverride)
             setTransferPreparationError(message)
           else {
@@ -4530,6 +4584,19 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     autoRefreshMs: Number.POSITIVE_INFINITY
   })
 
+  const waitForExternalSwapSignature = useCallback(
+    async (request: Omit<HardwareSignRequest, 'createdAt' | 'reportToOrigin'>) => {
+      setSignerFocusError(null)
+      try {
+        return await openHardwareSignAndWait(request, setExternalSigner)
+      } finally {
+        setExternalSigner(null)
+        setSignerFocusError(null)
+      }
+    },
+    []
+  )
+
   const handleConfirmSwap = useCallback(async () => {
     if (shieldNativeZecSwap && swap.isZecSource) {
       if (
@@ -4631,7 +4698,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
             window.close()
             return
           }
-          const outcome = await openHardwareSignAndWait(request)
+          const outcome = await waitForExternalSwapSignature(request)
           if (outcome.status === 'success') {
             navigateToSwapResult(outcome.txHash, 'zcash', outcome.transactionId, false, {
               accountKey: outcome.accountKey,
@@ -4999,7 +5066,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
 
           setIsSending(true)
           try {
-            const result = await openHardwareSignAndWait(request)
+            const result = await waitForExternalSwapSignature(request)
             if (result.status === 'success') {
               navigateToSwapResult(result.txHash, 'zcash', result.transactionId, false, {
                 accountKey: result.accountKey,
@@ -5206,6 +5273,9 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         setPreparedQuoteTransfer(null)
         if (submission.value.status === 'external-signature-required') {
           const approvalTransactionId = submission.value.transactionId
+          const fromSidePanel = isSidePanelSurface(window.location.search)
+          let continuation: SwapApprovalContinuation | undefined
+          let signer: HardwareSignSurface
           try {
             if (pendingRheaEvmAfterApproval) {
               if (
@@ -5219,7 +5289,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
                 !liveQuoteRequest
               )
                 throw new Error('Swap approval context changed. Review the Swap again.')
-              await swapApprovalContinuationClient.save({
+              continuation = await swapApprovalContinuationClient.save({
                 transactionId: approvalTransactionId,
                 network: currentNetwork,
                 walletId: effectiveWalletId,
@@ -5241,9 +5311,10 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
                 ...(publicPrivacySendRequested ? { purpose: 'public-private-send' as const } : {})
               })
             }
-            await openMultichainHardwareSignTab(
+            signer = await openMultichainHardwareSignTab(
               approvalTransactionId,
-              submission.family === 'bitcoin' ? 'bitcoin' : 'evm'
+              submission.family === 'bitcoin' ? 'bitcoin' : 'evm',
+              fromSidePanel
             )
           } catch (handoffError) {
             if (pendingRheaEvmAfterApproval) {
@@ -5256,10 +5327,14 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
             isLedgerWallet &&
             submission.family === 'evm' &&
             pendingRheaEvmAfterApproval &&
-            isSidePanelSurface(window.location.search)
+            fromSidePanel
           ) {
+            ledgerApprovalId.current = approvalTransactionId
+            setApprovalSigner(signer)
+            setSignerFocusError(null)
             setSubmittedApproval({
               graph: submission.value.graph,
+              continuation,
               owner: preparedQuoteTransfer.source.refundAddress,
               executionMode: executionSourceMode,
               awaitingHardwareSignature: true,
@@ -5268,8 +5343,41 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
             setApprovalError(null)
             setPendingRheaEvmAfterApproval(null)
             setViewStep('approval-pending')
-          } else {
+          } else if (!fromSidePanel) {
             window.close()
+          } else {
+            setSignerFocusError(null)
+            setExternalSigner(signer)
+            try {
+              await waitForHardwareSignSurfaceClose(signer.id)
+              if (quoteRequestSequence.current !== requestSequence) return
+              const approved = submission.value.graph.root
+              const repository = new IndexedDbTransactionRepository()
+              let graph = await repository.get(approved.scope, approved.id)
+              if (graph?.root.status === 'approved') {
+                graph = await quoteDepositTransferClient.reject(preparedQuoteTransfer)
+              }
+              if (quoteRequestSequence.current !== requestSequence) return
+              if (graph && (graph.root.status === 'signed' || hasSubmittedRheaOrigin(graph))) {
+                if (ledgerApprovalId.current) {
+                  void swapApprovalContinuationClient
+                    .clear(ledgerApprovalId.current)
+                    .catch(() => {})
+                  ledgerApprovalId.current = null
+                }
+                navigateToSwapResult(
+                  graph.segments.find(segment => segment.role === 'origin')?.evidence
+                    ?.transactionHash,
+                  getChainFromAssetId(swap.tokenIn?.assetId || ''),
+                  graph.root.id
+                )
+              } else {
+                setTransferPreparationError('Review the swap quote before signing again.')
+              }
+            } finally {
+              setExternalSigner(null)
+              setSignerFocusError(null)
+            }
           }
           return
         }
@@ -5313,6 +5421,10 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           setPendingRheaEvmAfterApproval(null)
           setViewStep('approval-pending')
           return
+        }
+        if (ledgerApprovalId.current) {
+          void swapApprovalContinuationClient.clear(ledgerApprovalId.current).catch(() => {})
+          ledgerApprovalId.current = null
         }
         if (!isTransferAnalyticsFlow && hasSubmittedRheaOrigin(submission.value.graph)) {
           sendAnalyticsEvent(ANALYTICS_EVENTS.SWAP_DEPOSIT_SENT, {
@@ -5392,6 +5504,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     currentAccount,
     isHardwareWallet,
     isLedgerWallet,
+    waitForExternalSwapSignature,
     feeTier,
     fundingSource,
     navigateToSwapResult,
@@ -5491,7 +5604,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   const handleContinueAfterApproval = useSwapApprovalContinuation({
     phase: viewStep,
     approval: submittedApproval,
-    continuation: approvalToRestore?.record,
+    continuation: submittedApproval?.continuation,
     walletId: effectiveWalletId,
     accountId: effectiveAccountId,
     intent: {
@@ -5509,19 +5622,23 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     sequence: quoteRequestSequence,
     onPreparing: setIsPreparingReview,
     onError: setApprovalError,
-    onReady: ({ restoredQuote, reuseApprovedQuote }) => {
+    onReady: reuseApprovedQuote => {
       if (!liveQuoteRequest) return
-      if (!reuseApprovedQuote) combinedSwapConsent.current = null
-      if (restoredQuote && swap.tokenOut) {
-        setQuoteResult(restoredQuote)
-        setLiveQuoteKey(liveQuoteRequest.key)
-        setQuoteReceivedAt(restoredQuote.receivedAt)
-        swap.setAmountOut(
-          formatBaseUnitDecimalAmount(restoredQuote.estimatedOut, swap.tokenOut.decimals)
-        )
+      if (!reuseApprovedQuote) {
+        combinedSwapConsent.current = null
+        setQuoteResult(null)
+        setRheaReview(null)
+        setLiveQuoteKey(null)
+        setQuoteReceivedAt(null)
+        swap.setAmountOut('')
+        swap.setDepositAddress('')
       }
+      if (submittedApproval?.continuation) setMaxSelected(false)
       reviewAfterQuoteRefresh.current = createSwapQuoteRefreshTarget(liveQuoteRequest)
+      expiredPrepareRetryKey.current = null
+      setApprovalSigner(null)
       setSubmittedApproval(null)
+      setIsPrivateFundingSubmitting(false)
       setApprovalReviewScope(walletSourcesScope)
       setViewStep('input')
       if (!reuseApprovedQuote) setQuoteRefreshTick(current => current + 1)
@@ -6196,6 +6313,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
     resetQuoteReview()
     reviewAfterQuoteRefresh.current = null
     setApprovalReviewScope(null)
+    ledgerApprovalId.current = null
     setIsPrivateFundingSubmitting(false)
     void discardPreparedQuoteTransfer()
     if (privateBalanceTransferRequested) {
@@ -6490,9 +6608,31 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
   const resumingApprovalReview =
     walletSourcesScope !== null && approvalReviewScope === walletSourcesScope
   const showCombinedSwapProgress = Boolean(backgroundCombinedProgress && combinedApprovalNetwork)
+  const focusSigner = (signer: HardwareSignSurface) => {
+    void focusHardwareSignSurface(signer)
+      .then(() => setSignerFocusError(null))
+      .catch(() => setSignerFocusError('The signing tab is unavailable.'))
+  }
 
   // Render content based on view step
   const renderContent = () => {
+    if (externalSigner) {
+      return (
+        <>
+          <div className="min-h-0 flex-1 px-5 pt-6">
+            <p role="status" className="text-sm text-muted">
+              Waiting for your hardware wallet signature
+            </p>
+            {signerFocusError && <TransactionNotice message={signerFocusError} className="mt-3" />}
+          </div>
+          <div className="page-footer">
+            <Button size="wallet" className="w-full" onClick={() => focusSigner(externalSigner)}>
+              Return to signing
+            </Button>
+          </div>
+        </>
+      )
+    }
     if (backgroundCombinedProgress && combinedApprovalNetwork && swap.tokenIn && swap.tokenOut) {
       const managed = backgroundCombinedProgress
       return (
@@ -6544,10 +6684,20 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
       )
     }
     if (viewStep === 'input' && resumingApprovalReview) {
-      const message = swap.quoteError || transferPreparationError
+      const refreshing =
+        Boolean(liveQuoteRequest && reviewAfterQuoteRefresh.current) ||
+        swap.isQuoting ||
+        isPreparingReview
+      const message =
+        swap.quoteError ||
+        transferPreparationError ||
+        (!refreshing ? 'Could not prepare the swap quote.' : null)
       const retryPreparation = () => {
         if (!liveQuoteRequest) return
         reviewAfterQuoteRefresh.current = createSwapQuoteRefreshTarget(liveQuoteRequest)
+        expiredPrepareRetryKey.current = null
+        setQuoteResult(null)
+        setLiveQuoteKey(null)
         setTransferPreparationError(null)
         swap.setQuoteError(null)
         setQuoteRefreshTick(current => current + 1)
@@ -6565,14 +6715,14 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
             minAmountOut="0"
             priceImpact={0}
             slippage={swap.slippage}
-            quoteRefreshing
-            isLoading={!message}
+            quoteRefreshing={refreshing && !message}
+            isLoading={refreshing && !message}
             feeUnavailable
             onRefreshQuote={retryPreparation}
             onConfirm={() => {}}
             onCancel={handleReturnToInput}
             preparationError={message}
-            onRetryPreparation={retryPreparation}
+            onRetryPreparation={liveQuoteRequest ? retryPreparation : undefined}
             actionStatus={
               <p role="status" className="mb-3 text-center text-xs text-muted">
                 Approval confirmed · Step 2 of 2
@@ -6596,13 +6746,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           {message ? (
             <TransactionNotice
               message={message}
-              onRetry={() => {
-                if (!liveQuoteRequest) return
-                reviewAfterQuoteRefresh.current = createSwapQuoteRefreshTarget(liveQuoteRequest)
-                setTransferPreparationError(null)
-                swap.setQuoteError(null)
-                setQuoteRefreshTick(current => current + 1)
-              }}
+              onRetry={liveQuoteRequest ? retryPreparation : undefined}
               className="mt-5"
             />
           ) : (
@@ -6637,6 +6781,8 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
           disabled={isPreparingReview || !liveQuoteRequest || walletSourcesLoading}
           continuingAutomatically={Boolean(combinedSwapConsent.current) && !approvalError}
           awaitingHardwareSignature={submittedApproval.awaitingHardwareSignature === true}
+          onReturnToSigning={approvalSigner ? () => focusSigner(approvalSigner) : undefined}
+          signingError={signerFocusError}
           onContinue={() => {
             combinedSwapConsent.current = null
             void handleContinueAfterApproval()
@@ -7185,6 +7331,11 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         liveQuoteKey === liveQuoteRequest.key &&
         quoteResult !== null &&
         !swap.isQuoting
+    const currentSwapFeeError =
+      swapFeeError && canGetQuote && swapFeeError.quoteHandle === quoteResult?.quoteHandle
+        ? swapFeeError
+        : null
+    const canRetryWithLowFee = currentSwapFeeError !== null && networkFeeTier !== 'low'
     const feeLoading =
       swap.isZecSource &&
       !hasInsufficientFunds &&
@@ -7568,7 +7719,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
                                 /^\d+$/.test(privateFundingMinimumRaw) &&
                                 BigInt(quoteResult.minAmountOut) < BigInt(privateFundingMinimumRaw)
                               ? `Increase the amount to receive enough ${swap.tokenOut?.symbol ?? 'Gas'}`
-                              : (reverseError ?? swap.quoteError)
+                              : (reverseError ?? currentSwapFeeError?.message ?? swap.quoteError)
         }
         onEnableReceiveNetwork={
           ordinarySwapRequested &&
@@ -7670,16 +7821,22 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
         onRetryQuote={
           reverseError
             ? handleSwitchTokens
-            : swap.quoteError && quoteRetryable && (liveQuoteRequest || nativeIntentsRequest)
+            : canRetryWithLowFee
               ? () => {
-                  reviewAfterQuoteRefresh.current = null
-                  expiredPrepareRetryKey.current = null
-                  swap.setQuoteError(null)
-                  swap.setIsQuoting(true)
-                  setQuoteRefreshTick(current => current + 1)
+                  setNetworkFeeTier('low')
+                  void reviewLiveQuote('low').catch(() => {})
                 }
-              : undefined
+              : swap.quoteError && quoteRetryable && (liveQuoteRequest || nativeIntentsRequest)
+                ? () => {
+                    reviewAfterQuoteRefresh.current = null
+                    expiredPrepareRetryKey.current = null
+                    swap.setQuoteError(null)
+                    swap.setIsQuoting(true)
+                    setQuoteRefreshTick(current => current + 1)
+                  }
+                : undefined
         }
+        retryQuoteLabel={canRetryWithLowFee && !reverseError ? 'Try Low fee' : undefined}
         onGetQuote={() => {
           void reviewLiveQuote()
         }}
@@ -7980,7 +8137,7 @@ function SwapWorkflow({ crossChainSend }: { crossChainSend?: CrossChainSendOptio
               </>
             )}
           </div>
-        ) : viewStep === 'approval-pending' ? (
+        ) : externalSigner || resumingApprovalReview || viewStep === 'approval-pending' ? (
           renderContent()
         ) : preparingSimplifiedTransfer ? (
           <TransactionReviewView

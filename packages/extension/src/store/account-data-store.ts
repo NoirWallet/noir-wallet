@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { ZcashBalance, Transaction, Network, SyncReason } from '@/types'
@@ -6,7 +7,6 @@ import {
   type AccountDataDeletion
 } from '@/lib/account-data-persistence'
 import { useWalletStore } from './wallet-store'
-import { safeBig } from '@/lib/big'
 import { loadTransactions, deleteTransactions, deleteTransparentTxCache } from '@/lib/indexed-db'
 import { formatTokenQuantity } from '@/lib/number-format'
 import { getTransactionStatusCopy } from '@/lib/transaction-status-copy'
@@ -183,7 +183,6 @@ interface AccountDataStore {
 
   // Computed getters (use current wallet/account/network from wallet-store)
   getCurrentBalance: () => ZcashBalance | null
-  getCurrentBalanceUsd: () => number
   getCurrentSyncState: () => SyncState
   getCurrentTransactions: () => Transaction[]
   getTransactions: (accountKey: string) => Transaction[]
@@ -192,7 +191,6 @@ interface AccountDataStore {
   getBalance: (network: Network, walletId: string, accountId: string) => ZcashBalance | null
   getSyncState: (network: Network, walletId: string, accountId: string) => SyncState
   getWalletSyncState: (network: Network, walletId: string) => SyncState
-  getBalanceUsd: (walletId: string, accountId: string) => number
   getPortfolioValue: (
     network: Network,
     walletId: string,
@@ -277,13 +275,6 @@ export const useAccountDataStore = create<AccountDataStore>()(
         return get().balances.get(key) || null
       },
 
-      getCurrentBalanceUsd: () => {
-        const balance = get().getCurrentBalance()
-        if (!balance?.total) return 0
-        const zecPrice = useWalletStore.getState().zecPrice
-        return safeBig(balance.total).times(zecPrice).toNumber()
-      },
-
       getCurrentSyncState: () => {
         const key = (get() as any)._getCurrentWalletKey()
         if (!key) return DEFAULT_SYNC_STATE
@@ -315,14 +306,6 @@ export const useAccountDataStore = create<AccountDataStore>()(
       getWalletSyncState: (network, walletId) => {
         const key = buildWalletKey(network, walletId)
         return get().syncStates.get(key) || DEFAULT_SYNC_STATE
-      },
-
-      getBalanceUsd: (walletId, accountId) => {
-        const { currentNetwork, zecPrice } = useWalletStore.getState()
-        const key = buildAccountKey(currentNetwork, walletId, accountId)
-        const balance = get().balances.get(key)
-        if (!balance?.total) return 0
-        return safeBig(balance.total).times(zecPrice).toNumber()
       },
 
       getPortfolioValue: (network, walletId, accountId) => {
@@ -390,7 +373,12 @@ export const useAccountDataStore = create<AccountDataStore>()(
             }
           })
         } catch (error) {
-          console.error('[AccountDataStore] Failed to load transactions:', error)
+          logger.error(
+            '[AccountDataStore] Failed to load transactions',
+            undefined,
+            undefined,
+            error
+          )
         }
       },
 
@@ -414,7 +402,12 @@ export const useAccountDataStore = create<AccountDataStore>()(
             }
           })
         } catch (error) {
-          console.error('[AccountDataStore] Failed to reload transactions:', error)
+          logger.error(
+            '[AccountDataStore] Failed to reload transactions',
+            undefined,
+            undefined,
+            error
+          )
         }
       },
 

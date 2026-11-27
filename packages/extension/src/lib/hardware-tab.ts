@@ -5,10 +5,11 @@
  * so the tab can rebuild state after an unlock redirect.
  */
 
+import { logger } from '@/lib/logger'
 import type { QuoteBinding } from '@/types'
 import type { FeeTier } from '@/config/fee'
 import type { TransactionId } from '@/core/transactions/domain'
-import { launchHardwareSignSurface } from './hardware-sign-launcher'
+import { launchHardwareSignSurface, type HardwareSignSurface } from './hardware-sign-launcher'
 import { waitForHardwareSignResult, type HardwareSignResult } from './hardware-sign-result'
 import { hardwareConnectRoute, type HardwareConnectVendor } from './hardware-connect-options'
 import {
@@ -435,25 +436,6 @@ export function parseHardwareSignRequest(value: unknown): HardwareSignRequest {
   }
 }
 
-export function isHardwareDAppAuthorizationCurrent(
-  request: HardwareSignRequest,
-  authorization: {
-    readonly revision: number
-    readonly accounts: readonly Readonly<{ walletId: string; accountId: string }>[]
-  }
-): boolean {
-  return (
-    request.kind === 'send' &&
-    request.dappRequestId !== undefined &&
-    request.origin !== undefined &&
-    request.authorizationRevision !== undefined &&
-    authorization.revision === request.authorizationRevision &&
-    authorization.accounts.some(
-      account => account.walletId === request.walletId && account.accountId === request.accountId
-    )
-  )
-}
-
 export function parsePreparedHardwareSignRequest(value: unknown): PreparedHardwareSignRequest {
   if (
     !isRecord(value) ||
@@ -517,12 +499,14 @@ export function openHardwareConnectTab(
   const query = vendor === 'ledger' && ledgerTarget ? `?${new URLSearchParams(ledgerTarget)}` : ''
   chrome.tabs
     .create({ url: chrome.runtime.getURL(`index.html#${route}${query}`) })
-    .catch(console.error)
+    .catch(error =>
+      logger.error('Hardware connection window could not open', undefined, undefined, error)
+    )
 }
 
 interface HardwareSignSession {
   requestId: string
-  tab: chrome.tabs.Tab & { id: number }
+  tab: chrome.tabs.Tab & HardwareSignSurface
 }
 
 async function openHardwareSignSession(
@@ -535,7 +519,8 @@ async function openHardwareSignSession(
   })
   try {
     const tab = await launchHardwareSignSurface(
-      chrome.runtime.getURL(`index.html#/hardware/sign?req=${id}`)
+      chrome.runtime.getURL(`index.html#/hardware/sign?req=${id}`),
+      request.kind === 'swap' && request.reportToOrigin === true
     )
     return { requestId: id, tab }
   } catch (error) {
@@ -551,11 +536,17 @@ export async function openHardwareSignTab(
 }
 
 export async function openHardwareSignAndWait(
-  request: Omit<HardwareSignRequest, 'createdAt' | 'reportToOrigin'>
+  request: Omit<HardwareSignRequest, 'createdAt' | 'reportToOrigin'>,
+  onOpened?: (tab: HardwareSignSurface) => void
 ): Promise<HardwareSignResult> {
   const session = await openHardwareSignSession({ ...request, reportToOrigin: true })
   try {
-    return await waitForHardwareSignResult({ requestId: session.requestId, tabId: session.tab.id })
+    const result = waitForHardwareSignResult({
+      requestId: session.requestId,
+      tabId: session.tab.id
+    })
+    onOpened?.(session.tab)
+    return await result
   } finally {
     await clearHardwareSignRequest(session.requestId).catch(() => {})
   }
@@ -627,8 +618,9 @@ export async function consumePreparedHardwareSignRequest(
 
 export async function openMultichainHardwareSignTab(
   transactionId: TransactionId,
-  family: 'evm' | 'bitcoin'
-): Promise<chrome.tabs.Tab> {
+  family: 'evm' | 'bitcoin',
+  fromSidePanel = false
+): Promise<HardwareSignSurface> {
   const response = await chrome.runtime.sendMessage({
     type: 'GET_HARDWARE_TRANSFER_VENDOR',
     transactionId,
@@ -642,7 +634,8 @@ export async function openMultichainHardwareSignTab(
   const tx = encodeURIComponent(transactionId)
   const route =
     vendor === 'ledger' ? `ledger-sign?family=${family}&tx=${tx}` : `${family}-sign?tx=${tx}`
-  return chrome.tabs.create({
-    url: chrome.runtime.getURL(`index.html#/hardware/${route}`)
-  })
+  return launchHardwareSignSurface(
+    chrome.runtime.getURL(`index.html#/hardware/${route}`),
+    fromSidePanel
+  )
 }

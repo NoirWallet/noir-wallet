@@ -114,6 +114,7 @@ function AccountAvatar({
 function AccountAddressPopover({
   account,
   defaultEvmMode,
+  hasIncognitoHoldings = false,
   onCopy,
   onCopyPrivate,
   isCopied,
@@ -126,6 +127,7 @@ function AccountAddressPopover({
 }: {
   readonly account: SwitcherAccount
   readonly defaultEvmMode: 'public' | 'private'
+  readonly hasIncognitoHoldings?: boolean
   readonly onCopy: (value: string, key: string) => void
   readonly onCopyPrivate: (value: string, key: string) => void
   readonly isCopied: (key: string) => boolean
@@ -147,8 +149,9 @@ function AccountAddressPopover({
     network,
     account.walletId,
     account.accountId,
-    evmMode === 'private' && Boolean(evmAddresses.privateAddress)
+    evmMode === 'private' && Boolean(evmAddresses.privateAddress) && !hasIncognitoHoldings
   )
+  const incognitoEnabled = hasIncognitoHoldings || incognitoSetup.status === 'complete'
   const otherAddresses = account.networks.flatMap(network => {
     if (network.chain.family === 'zcash' || network.chain.family === 'evm') return []
     const address =
@@ -161,7 +164,7 @@ function AccountAddressPopover({
   const evmAddress =
     evmMode === 'public'
       ? evmAddresses.mainAddress
-      : incognitoSetup.status === 'complete'
+      : incognitoEnabled
         ? evmAddresses.privateAddress
         : undefined
 
@@ -289,7 +292,7 @@ function AccountAddressPopover({
                 {evmAddress ? formatSortAddress(evmAddress) : '—'}
               </span>
             )}
-            {evmMode === 'private' && incognitoSetup.status !== 'complete' && (
+            {evmMode === 'private' && !incognitoEnabled && (
               <div className="col-start-3 col-span-2 row-start-1 justify-self-end @max-[240px]:col-start-2 @max-[240px]:row-start-2">
                 {incognitoSetup.status === 'available' && (
                   <IncognitoSetupButton
@@ -402,6 +405,7 @@ export function AccountSwitcher({
   accountCatalog,
   publicAccountCatalog,
   accountCatalogError,
+  activeAccountHasIncognitoHoldings = false,
   defaultEvmMode = 'public'
 }: {
   readonly className?: string
@@ -410,6 +414,7 @@ export function AccountSwitcher({
   readonly accountCatalog: AccountNetworksCatalogView | null
   readonly publicAccountCatalog: AccountNetworksCatalogView | null
   readonly accountCatalogError: boolean
+  readonly activeAccountHasIncognitoHoldings?: boolean
   readonly defaultEvmMode?: 'public' | 'private'
 }) {
   const { navigate, replace } = useNavigate()
@@ -839,6 +844,11 @@ export function AccountSwitcher({
                     ])}
                     account={previewAccount}
                     defaultEvmMode={defaultEvmMode}
+                    hasIncognitoHoldings={
+                      previewAccount.walletId === accountIdentity?.walletId &&
+                      previewAccount.accountId === accountIdentity.accountId &&
+                      activeAccountHasIncognitoHoldings
+                    }
                     addressesStatus={addressesStatus}
                     className="max-w-[calc(100vw-114px)]"
                     onCopy={(value, key) => void copyToClipboard(value, key)}
@@ -919,6 +929,11 @@ export function AccountSwitcher({
               ])}
               account={activeAccount}
               defaultEvmMode={defaultEvmMode}
+              hasIncognitoHoldings={
+                activeAccount.walletId === accountIdentity?.walletId &&
+                activeAccount.accountId === accountIdentity.accountId &&
+                activeAccountHasIncognitoHoldings
+              }
               addressesStatus={addressesStatus}
               onCopy={(value, key) => void copyToClipboard(value, key)}
               onCopyPrivate={(address, key) => {

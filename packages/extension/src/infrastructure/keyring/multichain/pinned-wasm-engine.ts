@@ -1,5 +1,6 @@
 import init, { WalletEngine } from '../../generated/wasm/multichain/wallet_wasm.js'
 import manifest from '../../generated/wasm/multichain/wasm-integrity.json'
+import { fetchArrayBufferWithTimeout } from '@/lib/fetch-utils'
 
 export const PINNED_MULTICHAIN_ABI_VERSION = 'wallet-engine-cbd8ffb-v5'
 export const PINNED_MULTICHAIN_SOURCE_COMMIT = 'cbd8ffbb192d67a3bd19eb5a4dcc38669f5e4f7a'
@@ -68,20 +69,18 @@ function parseStaticManifest() {
   return binary
 }
 
-async function sha256(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer)
+async function sha256(bytes: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
   return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 export async function createPinnedMultichainEngine(): Promise<WalletEngine> {
   const binary = parseStaticManifest()
   const wasmUrl = new URL('../../generated/wasm/multichain/wallet_wasm_bg.wasm', import.meta.url)
-  const response = await fetch(wasmUrl)
-  if (!response.ok) throw new Error('Unable to load the Multichain WASM binary')
-  const bytes = new Uint8Array(await response.arrayBuffer())
+  const bytes = await fetchArrayBufferWithTimeout(wasmUrl, { maxBytes: binary.bytes })
   if (bytes.byteLength !== binary.bytes || (await sha256(bytes)) !== binary.sha256) {
     throw new Error('Multichain WASM binary integrity check failed')
   }
-  await init({ module_or_path: new Uint8Array(bytes).buffer })
+  await init({ module_or_path: bytes })
   return new WalletEngine()
 }

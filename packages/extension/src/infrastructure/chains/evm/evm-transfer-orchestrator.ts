@@ -1,4 +1,5 @@
 import { writeLocalActivity } from '@/infrastructure/persistence/repositories/local-activity'
+import { parseTransaction, type TransactionSerialized } from 'viem'
 import { KeyringError } from '@/core/keyring/ports'
 import type { ChainAccount } from '@/core/accounts/domain'
 import { parseAccountId } from '@/core/accounts/domain'
@@ -54,6 +55,7 @@ import {
   estimateEvmContractCallFee,
   estimateEvmTransferFee,
   type EvmContractCallIntent,
+  type EvmReviewedFeeBudget,
   type EvmFeeEstimate,
   type PeaEvmExecutionAccount,
   type EvmTransferIntent
@@ -139,7 +141,7 @@ export interface PrepareEvmTransferInput {
   readonly nearIntentsBinding?: NearIntentsTransactionBinding
   readonly rheaSwapBinding?: RheaSwapTransactionBinding
   readonly feeSelection?: EvmFeeSelection
-  readonly reviewedMaxFeePerGas?: bigint
+  readonly reviewedFeeBudget?: EvmReviewedFeeBudget
   readonly feeTier?: NetworkFeeTier
   readonly signingMode?: 'internal' | 'keystone' | 'ledger'
   readonly externalSigner?: Omit<EvmExternalSignerBinding, 'requestId'>
@@ -785,7 +787,7 @@ export class EvmTransferOrchestrator {
             ? await buildEvmContractCall({
                 ...sharedBuildInput,
                 intent: input.intent,
-                reviewedMaxFeePerGas: input.reviewedMaxFeePerGas
+                reviewedFeeBudget: input.reviewedFeeBudget
               })
             : await buildEvmTransfer({ ...sharedBuildInput, intent: input.intent })
     const expectedFingerprint = await computeEvmSigningPayloadFingerprint(prepared.transaction)
@@ -1290,6 +1292,22 @@ export class EvmTransferOrchestrator {
 
   clearPendingTransfers(): Promise<number> {
     return this.pendingStore.clear()
+  }
+
+  async clearActivity(scopeValue: TransactionAccountScope, chainId: ChainId): Promise<void> {
+    const scope = normalizeScope(scopeValue)
+    const pending = (await this.pendingStore.list()).filter(candidate => {
+      if (!scopesMatch(candidate.scope, scope)) return false
+      if (candidate.phase !== 'signed') return candidate.prepared.chainId === chainId
+      const signed = parseTransaction(candidate.rawTransaction as TransactionSerialized)
+      return `eip155:${signed.chainId}` === chainId
+    })
+
+    for (const candidate of pending) {
+      if (candidate.phase !== 'signed') await this.cancelPendingSigning(candidate)
+      await this.pendingStore.delete(candidate.transactionId)
+    }
+    await this.repository.deleteByAccountScope(scope, chainId)
   }
 
   cancelAllAwaitingApprovals(signal?: AbortSignal): Promise<number> {

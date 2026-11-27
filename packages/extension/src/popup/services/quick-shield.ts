@@ -3,13 +3,14 @@ import type { PortfolioAssetView, PortfolioReadModel } from '@/core/portfolio'
 import { getZcashChainId, type ChainDefinition } from '@/core/chains/registry'
 import type { ChainFeatureFlagValue } from '@/config/multichain-feature-flags'
 import { isNewWalletFamilyEnabled } from '@/core/chains/feature-runtime-policy'
-import type { AssetPriceReadModel } from '@/core/prices'
+import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import type { SwapToken } from '@/core/services/intents-api'
+import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import type { Network } from '@/types'
 import { getAssetDomainRaw, type ShieldProvider } from './asset-domains'
 import { resolveManagedIntentsCatalog } from './intents-asset-manager-client'
-import { getPortfolioAssetUsdValue } from './portfolio-prices'
 import { getShieldTransferChainIds, listShieldFundingAssets } from './shield-transfer'
+import { calculateTokenFiatValue } from './token-balance-format'
 import { getConfidentialZcashTransferRecipients } from './zcash-self-transfer'
 import { hasNativeZecConfidentialSwapRoute } from './shield-swap-zec-sources'
 import type { AccountNetworksView } from './account-networks-client'
@@ -19,7 +20,7 @@ export interface QuickShieldAsset {
   readonly chain: ChainDefinition
   readonly availableRaw: string
   readonly providers: readonly [ShieldProvider, ...ShieldProvider[]]
-  readonly valueUsd: string | null
+  readonly priceUsd: string | null
 }
 export function quickShieldSpendableRaw(
   asset: PortfolioAssetView,
@@ -103,17 +104,20 @@ export function getQuickShieldAssets({
         chain,
         availableRaw,
         providers: [provider, ...otherProviders],
-        valueUsd: getPortfolioAssetUsdValue(asset, prices, availableRaw)
+        priceUsd: findAssetPrice(prices, asset.asset.id)?.priceUsd ?? null
       })
     }
   }
 
-  return rows.sort((left, right) => new Big(right.valueUsd ?? 0).cmp(left.valueUsd ?? 0))
+  return rows
 }
 
 export function getQuickShieldTotalUsd(assets: readonly QuickShieldAsset[]): string | null {
   let total: Big | null = null
-  for (const { valueUsd } of assets) {
+  for (const { asset, availableRaw, priceUsd } of assets) {
+    if (priceUsd === null) continue
+    const amount = formatBaseUnitDecimalAmount(availableRaw, asset.metadata.decimals)
+    const valueUsd = calculateTokenFiatValue(amount, priceUsd)
     if (valueUsd === null) continue
     total = total === null ? new Big(valueUsd) : total.plus(valueUsd)
   }

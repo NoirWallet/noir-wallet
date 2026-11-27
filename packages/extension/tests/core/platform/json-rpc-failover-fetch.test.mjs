@@ -3,10 +3,8 @@ import { expect } from '@playwright/test'
 import { createJsonRpcFailoverFetch } from '../../../src/infrastructure/chains/json-rpc-failover-fetch.ts'
 
 const endpoints = [{ url: 'https://primary.example' }, { url: 'https://backup.example' }]
-const request = method => ({
-  method: 'POST',
-  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: [] })
-})
+const request = method => ({ jsonrpc: '2.0', id: 1, method, params: [] })
+const requestOptions = { timeoutMs: 1000, maxBytes: 1024 }
 
 test('uses an attested backup after an endpoint failure and keeps it active', async () => {
   const calls = []
@@ -24,14 +22,12 @@ test('uses an attested backup after an endpoint failure and keeps it active', as
     }
   )
 
-  await expect(rpcFetch(endpoints[0].url, request('getBalance'))).resolves.toHaveProperty(
-    'status',
-    200
-  )
-  await expect(rpcFetch(endpoints[0].url, request('getBalance'))).resolves.toHaveProperty(
-    'status',
-    200
-  )
+  await expect(
+    rpcFetch(endpoints[0].url, request('getBalance'), requestOptions)
+  ).resolves.toHaveProperty('body.result', 42)
+  await expect(
+    rpcFetch(endpoints[0].url, request('getBalance'), requestOptions)
+  ).resolves.toHaveProperty('body.result', 42)
   expect(calls).toEqual([endpoints[0].url, endpoints[1].url, endpoints[1].url])
   expect(attestations).toEqual([endpoints[0].url, endpoints[1].url])
 })
@@ -49,10 +45,9 @@ test('moves past a 200 rate-limit response and a malformed response', async () =
     }
   )
 
-  await expect(rpcFetch(endpoints[0].url, request('getBalance'))).resolves.toHaveProperty(
-    'status',
-    200
-  )
+  await expect(
+    rpcFetch(endpoints[0].url, request('getBalance'), requestOptions)
+  ).resolves.toHaveProperty('body.result', null)
   expect(calls).toEqual([endpoints[0].url, endpoints[1].url])
 
   const malformed = createJsonRpcFailoverFetch(
@@ -63,10 +58,30 @@ test('moves past a 200 rate-limit response and a malformed response', async () =
         ? new Response('<html>')
         : Response.json({ jsonrpc: '2.0', id: 1, result: 42 })
   )
-  await expect(malformed(endpoints[0].url, request('getBalance'))).resolves.toHaveProperty(
-    'status',
-    200
+  await expect(
+    malformed(endpoints[0].url, request('getBalance'), requestOptions)
+  ).resolves.toHaveProperty('body.result', 42)
+})
+
+test('applies the caller response limit before falling back to the next endpoint', async () => {
+  const calls = []
+  const rpcFetch = createJsonRpcFailoverFetch(
+    endpoints,
+    async () => {},
+    async url => {
+      calls.push(url)
+      return Response.json({
+        jsonrpc: '2.0',
+        id: 1,
+        result: url === endpoints[0].url ? 'x'.repeat(1024) : 42
+      })
+    }
   )
+
+  await expect(
+    rpcFetch(endpoints[0].url, request('getBalance'), requestOptions)
+  ).resolves.toHaveProperty('body.result', 42)
+  expect(calls).toEqual([endpoints[0].url, endpoints[1].url])
 })
 
 test('skips a wrong-chain node before broadcasting but never retries a submitted broadcast', async () => {
@@ -82,8 +97,8 @@ test('skips a wrong-chain node before broadcasting but never retries a submitted
     }
   )
 
-  await expect(rpcFetch(endpoints[0].url, request('sendTransaction'))).rejects.toThrow(
-    'connection lost'
-  )
+  await expect(
+    rpcFetch(endpoints[0].url, request('sendTransaction'), requestOptions)
+  ).rejects.toThrow('connection lost')
   expect(calls).toEqual([endpoints[1].url])
 })

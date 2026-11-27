@@ -3,12 +3,13 @@ import { EXTENSION_ACTIVITY_ROUTE } from '@/config/extension'
 
 export type HomeDefaultTab = 'assets' | 'dapp' | 'providers' | 'activity'
 export type HomeAssetDomain = Exclude<AssetDomain, 'all'>
+type HomeConnectionsTab = 'dapp' | 'providers'
 
 function isHomeSecondaryTab(
   tab: string | null,
-  domain: HomeAssetDomain
+  connectionsTab: HomeConnectionsTab
 ): tab is 'dapp' | 'providers' | 'activity' {
-  return tab === 'activity' || tab === (domain === 'shield' ? 'providers' : 'dapp')
+  return tab === 'activity' || tab === connectionsTab
 }
 
 export function legacyShieldHomePath(search: string): string | null {
@@ -28,9 +29,14 @@ export function resolveLegacyShieldFundsPath(search: string): string {
   return '/?domain=shield&tab=providers'
 }
 
-export function resolveHomeDefaultTab(search: string): HomeDefaultTab {
+export function resolveHomeDefaultTab(
+  search: string,
+  connectionsTab: HomeConnectionsTab = resolveHomeAssetDomain(search) === 'shield'
+    ? 'providers'
+    : 'dapp'
+): HomeDefaultTab {
   const tab = new URLSearchParams(search).get('tab')
-  return isHomeSecondaryTab(tab, resolveHomeAssetDomain(search)) ? tab : 'assets'
+  return isHomeSecondaryTab(tab, connectionsTab) ? tab : 'assets'
 }
 
 export function homeActivityPath(domain: HomeAssetDomain, transactionId?: string): string {
@@ -63,12 +69,16 @@ export function clearHomeTransactionFocus(search: string): string | null {
   return remaining ? `/?${remaining}` : '/'
 }
 
-export function homeTabPath(search: string, tab: HomeDefaultTab): string {
+export function homeTabPath(
+  search: string,
+  tab: HomeDefaultTab,
+  domain = resolveHomeAssetDomain(search),
+  connectionsTab: HomeConnectionsTab = domain === 'shield' ? 'providers' : 'dapp'
+): string {
   const params = new URLSearchParams(search)
-  const domain = resolveHomeAssetDomain(search)
   params.set('domain', domain)
   params.delete('transactionId')
-  if (isHomeSecondaryTab(tab, domain)) {
+  if (isHomeSecondaryTab(tab, connectionsTab)) {
     params.set('tab', tab)
   } else {
     params.delete('tab')
@@ -97,13 +107,17 @@ export function resolveHomeAssetDomain(search: string): HomeAssetDomain {
   return tab === 'activity' || tab === 'dapp' ? 'public' : 'shield'
 }
 
-export function homeAssetDomainPath(search: string, domain: HomeAssetDomain): string {
+export function homeAssetDomainPath(
+  search: string,
+  domain: HomeAssetDomain,
+  connectionsTab: HomeConnectionsTab = domain === 'shield' ? 'providers' : 'dapp'
+): string {
   const params = new URLSearchParams(search)
   params.delete('transactionId')
   params.delete('assetId')
   params.delete('mode')
   params.set('domain', domain)
-  if (resolveHomeDefaultTab(params.toString()) === 'assets') params.delete('tab')
+  if (resolveHomeDefaultTab(params.toString(), connectionsTab) === 'assets') params.delete('tab')
   const remaining = params.toString()
   return remaining ? `/?${remaining}` : '/'
 }

@@ -1,10 +1,10 @@
+import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
+import { getZcashChainId } from '@/core/chains/registry'
 import type { Network } from '@/types'
 import { ZEC_ZCASH_ASSET } from '@/config/intents'
 import { ZEC_DECIMALS } from '@/config/wallet'
 import { parseZcashAddress } from '@/core/address-book/address-book'
-import { getZcashChainId } from '@/core/chains/registry'
 import type { ConfidentialFundingReview } from '@/core/services/confidential-funding'
-import type { SwapToken } from '@/core/services/intents-api'
 import Big from '@/lib/big'
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { formatInsufficientBalance } from '@/lib/format'
@@ -71,14 +71,14 @@ export function canMoveShieldSwapZecToUnifiedAddress(
 
 export function buildShieldDestinationPickerRows({
   options,
-  tokens,
+  prices,
   balances,
   network,
   source = null,
   nativeZecDestinations = []
 }: Readonly<{
   options: readonly ShieldFundingAsset[]
-  tokens: readonly SwapToken[]
+  prices: AssetPriceReadModel | null
   balances: readonly Readonly<{ tokenId: string; available: string }>[] | null
   network: Network
   source?: ShieldFundingAsset | null
@@ -92,8 +92,7 @@ export function buildShieldDestinationPickerRows({
     | { kind: 'native-zec'; fundingSource: 'transparent' | 'shielded' }
     | { kind: 'confidential' }
   ))[] {
-  const prices = new Map(tokens.map(token => [token.assetId, token.price]))
-  const nativePrice = prices.get(ZEC_ZCASH_ASSET)
+  const nativePrice = findAssetPrice(prices, `${getZcashChainId(network)}/slip44:133`)?.priceUsd
   const excludedProtocolAssetId = source?.managed.protocolAssetId
   return [
     ...nativeZecDestinations
@@ -137,7 +136,7 @@ export function buildShieldDestinationPickerRows({
           ...shieldSwapPickerChain(asset),
           availableRaw: balances ? shieldFundingAvailableRaw(asset, balances) : undefined,
           displayBalance: balances ? undefined : '—',
-          priceUsd: prices.get(asset.managed.protocolAssetId)
+          priceUsd: findAssetPrice(prices, id)?.priceUsd
         }
       })
   ]

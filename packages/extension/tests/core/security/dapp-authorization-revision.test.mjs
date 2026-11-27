@@ -551,6 +551,10 @@ async function verifySavedDashboardSelection(kind) {
   assert.deepEqual(await manager.getAuthorizedAccounts(site), [account])
   state.currentAccountId = account.accountId
   assert.equal((await handler.getSilentAccounts(site))?.shielded, 'zs-first')
+  assert.equal(
+    await handler.isAuthorizedZcashAccountCurrent(site, account.walletId, account.accountId, revision + 1),
+    false
+  )
 }
 
 test('saved Dashboard sessions follow the active Zcash account within the approved selection', async t => {

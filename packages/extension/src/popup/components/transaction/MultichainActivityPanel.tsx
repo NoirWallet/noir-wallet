@@ -42,8 +42,7 @@ import {
 import { buildActivityExecutionAddressModes } from '@/popup/services/multichain-activity-presentation'
 import type { ActivityPerspective } from '@/popup/services/activity-action-label'
 import { accountNetworksClient } from '@/popup/services/account-networks-client'
-import { assetPriceClient } from '@/popup/services/asset-price-client'
-import type { AssetPriceReadModel } from '@/core/prices'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { useAddressBookStore } from '@/store/address-book-store'
 import { shouldWarnSmallTransfer } from '@/popup/services/activity-small-transfer-warning'
 import { getZcashChainId } from '@/core/chains/registry'
@@ -69,6 +68,7 @@ interface MultichainActivityPanelProps {
   readonly shieldProvider?: 'near-confidential' | 'zcash-shield'
   readonly showToolbar?: boolean
   readonly showStatusFilter?: boolean
+  readonly toolbarAction?: ReactNode
   readonly maxItems?: number
   readonly pageSize?: number
   readonly localPagination?: boolean
@@ -135,6 +135,7 @@ export function MultichainActivityPanel({
   shieldProvider,
   showToolbar = true,
   showStatusFilter = false,
+  toolbarAction,
   maxItems,
   pageSize = ACTIVITY_DISPLAY_PAGE_SIZE,
   localPagination = false,
@@ -156,7 +157,7 @@ export function MultichainActivityPanel({
   const [visibleLimit, setVisibleLimit] = useState(pageSize)
   const [olderStatus, setOlderStatus] = useState<'ready' | 'loading' | 'error'>('ready')
   const [historyRefreshFailed, setHistoryRefreshFailed] = useState(false)
-  const [smallTransferPrices, setSmallTransferPrices] = useState<AssetPriceReadModel | null>(null)
+  const smallTransferPrices = useAssetPrices(network)
   const [clusterSettlements, setClusterSettlements] = useState<{
     scope: string
     amounts: ReadonlyMap<string, TransactionAssetAmount>
@@ -191,12 +192,6 @@ export function MultichainActivityPanel({
         })
         .catch(() => {})
     }
-    void assetPriceClient
-      .getPrices('read')
-      .then(prices => {
-        if (active) setSmallTransferPrices(prices)
-      })
-      .catch(() => {})
     return () => {
       active = false
     }
@@ -675,6 +670,7 @@ export function MultichainActivityPanel({
         }
       />
       {statusControl}
+      {toolbarAction}
     </NetworkFilterToolbar>
   ) : statusControl ? (
     <div className="shrink-0 px-4 py-3">{statusControl}</div>

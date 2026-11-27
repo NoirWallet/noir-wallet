@@ -3,7 +3,8 @@ import { expect } from '@playwright/test'
 import { getLifecycleStatusPresentation } from '../../../src/lib/transaction-status-presentation.ts'
 import {
   getActivityProgressSteps,
-  getActivityStatusPresentation
+  getActivityStatusPresentation,
+  getClusterActivityOutcome
 } from '../../../src/popup/services/multichain-activity-presentation.ts'
 import { getOnchainTransactionStatusPresentation } from '../../../src/popup/services/onchain-transaction-result.ts'
 import {
@@ -127,6 +128,111 @@ test('Intents Activity identifies the observed cross-chain stage', () => {
   expect(getActivityProgressSteps(otherRouter, chainId => chainId).map(step => step.label)).toEqual(
     ['Origin transaction', 'Crosschain', 'Destination transaction']
   )
+})
+
+function clusterActivity(originStatus, relayStatus, destinationStatuses) {
+  return {
+    id: 'tx:confidential:cluster',
+    source: 'wallet-v2',
+    scope: { keyDomainId: 'wallet:cluster', accountId: 'account:cluster' },
+    kind: 'withdraw',
+    status: 'confirming',
+    completeness: 'complete',
+    snapshot: { shield: { operation: 'cluster' }, direction: 'self' },
+    segments: [
+      {
+        id: 'origin',
+        role: 'origin',
+        target: { kind: 'onchain', chainId: 'eip155:1' },
+        status: originStatus
+      },
+      {
+        id: 'relay',
+        role: 'relay',
+        target: { kind: 'protocol', provider: 'Confidential Intents' },
+        status: relayStatus
+      },
+      ...destinationStatuses.map((status, index) => ({
+        id: `withdraw:${index}`,
+        role: 'destination',
+        target: { kind: 'onchain', chainId: 'eip155:42161' },
+        status
+      }))
+    ]
+  }
+}
+
+test('Cluster progress preserves independently observed receipt and source finality', () => {
+  const chainName = chainId => chainId
+  const sourceConfirmed = clusterActivity('final', 'confirming', ['created', 'created'])
+  const unmatchedOrder = {
+    transactionId: sourceConfirmed.id,
+    operation: 'cluster',
+    keyDomainId: sourceConfirmed.scope.keyDomainId,
+    accountId: 'account:other',
+    orderId: 'order'
+  }
+  expect(getActivityProgressSteps(sourceConfirmed, chainName, unmatchedOrder)[1]).toMatchObject({
+    label: 'Confidential Intents Received',
+    state: 'active'
+  })
+  const acceptedOrder = { ...unmatchedOrder, accountId: sourceConfirmed.scope.accountId }
+  expect(getActivityProgressSteps(sourceConfirmed, chainName, acceptedOrder)[1]).toMatchObject({
+    state: 'complete'
+  })
+  const shieldSource = {
+    ...sourceConfirmed,
+    segments: [
+      {
+        ...sourceConfirmed.segments[0],
+        target: { kind: 'protocol', provider: 'Confidential Intents' }
+      },
+      ...sourceConfirmed.segments.slice(1)
+    ]
+  }
+  expect(getActivityProgressSteps(shieldSource, chainName)[0]).toMatchObject({
+    label: 'Shield authorization',
+    statusLabel: 'Signed'
+  })
+
+  const childArrivedFirst = clusterActivity('confirming', 'confirming', ['created', 'final'])
+  expect(getActivityProgressSteps(childArrivedFirst, chainName).map(step => step.state)).toEqual([
+    'active',
+    'complete',
+    'pending',
+    'complete'
+  ])
+})
+
+test('Cluster reports a partial outcome only after the batch settles', () => {
+  const unsettled = clusterActivity('final', 'confirming', ['final', 'failed', 'confirming'])
+  expect(getClusterActivityOutcome(unsettled)).toBeNull()
+  expect(getActivityStatusPresentation(unsettled).tone).toBe('neutral')
+
+  const settled = clusterActivity('confirming', 'failed', ['final', 'failed', 'failed'])
+  expect(getClusterActivityOutcome(settled)).toBe('partial')
+  expect(getActivityStatusPresentation(settled)).toEqual({
+    label: 'Partially received',
+    tone: 'warning'
+  })
+  expect(getActivityProgressSteps(settled, chainId => chainId).map(step => step.state)).toEqual([
+    'pending',
+    'complete',
+    'complete',
+    'failed',
+    'failed'
+  ])
+  expect(getClusterActivityOutcome({ ...settled, reconfirming: true })).toBeNull()
+
+  const confirmedBatch = {
+    ...clusterActivity('final', 'final', ['final', 'confirming']),
+    status: 'final'
+  }
+  expect(getClusterActivityOutcome(confirmedBatch)).toBe('received')
+  expect(getActivityProgressSteps(confirmedBatch, chainId => chainId).at(-1)).toMatchObject({
+    state: 'pending',
+    statusLabel: 'Unconfirmed'
+  })
 })
 
 test('only exceptional states use warning or error, while cancellation stays neutral', () => {

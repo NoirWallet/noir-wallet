@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '@iconify/react'
 import { Tabs, TabsContent } from '../components/ui/tabs'
 import { PageTabsList, PageTabsTrigger } from '../components/common/PageTabs'
+import { NetworkFilterToolbar } from '../components/common/NetworkFilter'
 import { DAppConnectPrompt } from '../components/dapp/DAppConnectPrompt'
 import { ConnectedDAppBar } from '../components/dapp/ConnectedDAppBar'
 import { HomeDAppList } from '../components/dapp/HomeDAppList'
@@ -10,6 +11,7 @@ import { useIncognitoSetup } from '@/popup/hooks/useIncognitoSetup'
 import { addIncognitoNetworkPath } from '@/popup/services/account-network-presentation'
 import { availableSoftwareAccountFamilies } from '@/popup/services/account-network-selection-client'
 import { supportsEvmPrivateExecution } from '@/core/chains/evm'
+import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { HomeBalanceOverview } from '../components/portfolio/HomeBalanceOverview'
 import { openModal } from '../provider/ModalManager'
 import { useDAppConnection } from '../hooks/useDAppConnection'
@@ -17,7 +19,6 @@ import { useLocation, useNavigate } from '../provider/Router'
 import { useWalletStore } from '@/store/wallet-store'
 import { buildAccountKey, useAccountDataStore } from '@/store/account-data-store'
 import { getAccountDisplayName } from '@/lib/format'
-import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { useSpeedUp } from '../hooks/useSpeedUp'
 import { useResyncZcash } from '../hooks/useResyncZcash'
 import { Popover, PopoverContent, PopoverTrigger } from '../components/ui/popover'
@@ -37,6 +38,7 @@ import { HomeShieldProviders } from '../components/portfolio/ShieldProviderGrid'
 import { resolveConfidentialDetailAssetId } from '../services/near-confidential-holdings'
 import { getHomeZcashSyncIssue } from '../services/home-zcash-sync-issue'
 import { MultichainActivityPanel } from '../components/transaction/MultichainActivityPanel'
+import { EvmActivityRecovery } from '../components/evm/EvmActivityRecovery'
 import { MultichainActivityDetail } from '../components/transaction/MultichainActivityDetail'
 import type { ActivityItem } from '@/core/activity'
 import { resolveEvmFeatureRuntimePolicy } from '@/core/chains/feature-runtime-policy'
@@ -51,18 +53,17 @@ import {
   type HomeAssetDomain
 } from '../services/home-navigation'
 import { assetPriceClient } from '../services/asset-price-client'
-import { parseAssetId } from '@/core/chains/registry'
-import type { AssetPriceReadModel } from '@/core/prices'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { summarizePortfolioFiat } from '@/popup/services/portfolio-prices'
 import { useActiveAccountNetworks } from '../hooks/useActiveAccountNetworks'
 import { useHomePortfolio } from '../hooks/useHomePortfolio'
+import { useHomeZcashTipProbe } from '../hooks/useHomeZcashTipProbe'
 import { useShieldBalances } from '../hooks/useShieldBalances'
 import { useHomeScrollPosition } from '../hooks/useHomeScrollPosition'
 import { getAssetDomainRaw } from '../services/asset-domains'
 import { useSettingsStore } from '@/store/settings-store'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { ZcashSyncProgress } from '../components/zcash/ZcashSyncProgress'
-import { automaticRefreshSession } from '../services/automatic-refresh-session'
 import { useDAppExecutionMode } from '../hooks/useDAppExecutionMode'
 import { DAppExecutionModeClientError } from '../services/dapp-execution-mode-client'
 import { useDialog } from '../hooks/useDialog'
@@ -71,14 +72,13 @@ import type { DAppExecutionMode } from '@/core/dapp/dapp-execution-mode'
 import { resolveEffectiveActiveAccountIdentity } from '../lib/effective-active-account'
 import {
   getHomeAssetBreakdown,
-  readHomePrices,
-  rememberHomePrices,
   resolveHomeCachedTotal,
   resolveHomeAssetDomainDisplay,
   resolveHomePortfolioTotalStatus
 } from '../services/home-asset-breakdown'
 import { buildShieldActionPath, selectShieldActions } from '../services/shield-action-selection'
 import { canSwapNativeShieldZec } from '../services/shield-swap-zec-sources'
+import { getHomeAccountCapabilities } from '../services/home-account-capabilities'
 import { getPrivateTransferChainIds } from '../services/private-balance-transfer'
 import { prewarmInitialSwapCatalog } from '../services/swap-catalog-loading'
 import {
@@ -110,7 +110,6 @@ export function Home() {
   const {
     getCurrentAccount,
     getCurrentWallet,
-    setZecPrice,
     currentNetwork,
     currentWalletId,
     currentAccountId,
@@ -118,11 +117,12 @@ export function Home() {
   } = useWalletStore()
   const { balances, portfolioValues, getCurrentSyncState, setPortfolioValueFor } =
     useAccountDataStore()
-  const [assetPrices, setAssetPrices] = useState(() => readHomePrices(currentNetwork))
-  const assetPricesRef = useRef(assetPrices)
-  const [assetPriceStatus, setAssetPriceStatus] = useState<'loading' | 'ready' | 'error'>(
-    assetPrices ? 'ready' : 'loading'
-  )
+  const assetPrices = useAssetPrices(currentNetwork)
+  const assetPriceStatus = !assetPrices
+    ? 'loading'
+    : assetPrices.status === 'error'
+      ? 'error'
+      : 'ready'
   const [syncActionPending, setSyncActionPending] = useState(false)
   const [focusTransactionId, setFocusTransactionId] = useState<string | null>(() =>
     new URLSearchParams(location.search).get('transactionId')
@@ -152,6 +152,21 @@ export function Home() {
 
   const currentAccount = getCurrentAccount()
   const currentWallet = getCurrentWallet()
+  const hardwareWallet =
+    storageV2Account?.walletSource.kind === 'hardware' ||
+    isZcashHardwareKeySource(currentWallet?.keySource)
+  const homeCapabilities = getHomeAccountCapabilities({
+    account: storageV2Account,
+    retainedAccount: currentAccount,
+    retainedKeySource: currentWallet?.keySource,
+    enabledFlags: __ENABLED_CHAIN_FEATURE_FLAGS__,
+    network: currentNetwork
+  })
+  const accountActionsReady =
+    !accountContextChanging &&
+    Boolean(
+      storageV2Account || (currentAccount && !accountNetworksLoading && !accountNetworksError)
+    )
   const showV1NetworkGuide = isRetainedV1ZcashOnlyAccount(
     currentWallet,
     currentAccount,
@@ -210,9 +225,7 @@ export function Home() {
   } = useHomePortfolio(effectiveWalletId, effectiveAccountId)
   const multichainPortfolio = initialChainBalancesPending ? null : portfolioSnapshot
   const portfolioLoadStatus = initialChainBalancesPending ? 'loading' : portfolioSnapshotStatus
-  const supportsEvmDAppExecutionMode =
-    storageV2Account?.networks.some(network => network.chain.family === 'evm') ??
-    Boolean(evmOperationsEnabled && currentAccount)
+  const supportsEvmDAppExecutionMode = homeCapabilities.privateEvm
   const dappExecutionMode = useDAppExecutionMode(
     Boolean(supportsEvmDAppExecutionMode && effectiveWalletId && effectiveAccountId),
     effectiveWalletId,
@@ -255,29 +268,33 @@ export function Home() {
           accountDisplayNames
         )
       : 'Account 1')
-  const supportsZcash =
-    storageV2Account?.networks.some(network => network.chain.family === 'zcash') ??
-    Boolean(currentAccount)
-  const supportsSwap =
-    storageV2Account?.networks.some(network =>
-      ['zcash', 'evm', 'bitcoin'].includes(network.chain.family)
-    ) ??
-    (Boolean(currentAccount) || accountNetworksLoading)
-  const activeTab = resolveHomeDefaultTab(location.search)
-  const hardwareWallet =
-    storageV2Account?.walletSource.kind === 'hardware' ||
-    isZcashHardwareKeySource(currentWallet?.keySource)
+  useHomeZcashTipProbe(
+    storageV2Account?.active &&
+      homeCapabilities.hasZcash &&
+      effectiveWalletId &&
+      effectiveAccountId &&
+      !accountContextChanging
+      ? modeScopeKey
+      : null
+  )
   const requestedAssetDomain = resolveHomeAssetDomain(location.search)
+  const showShield = homeCapabilities.hasZcash || homeCapabilities.confidentialHome
   const routeAssetDomain =
-    hardwareWallet && requestedAssetDomain === 'private' ? 'public' : requestedAssetDomain
+    (requestedAssetDomain === 'private' && !homeCapabilities.privateEvm) ||
+    (requestedAssetDomain === 'shield' && !showShield)
+      ? 'public'
+      : requestedAssetDomain
   const modeActionsReady =
-    !accountContextChanging &&
-    (hardwareWallet || !supportsEvmDAppExecutionMode || dappExecutionMode.ready)
+    !accountContextChanging && (!supportsEvmDAppExecutionMode || dappExecutionMode.ready)
   const modeSelectionDisabled = accountContextChanging || (!modeActionsReady && !modeSwitchPending)
-  const privateDAppMode = !hardwareWallet && dappExecutionMode.state?.mode === 'private'
+  const privateDAppMode =
+    supportsEvmDAppExecutionMode && dappExecutionMode.state?.mode === 'private'
   const assetDomain = routeAssetDomain
   const walletMode = assetDomain === 'private' ? 'private' : 'public'
   const isShieldView = assetDomain === 'shield'
+  const showProviders = isShieldView && homeCapabilities.canShieldFromHome
+  const connectionsTab = showProviders ? 'providers' : 'dapp'
+  const activeTab = resolveHomeDefaultTab(location.search, connectionsTab)
   const { region: homeScrollRegion, nextPosition: nextHomeScrollPosition } = useHomeScrollPosition(
     location.key,
     modeScopeKey
@@ -297,9 +314,7 @@ export function Home() {
   const supportsIncognito = Boolean(
     storageV2Account && supportsEvmPrivateExecution(storageV2Account.walletSource)
   )
-  const hasIncognitoNetwork = storageV2Account?.networks.some(
-    network => network.chain.family === 'evm'
-  )
+  const hasIncognitoNetwork = homeCapabilities.privateEvm
   const needsIncognitoNetwork =
     storageV2Account?.walletSource.kind === 'software' &&
     !hasIncognitoNetwork &&
@@ -328,7 +343,13 @@ export function Home() {
       enableIncognitoCard(modeScopeKey)
     if (domain === assetDomain) return
     setFocusTransactionId(null)
-    navigate.replace(homeAssetDomainPath(location.search, domain))
+    navigate.replace(
+      homeAssetDomainPath(
+        location.search,
+        domain,
+        domain === 'shield' && homeCapabilities.canShieldFromHome ? 'providers' : 'dapp'
+      )
+    )
   }
   const shieldActions = selectShieldActions({
     model: multichainPortfolio,
@@ -366,19 +387,36 @@ export function Home() {
     evmOperationsEnabled &&
     getPrivateTransferChainIds(storageV2Account, currentNetwork === 'mainnet').length > 0
   const canSwapShield = shieldActions.providersFor('swap').length > 0
-  const nativeZecSwapContext = {
+  const canSwapNativeZec = canSwapNativeShieldZec({
     account: storageV2Account,
     network: currentNetwork,
     enabledFlags: __ENABLED_CHAIN_FEATURE_FLAGS__,
     keySource: currentWallet?.keySource
-  }
-  const canSwapNativeZec = canSwapNativeShieldZec(nativeZecSwapContext)
+  })
+  const actionAccount =
+    effectiveWalletId && effectiveAccountId
+      ? { walletId: effectiveWalletId, accountId: effectiveAccountId }
+      : null
+  const canSendFromHome = isShieldView
+    ? homeCapabilities.canSendShieldedZcash || homeCapabilities.confidentialHome
+    : homeCapabilities.canSend
+  const canReceiveFromHome = isShieldView
+    ? homeCapabilities.canReceiveZcash || homeCapabilities.confidentialHome
+    : homeCapabilities.canReceive
+  const showSwapShortcut = isShieldView
+    ? canSwapShield || canSwapNativeZec
+    : assetDomain === 'private'
+      ? canMoveEvm && currentNetwork === 'mainnet'
+      : homeCapabilities.canSwapFromPublic
   const openSend = () => {
-    const sendPath = isShieldView ? buildShieldActionPath('send') : '/send?mode=public'
+    const sendPath = homeCapabilities.sendFromShieldedZcash
+      ? buildShieldActionPath('send', { provider: 'zcash-shield', account: actionAccount })
+      : isShieldView
+        ? buildShieldActionPath('send')
+        : '/send?mode=public'
     navigate.navigate(sendPath, {
       state: {
         initialPortfolio: multichainPortfolio,
-        initialPrices: assetPrices,
         walletId: effectiveWalletId,
         accountId: effectiveAccountId,
         network: currentNetwork,
@@ -387,6 +425,16 @@ export function Home() {
         )
       }
     })
+  }
+  const openReceive = () => {
+    navigate.navigate(
+      isShieldView
+        ? buildShieldActionPath('receive', {
+            provider: homeCapabilities.confidentialHome ? undefined : 'zcash-shield',
+            account: actionAccount
+          })
+        : '/receive'
+    )
   }
   const openSwap = () => {
     const account =
@@ -437,7 +485,6 @@ export function Home() {
   const { isSyncing, syncProgress, currentHeight, latestHeight, etaMs, syncReason } =
     getCurrentSyncState()
   const network = currentNetwork
-  const isTestnet = network === 'testnet'
   const hasLegacyPoolBalance = hasLegacyOrchardBalance(
     currentWallet?.accounts.map(account =>
       currentWalletId
@@ -447,111 +494,9 @@ export function Home() {
   )
   const legacyPoolPrivacyNotice = useLegacyPoolPrivacyNotice(hasLegacyPoolBalance)
 
-  const applyAssetPrices = useCallback(
-    (prices: AssetPriceReadModel | null) => {
-      if (!prices) return
-      const previous = assetPricesRef.current
-      if (prices.status === 'error' && previous && previous.status !== 'error') return
-      rememberHomePrices(network, prices)
-      assetPricesRef.current = prices
-      setAssetPrices(prices)
-      const zec = prices.quotes.find(quote => {
-        const asset = parseAssetId(quote.assetId)
-        return asset.namespace === 'slip44' && asset.reference === '133'
-      })
-      if (zec) setZecPrice(Number(zec.priceUsd))
-    },
-    [network, setZecPrice]
-  )
-
   const refreshAssetPrices = useCallback(async () => {
-    const refreshScope = `asset-prices:${network}`
-    const claimed = await automaticRefreshSession.claim(refreshScope, ['quotes'])
-    if (claimed.length === 0) return
-    if (!assetPricesRef.current) setAssetPriceStatus('loading')
-    try {
-      const refreshed = await assetPriceClient.getPrices('refresh')
-      applyAssetPrices(refreshed)
-      setAssetPriceStatus(
-        assetPricesRef.current && assetPricesRef.current.status !== 'error' ? 'ready' : 'error'
-      )
-      if (
-        !refreshed ||
-        refreshed.status !== 'ready' ||
-        refreshed.quotes.some(quote => quote.freshness === 'stale')
-      ) {
-        await automaticRefreshSession.release(refreshScope, claimed)
-      }
-    } catch (error) {
-      await automaticRefreshSession.release(refreshScope, claimed)
-      setAssetPriceStatus(
-        assetPricesRef.current && assetPricesRef.current.status !== 'error' ? 'ready' : 'error'
-      )
-      console.error('Failed to fetch asset prices:', error)
-    }
-  }, [applyAssetPrices, network])
-
-  useEffect(() => {
-    let cancelled = false
-    const hydrate = async () => {
-      try {
-        const cached = await assetPriceClient.getPrices('read')
-        if (cancelled) return
-        applyAssetPrices(cached)
-        setAssetPriceStatus(
-          assetPricesRef.current && assetPricesRef.current.status !== 'error' ? 'ready' : 'error'
-        )
-        if (
-          !cached ||
-          cached.status === 'error' ||
-          cached.fetchedAt <= 0 ||
-          Date.now() - cached.fetchedAt >= 60_000
-        ) {
-          await refreshAssetPrices()
-        }
-      } catch (error) {
-        if (cancelled) return
-        setAssetPriceStatus(assetPricesRef.current ? 'ready' : 'error')
-        console.error('Failed to read cached asset prices:', error)
-        await refreshAssetPrices()
-      }
-    }
-    void hydrate()
-    const interval = setInterval(() => void refreshAssetPrices(), 60000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [applyAssetPrices, refreshAssetPrices])
-
-  useEffect(() => {
-    let cancelled = false
-    let readScheduled = false
-    const unsubscribe = assetPriceClient.onCacheChanged(() => {
-      if (readScheduled) return
-      readScheduled = true
-      queueMicrotask(() => {
-        readScheduled = false
-        if (cancelled) return
-        void assetPriceClient
-          .getPrices('read')
-          .then(cached => {
-            if (cancelled) return
-            applyAssetPrices(cached)
-            setAssetPriceStatus(
-              assetPricesRef.current && assetPricesRef.current.status !== 'error'
-                ? 'ready'
-                : 'error'
-            )
-          })
-          .catch(() => {})
-      })
-    })
-    return () => {
-      cancelled = true
-      unsubscribe()
-    }
-  }, [applyAssetPrices])
+    await assetPriceClient.refresh(network).catch(() => {})
+  }, [network])
 
   const multichainFiat = useMemo(
     () => summarizePortfolioFiat(multichainPortfolio, assetPrices),
@@ -756,11 +701,18 @@ export function Home() {
       })
   }
 
-  const showZcashSyncStatus = supportsZcash && walletMode === 'public'
-  const showInlineSyncProgress = showZcashSyncStatus && isSyncing
+  const showZcashSyncStatus = homeCapabilities.hasZcash && walletMode === 'public'
+  const syncProgressIndicator = showZcashSyncStatus && isSyncing && (
+    <ZcashSyncProgress
+      syncProgress={syncProgress}
+      currentHeight={currentHeight}
+      latestHeight={latestHeight}
+      etaMs={etaMs}
+    />
+  )
   const syncIssue = showZcashSyncStatus && !isSyncing ? getHomeZcashSyncIssue(syncReason) : null
   const quickShield = useHomeQuickShield({
-    active: !accountContextChanging,
+    active: accountActionsReady && homeCapabilities.canShieldFromHome,
     activeAccount: storageV2Account,
     walletId: effectiveWalletId,
     accountId: effectiveAccountId,
@@ -781,7 +733,6 @@ export function Home() {
     shieldPortfolioEmpty &&
     !showShieldBalanceLoading &&
     !shieldBalances.errorCode
-  const showProviders = isShieldView
   const dappModeControl =
     !hardwareWallet && supportsEvmDAppExecutionMode
       ? {
@@ -841,6 +792,7 @@ export function Home() {
           accountCatalog={accountCatalog}
           publicAccountCatalog={publicAccountCatalog}
           accountCatalogError={accountNetworksError}
+          activeAccountHasIncognitoHoldings={hasIncognitoHoldings && !accountContextChanging}
           defaultEvmMode={walletMode}
           className="min-w-0"
         />
@@ -895,6 +847,8 @@ export function Home() {
             key={modeScopeKey}
             domain={assetDomain}
             display={balanceDisplay}
+            showShield={showShield}
+            compactPublic={assetDomain === 'public'}
             showIncognito={
               supportsIncognito && Boolean(hasIncognitoNetwork || needsIncognitoNetwork)
             }
@@ -923,8 +877,10 @@ export function Home() {
             }
             onQuickShield={quickShield.onOpen}
             shieldEmpty={shieldPortfolioEmpty}
-            onExploreShieldProviders={() =>
-              navigate.replace(homeTabPath(location.search, 'providers'))
+            onExploreShieldProviders={
+              showProviders
+                ? () => navigate.replace(homeTabPath(location.search, 'providers', assetDomain))
+                : undefined
             }
             onToggleHidden={() => setBalancesHidden(!balancesHidden)}
             onSelect={selectAssetDomain}
@@ -950,7 +906,8 @@ export function Home() {
           <div
             data-testid="home-actions"
             data-wallet-action-domain={assetDomain}
-            className={`wallet-action-row mb-6 grid auto-cols-fr grid-flow-col items-start gap-2 ${assetDomain === 'private' ? 'px-3' : 'px-2'}`}
+            inert={!accountActionsReady}
+            className={`wallet-action-row mb-6 grid auto-cols-fr grid-flow-col items-start gap-2 ${assetDomain === 'private' || (!homeCapabilities.canShieldFromHome && !showSwapShortcut) ? 'px-3' : 'px-2'}`}
           >
             {assetDomain === 'private' ? (
               <>
@@ -980,46 +937,40 @@ export function Home() {
                 <WalletActionButton
                   icon={<WalletActionIcon action="send" shielded={isShieldView} />}
                   label="Send"
-                  disabled={isShieldView && shieldActions.providersFor('send').length === 0}
+                  disabled={!accountActionsReady || !canSendFromHome}
                   onClick={openSend}
                 />
                 <WalletActionButton
                   icon={<WalletActionIcon action="receive" shielded={isShieldView} />}
                   label="Receive"
-                  disabled={isShieldView && shieldActions.providersFor('receive').length === 0}
-                  onClick={() =>
-                    navigate.navigate(isShieldView ? buildShieldActionPath('receive') : '/receive')
-                  }
+                  disabled={!accountActionsReady || !canReceiveFromHome}
+                  onClick={openReceive}
                 />
               </>
             )}
-            {assetDomain !== 'private' && (
-              <WalletActionButton
-                icon={<WalletActionIcon action="shield" />}
-                label="Shield"
-                disabled={!shieldActions.hasZcash && !shieldActions.canManageNear}
-                onClick={() => navigate.navigate('/shield')}
-              />
-            )}
-            {isShieldView && (
+            {accountActionsReady &&
+              homeCapabilities.canShieldFromHome &&
+              assetDomain !== 'private' && (
+                <WalletActionButton
+                  icon={<WalletActionIcon action="shield" />}
+                  label="Shield"
+                  onClick={() => navigate.navigate('/shield')}
+                />
+              )}
+            {accountActionsReady && homeCapabilities.canShieldFromHome && isShieldView && (
               <WalletActionButton
                 icon={<WalletActionIcon action="unshield" />}
                 label="Unshield"
-                disabled={!shieldActions.hasZcash && !shieldActions.canManageNear}
                 onClick={() => navigate.navigate('/unshield')}
               />
             )}
-            <WalletActionButton
-              icon={<WalletActionIcon action="swap" />}
-              label="Swap"
-              disabled={
-                isTestnet ||
-                !supportsSwap ||
-                (assetDomain === 'private' && !canMoveEvm) ||
-                (isShieldView && !canSwapShield && !canSwapNativeZec)
-              }
-              onClick={openSwap}
-            />
+            {accountActionsReady && showSwapShortcut && (
+              <WalletActionButton
+                icon={<WalletActionIcon action="swap" />}
+                label="Swap"
+                onClick={openSwap}
+              />
+            )}
           </div>
 
           <HomeAdBanner />
@@ -1036,7 +987,7 @@ export function Home() {
                 value === 'activity'
               ) {
                 if (value !== 'activity') setFocusTransactionId(null)
-                const path = homeTabPath(location.search, value)
+                const path = homeTabPath(location.search, value, assetDomain, connectionsTab)
                 if (path === `${location.pathname}${location.search}`) return
                 const scrollRegion = homeScrollRegion.current
                 const tabs = homeTabs.current
@@ -1059,15 +1010,6 @@ export function Home() {
                 </PageTabsTrigger>
                 <PageTabsTrigger value="activity">Activity</PageTabsTrigger>
               </PageTabsList>
-              {showInlineSyncProgress && (
-                <ZcashSyncProgress
-                  className="shrink-0"
-                  syncProgress={syncProgress}
-                  currentHeight={currentHeight}
-                  latestHeight={latestHeight}
-                  etaMs={etaMs}
-                />
-              )}
             </div>
             <div className="flex flex-1 flex-col">
               {syncIssue && activeTab !== 'dapp' && (
@@ -1147,28 +1089,34 @@ export function Home() {
                 className="mt-0 flex flex-col data-[state=inactive]:hidden"
               >
                 {showShieldEmpty ? (
-                  <section className="mx-4 mt-12 rounded-lg bg-wallet-surface px-4 py-6 text-center">
-                    <p className="text-base font-medium">
-                      {quickShield.label
-                        ? `${quickShield.label} available to shield`
-                        : 'Assets available to shield'}
-                    </p>
-                    <p className="mt-1 text-sm text-wallet-secondary">
-                      Move eligible tokens from Public to Shield.
-                    </p>
-                    <Button
-                      size="wallet"
-                      className="mt-4 h-10 gap-1 px-7"
-                      aria-haspopup="dialog"
-                      onClick={event => quickShield.onOpen(event.currentTarget)}
-                    >
-                      Shield tokens now{' '}
-                      <Icon icon="lucide:arrow-right" width={14} aria-hidden="true" />
-                    </Button>
-                  </section>
+                  <>
+                    {syncProgressIndicator && (
+                      <NetworkFilterToolbar>{syncProgressIndicator}</NetworkFilterToolbar>
+                    )}
+                    <section className="mx-4 mt-12 rounded-lg bg-wallet-surface px-4 py-6 text-center">
+                      <p className="text-base font-medium">
+                        {quickShield.label
+                          ? `${quickShield.label} available to shield`
+                          : 'Assets available to shield'}
+                      </p>
+                      <p className="mt-1 text-sm text-wallet-secondary">
+                        Move eligible tokens from Public to Shield.
+                      </p>
+                      <Button
+                        size="wallet"
+                        className="mt-4 h-10 gap-1 px-7"
+                        aria-haspopup="dialog"
+                        onClick={event => quickShield.onOpen(event.currentTarget)}
+                      >
+                        Shield tokens now{' '}
+                        <Icon icon="lucide:arrow-right" width={14} aria-hidden="true" />
+                      </Button>
+                    </section>
+                  </>
                 ) : (
                   <MultichainPortfolioPanel
                     domain={assetDomain}
+                    syncProgress={syncProgressIndicator}
                     activeAccount={storageV2Account}
                     walletId={effectiveWalletId}
                     accountId={effectiveAccountId}
@@ -1257,6 +1205,27 @@ export function Home() {
                   filterDomain={activityDomain}
                   showToolbar={!activityFilterAssetId}
                   showStatusFilter={isShieldView}
+                  toolbarAction={
+                    !activityFilterAssetId &&
+                    !accountContextChanging &&
+                    storageV2Account?.active &&
+                    storageV2Account.walletId === effectiveWalletId &&
+                    storageV2Account.accountId === effectiveAccountId &&
+                    (activityDomain === 'public' ||
+                      (activityDomain === 'private' && supportsIncognito)) && (
+                      <EvmActivityRecovery
+                        key={JSON.stringify([modeScopeKey, activityDomain])}
+                        scope={{
+                          keyDomainId: storageV2Account.walletId,
+                          accountId: storageV2Account.accountId
+                        }}
+                        network={network}
+                        executionMode={activityDomain === 'private' ? 'private' : 'main'}
+                        accountNetworks={storageV2Account.networks}
+                        onItemClick={handleMultichainActivityClick}
+                      />
+                    )
+                  }
                   focusTransactionId={focusTransactionId}
                   onItemClick={handleMultichainActivityClick}
                 />
@@ -1270,7 +1239,9 @@ export function Home() {
         <ConnectedDAppBar
           dapp={connectedDApp}
           account={effectiveAccount}
-          executionMode={hardwareWallet ? 'main' : (dappExecutionMode.state?.mode ?? null)}
+          executionMode={
+            supportsEvmDAppExecutionMode ? (dappExecutionMode.state?.mode ?? null) : 'main'
+          }
           darkPalette={darkDAppBar}
           modeControl={dappModeControl}
           onManage={handleDAppClick}
@@ -1283,7 +1254,7 @@ export function Home() {
           favicon={connectedDApp.favicon}
           accountName={accountDisplayName}
           executionMode={
-            hardwareWallet || !currentDAppUsesEvm || !supportsEvmDAppExecutionMode
+            !currentDAppUsesEvm || !supportsEvmDAppExecutionMode
               ? 'main'
               : (dappExecutionMode.state?.mode ?? null)
           }

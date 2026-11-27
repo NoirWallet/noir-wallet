@@ -164,6 +164,11 @@ export interface BuildEvmTransferInput {
   readonly now?: () => number
 }
 
+export interface EvmReviewedFeeBudget {
+  readonly maxFeePerGas: bigint
+  readonly maximumFee: bigint
+}
+
 export interface BuildEvmContractCallInput {
   readonly chainId: ChainId
   readonly chainAccount: ChainAccount
@@ -172,7 +177,7 @@ export interface BuildEvmContractCallInput {
   readonly intent: EvmContractCallIntent
   readonly rpc: EvmTransactionRpc
   readonly feeSelection?: EvmFeeSelection
-  readonly reviewedMaxFeePerGas?: bigint
+  readonly reviewedFeeBudget?: EvmReviewedFeeBudget
   readonly feeTier?: NetworkFeeTier
   readonly nonceFloor?: string
   readonly signal?: AbortSignal
@@ -887,7 +892,7 @@ async function estimatePreparedCallFee(
     | 'feeSelection'
     | 'feeTier'
     | 'signal'
-    | 'reviewedMaxFeePerGas'
+    | 'reviewedFeeBudget'
   >,
   transactionCall: PreparedEvmCall,
   includeTiers = false
@@ -937,67 +942,41 @@ async function estimatePreparedCallFee(
       ? input.feeSelection.gasLimit
       : undefined
   const defaultGasLimit = gasLimitWithMargin(estimatedGas, transactionCall.kind)
-  const gasLimit = selectedGasLimit
+  let gasLimit = selectedGasLimit
     ? parseRpcUint64(selectedGasLimit, 'EVM custom gas limit')
     : defaultGasLimit
   if (gasLimit < estimatedGas) {
     throw new EvmTransactionError('invalid-intent', 'Gas limit is below the estimated gas required')
   }
-  const blockNumber = parseRpcUint64(blockFee.blockNumber, 'EVM block number')
-  const transactionType: 'legacy' | 'eip1559' =
-    blockFee.baseFeePerGas === null ? 'legacy' : 'eip1559'
-  let quoteFee: (selection: {
-    selection?: EvmFeeSelection
-    tier?: NetworkFeeTier
-  }) => EvmFeeTierQuote
-  if (transactionType === 'legacy') {
-    const suggestedGasPrice = parseRpcUint64(
-      await input.rpc.getGasPrice(input.signal),
-      'EVM gas price'
-    )
-    quoteFee = selection => deriveEvmLegacyFeeQuote({ ...selection, suggestedGasPrice })
-  } else {
-    const baseFeePerGas = parseRpcUint64(blockFee.baseFeePerGas!, 'EVM base fee per gas')
-    const [suggestedPriorityRaw, suggestedGasPriceRaw] = await Promise.all([
-      input.rpc.getMaximumPriorityFeePerGas(input.signal),
-      input.chainId === 'eip155:56'
-        ? input.rpc.getGasPrice(input.signal)
-        : Promise.resolve(undefined)
-    ])
-    const minimumPriority = minimumPriorityFeePerGas(
-      input.chainId,
-      baseFeePerGas,
-      suggestedGasPriceRaw
-    )
-    const suggestedPriorityFeePerGas = parseRpcUint64(
-      suggestedPriorityRaw,
-      'EVM maximum priority fee per gas'
-    )
-    quoteFee = selection => {
-      const quote = deriveEvmFeeTierQuote({
-        ...selection,
-        baseFeePerGas,
-        suggestedPriorityFeePerGas,
-        ...(minimumPriority === undefined ? {} : { minimumPriorityFeePerGas: minimumPriority })
-      })
-      const reviewedCap = input.reviewedMaxFeePerGas
+  const { blockNumber, transactionType, quoteFee, minimumFeePerGas } = await readEvmCallFeeQuotes(
+    input,
+    blockFee
+  )
+  let feeQuote = quoteFee({ selection: input.feeSelection, tier: input.feeTier })
+  const budget = input.reviewedFeeBudget
+  if (budget) {
+    const minimumGasLimit = selectedGasLimit ? gasLimit : estimatedGas
+    const affordableFeePerGas = budget.maximumFee / minimumGasLimit
+    const feeCap =
+      budget.maxFeePerGas < affordableFeePerGas ? budget.maxFeePerGas : affordableFeePerGas
+    if (feeQuote.maxFeePerGas > feeCap) {
       if (
-        quote.selection.kind !== 'tier' ||
-        reviewedCap === undefined ||
-        quote.maxFeePerGas <= reviewedCap
+        feeQuote.selection.kind !== 'tier' ||
+        feeCap <= 0n ||
+        feeCap < minimumFeePerGas(feeQuote)
       ) {
-        return quote
-      }
-      if (reviewedCap < baseFeePerGas + quote.maxPriorityFeePerGas) {
         throw new EvmTransactionError(
           'reviewed-fee-cap-too-low',
-          'The reviewed EVM fee cap is too low'
+          'The reviewed EVM fee budget is too low'
         )
       }
-      return { ...quote, maxFeePerGas: reviewedCap }
+      feeQuote = { ...feeQuote, maxFeePerGas: feeCap }
+    }
+    if (feeQuote.maxFeePerGas > 0n) {
+      const affordableGasLimit = budget.maximumFee / feeQuote.maxFeePerGas
+      if (gasLimit > affordableGasLimit) gasLimit = affordableGasLimit
     }
   }
-  const feeQuote = quoteFee({ selection: input.feeSelection, tier: input.feeTier })
   const maximumFee = feeQuote.maxFeePerGas
   if (maximumFee > MAXIMUM_UINT64) {
     throw new EvmTransactionError('fee-overflow', 'EVM maximum fee exceeds signer limits')
@@ -1033,6 +1012,83 @@ async function estimatePreparedCallFee(
     }
   }
   return { gasLimit, feeQuote, blockNumber, transactionType, tierMaximumFeeWei }
+}
+
+async function readEvmCallFeeQuotes(
+  input: Pick<BuildEvmContractCallInput, 'chainId' | 'rpc' | 'signal'>,
+  blockFee: Awaited<ReturnType<EvmTransactionRpc['getLatestBlockFee']>>
+) {
+  const blockNumber = parseRpcUint64(blockFee.blockNumber, 'EVM block number')
+  const transactionType: 'legacy' | 'eip1559' =
+    blockFee.baseFeePerGas === null ? 'legacy' : 'eip1559'
+  let quoteFee: (selection: {
+    selection?: EvmFeeSelection
+    tier?: NetworkFeeTier
+  }) => EvmFeeTierQuote
+  let minimumFeePerGas: (quote: EvmFeeTierQuote) => bigint
+  if (transactionType === 'legacy') {
+    const suggestedGasPrice = parseRpcUint64(
+      await input.rpc.getGasPrice(input.signal),
+      'EVM gas price'
+    )
+    quoteFee = selection => deriveEvmLegacyFeeQuote({ ...selection, suggestedGasPrice })
+    minimumFeePerGas = () => suggestedGasPrice
+  } else {
+    const baseFeePerGas = parseRpcUint64(blockFee.baseFeePerGas!, 'EVM base fee per gas')
+    const [suggestedPriorityRaw, suggestedGasPriceRaw] = await Promise.all([
+      input.rpc.getMaximumPriorityFeePerGas(input.signal),
+      input.chainId === 'eip155:56'
+        ? input.rpc.getGasPrice(input.signal)
+        : Promise.resolve(undefined)
+    ])
+    const minimumPriority = minimumPriorityFeePerGas(
+      input.chainId,
+      baseFeePerGas,
+      suggestedGasPriceRaw
+    )
+    const suggestedPriorityFeePerGas = parseRpcUint64(
+      suggestedPriorityRaw,
+      'EVM maximum priority fee per gas'
+    )
+    quoteFee = selection =>
+      deriveEvmFeeTierQuote({
+        ...selection,
+        baseFeePerGas,
+        suggestedPriorityFeePerGas,
+        ...(minimumPriority === undefined ? {} : { minimumPriorityFeePerGas: minimumPriority })
+      })
+    minimumFeePerGas = quote => baseFeePerGas + quote.maxPriorityFeePerGas
+  }
+  return { blockNumber, transactionType, quoteFee, minimumFeePerGas }
+}
+
+export async function readEvmTransferFeeFloor(
+  input: Pick<BuildEvmTransferInput, 'chainId' | 'rpc' | 'feeSelection' | 'feeTier' | 'signal'> & {
+    readonly sender: string
+  }
+) {
+  await input.rpc.assertExpectedChain(input.signal)
+  const [nativeBalanceRaw, blockFee] = await Promise.all([
+    input.rpc.getNativeBalance(input.sender, input.signal),
+    input.rpc.getLatestBlockFee(input.signal)
+  ])
+  const nativeBalance = parseRpcUint256(nativeBalanceRaw, 'EVM native balance')
+  const { quoteFee } = await readEvmCallFeeQuotes(input, blockFee)
+  const { maxFeePerGas } = quoteFee({ selection: input.feeSelection, tier: input.feeTier })
+  if (maxFeePerGas > MAXIMUM_UINT64) {
+    throw new EvmTransactionError('fee-overflow', 'EVM maximum fee exceeds signer limits')
+  }
+  const gasLimit =
+    input.feeSelection?.kind === 'custom' || input.feeSelection?.kind === 'legacy'
+      ? input.feeSelection.gasLimit
+      : undefined
+  const gasFloor = gasLimit
+    ? parseRpcUint64(gasLimit, 'EVM custom gas limit')
+    : EVM_SIMPLE_TRANSFER_GAS
+  if (gasFloor < EVM_SIMPLE_TRANSFER_GAS) {
+    throw new EvmTransactionError('invalid-intent', 'Gas limit is below intrinsic gas')
+  }
+  return { nativeBalance, minimumFee: gasFloor * maxFeePerGas }
 }
 
 async function estimateEvmCall(
@@ -1093,7 +1149,7 @@ async function buildPreparedEvmTransaction(
     | 'executionAccount'
     | 'rpc'
     | 'feeSelection'
-    | 'reviewedMaxFeePerGas'
+    | 'reviewedFeeBudget'
     | 'feeTier'
     | 'nonceFloor'
     | 'signal'

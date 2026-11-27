@@ -6,7 +6,6 @@ import { proveHardwarePczt } from '../../../src/core/zcash/hardware-pczt.ts'
 
 import {
   consumePreparedHardwareSignRequest,
-  isHardwareDAppAuthorizationCurrent,
   isHardwareSignRequestFresh,
   openHardwareSignTab,
   parsePreparedHardwareSignRequest,
@@ -506,30 +505,6 @@ test.describe('Hardware sign request handoff', () => {
       displayTo: '0xrecipient',
       quoteBinding: { userAction: 'transfer' }
     })
-  })
-
-  test('binds a dApp hardware request to its original authorization revision and account', () => {
-    const request = parseHardwareSignRequest({
-      kind: 'send',
-      walletId: 'wallet-1',
-      accountId: 'account-1',
-      to: 'u1recipient',
-      amount: '1',
-      createdAt: 1_000,
-      dappRequestId: 'dapp-request-1',
-      authorizationRevision: 7,
-      origin: 'https://dapp.example'
-    })
-    const accounts = [{ walletId: 'wallet-1', accountId: 'account-1' }]
-    expect(isHardwareDAppAuthorizationCurrent(request, { revision: 7, accounts })).toBe(true)
-    expect(isHardwareDAppAuthorizationCurrent(request, { revision: 8, accounts })).toBe(false)
-    expect(
-      isHardwareDAppAuthorizationCurrent(request, {
-        revision: 7,
-        accounts: [{ walletId: 'wallet-1', accountId: 'account-2' }]
-      })
-    ).toBe(false)
-    expect(isHardwareDAppAuthorizationCurrent(request, { revision: 7, accounts: [] })).toBe(false)
   })
 
   test('deletes corrupted prepared session state instead of returning it', async () => {

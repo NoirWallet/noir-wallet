@@ -13,6 +13,7 @@ export function ShieldProviderDialog({
   onClose,
   selected,
   available,
+  showNearConfidential = true,
   onSelect,
   networks,
   tokens
@@ -21,6 +22,7 @@ export function ShieldProviderDialog({
   readonly onClose: () => void
   readonly selected: ShieldProvider | null
   readonly available: Readonly<Record<ShieldProvider, boolean>>
+  readonly showNearConfidential?: boolean
   readonly onSelect: (provider: ShieldProvider) => void
   readonly networks: readonly ChainDefinition[]
   readonly tokens: readonly SwapToken[] | null
@@ -47,6 +49,7 @@ export function ShieldProviderDialog({
         <DialogDescription className="sr-only">Choose a receiving provider</DialogDescription>
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 pt-4 pb-6">
           {providers.map(provider => {
+            if (provider === 'near-confidential' && !showNearConfidential) return null
             const { detailName, description } = SHIELD_PROVIDERS[provider]
             return (
               <button

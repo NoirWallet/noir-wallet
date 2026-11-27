@@ -551,6 +551,8 @@ export function createBackgroundRheaSwapService(): RheaSwapService | null {
 
 let publicCatalog: PersistentRheaSwapCatalogCache | undefined
 let portfolioTokens: readonly RheaSwapToken[] = Object.freeze([])
+let destinationPriceTokens: readonly RheaSwapToken[] = Object.freeze([])
+let onPriceTokensChanged: (() => void) | undefined
 
 function getPublicCatalog(): PersistentRheaSwapCatalogCache {
   return (publicCatalog ??= new PersistentRheaSwapCatalogCache(request => {
@@ -573,6 +575,15 @@ function rememberPortfolioTokens(result: RheaSwapCatalogResult): void {
           })
     )
   ])
+  onPriceTokensChanged?.()
+}
+
+export function setRheaCatalogPriceListener(listener: () => void): void {
+  onPriceTokensChanged = listener
+}
+
+export function getBackgroundRheaCatalogPriceTokens(): readonly RheaSwapToken[] {
+  return [...portfolioTokens, ...destinationPriceTokens]
 }
 
 export function getCachedBackgroundRheaSwapTokens(): readonly RheaSwapToken[] {
@@ -592,6 +603,15 @@ export async function readBackgroundRheaSwapCatalog(
   const cache = getPublicCatalog()
   const result = await cache.read(input)
   if (input.direction === 'from') rememberPortfolioTokens(await cache.readLastGood(input))
+  else {
+    const lastGood = await cache.readLastGood(input)
+    const chains = new Set(lastGood.tokens.map(token => token.tokenListChainId))
+    destinationPriceTokens = Object.freeze([
+      ...destinationPriceTokens.filter(token => !chains.has(token.tokenListChainId)),
+      ...lastGood.tokens
+    ])
+    onPriceTokensChanged?.()
+  }
   return result
 }
 

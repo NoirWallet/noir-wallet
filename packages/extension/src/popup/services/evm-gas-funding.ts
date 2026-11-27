@@ -1,6 +1,8 @@
+import { DEFAULT_NETWORK } from '@/lib/runtime-network'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import { formatInsufficientBalance } from '@/lib/format'
 import { findAssetPrice } from '@/core/prices'
+import { isFreshWalletAssetPrice } from '@/core/prices/asset-price'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { calculateSuggestedPrivateGasFundingRaw } from '@/core/transactions/private-funding'
 import { assetPriceClient } from './asset-price-client'
@@ -128,12 +130,13 @@ export async function loadEvmGasFundingPreview(
   const [portfolio, price] = await Promise.allSettled([
     evmWalletClient.getPortfolio('refresh', { chainIds: [details.chainId] }),
     (async () => {
-      const cached = await assetPriceClient.getPrices('read', details.nativeAssetId)
+      const snapshot = assetPriceClient.getSnapshot()
+      const cached = snapshot?.network === DEFAULT_NETWORK ? snapshot.prices : null
       const quote = findAssetPrice(cached, details.nativeAssetId)
-      if (quote?.freshness === 'fresh') return quote.priceUsd
-      const refreshed = await assetPriceClient.getPrices('refresh', details.nativeAssetId)
+      if (isFreshWalletAssetPrice(quote)) return quote.priceUsd
+      const refreshed = await assetPriceClient.refresh(DEFAULT_NETWORK, details.nativeAssetId)
       const refreshedQuote = findAssetPrice(refreshed, details.nativeAssetId)
-      return refreshedQuote?.freshness === 'fresh' ? refreshedQuote.priceUsd : null
+      return isFreshWalletAssetPrice(refreshedQuote) ? refreshedQuote.priceUsd : null
     })()
   ])
   return resolveEvmGasFundingPreview({

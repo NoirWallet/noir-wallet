@@ -25,6 +25,7 @@ on:
       - '.node-version'
       - 'LICENSE'
       - 'tsconfig.base.json'
+      - 'eslint.config.mjs'
       - '.npmrc'
       - 'wasm-package.lock.json'
       - '.github/workflows/extension-ci.yml'
@@ -86,6 +87,9 @@ jobs:
           set -euo pipefail
           test "$(git -C wallet rev-parse HEAD)" = "$GITHUB_SHA"
       - run: pnpm install --frozen-lockfile
+        working-directory: wallet
+      - name: Lint extension source
+        run: pnpm lint:eslint packages/extension/src
         working-directory: wallet
       - name: Type-check V2 EVM history Worker
         run: pnpm --filter @noir-wallet/evm-history-worker type-check

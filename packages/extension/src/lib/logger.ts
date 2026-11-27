@@ -1,8 +1,11 @@
 import { formatWalletLogPrefix } from './log-format'
 import type { DiagnosticLogDraft, DiagnosticLogLevel, DiagnosticLogSource } from './diagnostic-log'
-import { sanitizeDiagnosticMessage, serializeDiagnosticArgs } from './diagnostic-log'
+import {
+  getDiagnosticErrorDetails,
+  serializeDiagnosticArgs,
+  writeDiagnosticConsoleError
+} from './diagnostic-log'
 import { formatDiagnosticContext } from './diagnostic-log-store'
-import { developmentConsoleErrors, developmentErrorArgs } from './development-console'
 
 const isServiceWorker =
   typeof self !== 'undefined' &&
@@ -32,6 +35,19 @@ class WalletLogger {
 
   configureDiagnostics(write: ((entry: DiagnosticLogDraft) => Promise<void>) | null): void {
     this.diagnosticWriter = write
+  }
+
+  captureUnhandledErrors(target: Pick<EventTarget, 'addEventListener'>): void {
+    target.addEventListener('error', event => {
+      if (!(event instanceof ErrorEvent)) return
+      event.preventDefault()
+      this.error('Unhandled runtime error', undefined, undefined, event.error ?? event.message)
+    })
+    target.addEventListener('unhandledrejection', event => {
+      if (!(event instanceof PromiseRejectionEvent)) return
+      event.preventDefault()
+      this.error('Unhandled promise rejection', undefined, undefined, event.reason)
+    })
   }
 
   private persist(
@@ -64,32 +80,29 @@ class WalletLogger {
     this.persist('debug', msg, walletId, accountId, error)
     if (!debugLogsEnabled) return
     const prefix = this.getPrefix(walletId, accountId)
-    console.log(prefix, sanitizeDiagnosticMessage(msg), ...developmentErrorArgs(error))
+    console.log(prefix, serializeDiagnosticArgs([msg, ...errorArgs(error)]))
   }
 
   info(msg: string, walletId?: string, accountId?: string, error?: unknown): void {
     this.persist('info', msg, walletId, accountId, error)
     if (!debugLogsEnabled) return
     const prefix = this.getPrefix(walletId, accountId)
-    console.info(prefix, sanitizeDiagnosticMessage(msg), ...developmentErrorArgs(error))
+    console.info(prefix, serializeDiagnosticArgs([msg, ...errorArgs(error)]))
   }
 
   warn(msg: string, walletId?: string, accountId?: string, error?: unknown): void {
     this.persist('warn', msg, walletId, accountId, error)
     if (!debugLogsEnabled) return
     const prefix = this.getPrefix(walletId, accountId)
-    console.warn(prefix, sanitizeDiagnosticMessage(msg), ...developmentErrorArgs(error))
+    console.warn(prefix, serializeDiagnosticArgs([msg, ...errorArgs(error)]))
   }
 
   error(msg: string, walletId?: string, accountId?: string, error?: unknown): void {
-    this.persist('error', msg, walletId, accountId, error)
-    if (!debugLogsEnabled) return
-    const prefix = this.getPrefix(walletId, accountId)
-    if (isServiceWorker && !developmentConsoleErrors) {
-      console.warn(prefix, '[ERROR]', sanitizeDiagnosticMessage(msg))
-    } else {
-      console.error(prefix, sanitizeDiagnosticMessage(msg), ...developmentErrorArgs(error))
-    }
+    const details = getDiagnosticErrorDetails(error)
+    this.persist('error', msg, walletId, accountId, details)
+    writeDiagnosticConsoleError(
+      serializeDiagnosticArgs([`[${diagnosticSource}] ${msg}`, ...errorArgs(details)])
+    )
   }
 
   getPrefix(walletId?: string, accountId?: string): string {
@@ -139,6 +152,10 @@ class WalletLogger {
     this.accountWalletCache.clear()
     this.walletNameCache.clear()
   }
+}
+
+function errorArgs(error?: unknown): unknown[] {
+  return error === undefined ? [] : [error]
 }
 
 export const logger = new WalletLogger()

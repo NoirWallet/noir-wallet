@@ -2,8 +2,8 @@
   "schemaVersion": 3,
   "engine": "zcash",
   "packageVersion": "0.1.0",
-  "abiVersion": "zcash-wallet-cb8da9d-v1",
-  "sourceCommit": "cb8da9dc60d51dbf3958657be35427210d544541",
+  "abiVersion": "zcash-wallet-df660f6-v1",
+  "sourceCommit": "df660f6c576fee7b258c0e9c860d3226dc01ba7a",
   "artifacts": [
     {
       "path": "LICENSE.md",
@@ -32,26 +32,26 @@
     {
       "path": "zcash_wallet_wasm.d.ts",
       "role": "types",
-      "bytes": 50376,
-      "sha256": "8ec9f7e46d03495a58b94f05affa19748779525c558901f61d301aa535613630"
+      "bytes": 53564,
+      "sha256": "c4e5bb2718947a9c49016ef72da6634d5651838436936ebd5851afd5eb5a4c22"
     },
     {
       "path": "zcash_wallet_wasm.js",
       "role": "loader",
-      "bytes": 142171,
-      "sha256": "82088e60075fa3c1a3d814eefb93ecdf3f7f48a6cfcd6563bcecdcb3b4c09ace"
+      "bytes": 145917,
+      "sha256": "df9faf619f418ce57ed1d27cfd47ab2b98fa96b5b7eefc9e1dc6895c69d26970"
     },
     {
       "path": "zcash_wallet_wasm_bg.wasm",
       "role": "binary",
-      "bytes": 66472202,
-      "sha256": "0b83c3963486310a881a1ebdd24d241c0e595496b60aa1b154c853ad47f71a8e"
+      "bytes": 66590418,
+      "sha256": "b247036043dd8b783e58752b93971e32ec6fcb2b81b22af43c49be41dd71fb28"
     },
     {
       "path": "zcash_wallet_wasm_bg.wasm.d.ts",
       "role": "binary-types",
-      "bytes": 16138,
-      "sha256": "cd265e03b91e66eff50c27cb99fe0d7f13935c50ef30723c8b3a5572370cebed"
+      "bytes": 16374,
+      "sha256": "d41fd9bf6d528b1d64e1edf8135f31c42cbc460cf97bb922e24c4245cb4b4819"
     }
   ],
   "sourceRepository": "https://github.com/NoirWallet/zcash-wallet-wasm.git",
@@ -76,6 +76,8 @@
     "zcash.message.transparent.sign",
     "zcash.pczt",
     "zcash.sync",
+    "zcash.sync.rescan-range",
+    "zcash.transaction.enhance",
     "zcash.transaction.orchard-zero-indexer-broadcast",
     "zcash.transaction.sign",
     "zcash.voting.shielded"

@@ -5,8 +5,7 @@ import Big from '@/lib/big'
 import { formatBaseUnitDecimalAmount } from '@/lib/number-format'
 import {
   getPortfolioAssetUsdValue,
-  LOW_VALUE_USD_THRESHOLD,
-  withConfidentialAssetPrices
+  LOW_VALUE_USD_THRESHOLD
 } from '@/popup/services/portfolio-prices'
 import {
   addNearConfidentialZecFiat,
@@ -19,15 +18,11 @@ import {
 } from './near-confidential-holdings'
 import type { ChainFeatureFlagValue } from '@/config/multichain-feature-flags'
 import { getEvmNetworkConfigs } from '@/config/networks'
-import { MAINNET_STARTER_PORTFOLIO_ASSET_IDS } from '@/core/chains/registry/product-chain-definitions'
 import type { Network } from '@/types'
 import { isSelectableChainFamily } from './chain-selection-availability'
 import type { AssetDomain } from './asset-domains'
 
 const ASSET_FALLBACK_ORDER = ['USDC', 'USDT', 'ZEC', 'BTC', 'ETH', 'SOL', 'NEAR'] as const
-export const MAINNET_STARTER_ASSET_RANKS: ReadonlyMap<string, number> = new Map(
-  MAINNET_STARTER_PORTFOLIO_ASSET_IDS.map((assetId, rank) => [assetId, rank])
-)
 const ETHEREUM_CHAIN_IDS = new Set<string>(
   (['mainnet', 'testnet'] as const satisfies readonly Network[])
     .flatMap(network => getEvmNetworkConfigs(network))
@@ -294,7 +289,6 @@ export function buildPortfolioAssetGroups(
   prices: AssetPriceReadModel | null,
   options: {
     readonly includeZeroBalanceNativeAssets?: boolean
-    readonly starterAssetRanks?: ReadonlyMap<string, number>
     readonly confidentialZec?: NearConfidentialZecRow | null
   } = {}
 ): readonly PortfolioAssetGroup[] {
@@ -353,18 +347,6 @@ export function buildPortfolioAssetGroups(
         })
       })
       .sort((left, right) => {
-        if (options.starterAssetRanks) {
-          const leftEmpty = left.entries.every(entry => BigInt(entry.asset.balance.totalRaw) === 0n)
-          const rightEmpty = right.entries.every(
-            entry => BigInt(entry.asset.balance.totalRaw) === 0n
-          )
-          if (leftEmpty !== rightEmpty) return leftEmpty ? 1 : -1
-          if (leftEmpty) {
-            const leftRank = options.starterAssetRanks.get(left.representativeAssetId) ?? Infinity
-            const rightRank = options.starterAssetRanks.get(right.representativeAssetId) ?? Infinity
-            if (leftRank !== rightRank) return leftRank - rightRank
-          }
-        }
         const valueComparison = compareUsdValues(groupValue(left), groupValue(right))
         return valueComparison || comparePortfolioSymbolOrder(left.symbol, right.symbol)
       })
@@ -374,8 +356,7 @@ export function buildPortfolioAssetGroups(
 export function partitionPortfolioAssetGroups(
   groups: readonly PortfolioAssetGroup[],
   prices: AssetPriceReadModel | null,
-  lowValueUsdThreshold: Big,
-  starterAssetRanks?: ReadonlyMap<string, number>
+  lowValueUsdThreshold: Big
 ): Readonly<{
   primaryAssetGroups: readonly PortfolioAssetGroup[]
   lowValueAssetGroups: readonly PortfolioAssetGroup[]
@@ -387,7 +368,6 @@ export function partitionPortfolioAssetGroups(
     const onlyTokens = group.entries.every(entry => entry.asset.asset.kind === 'token')
     if (
       onlyTokens &&
-      !starterAssetRanks?.has(group.representativeAssetId) &&
       (group.entries.every(entry => BigInt(entry.asset.balance.totalRaw) === 0n) ||
         (fiat !== null && new Big(fiat).lt(lowValueUsdThreshold)))
     ) {
@@ -419,7 +399,7 @@ export function buildPortfolioDisplay({
   readonly selectedChainIds: readonly string[] | null
   readonly enabledFlags: readonly ChainFeatureFlagValue[]
 }) {
-  const prices = withConfidentialAssetPrices(sourceModel, sourcePrices)
+  const prices = sourcePrices
   const standalone =
     domain === 'all' || domain === 'shield'
       ? listStandaloneNearConfidentialHoldings(model, sourceModel, prices)
@@ -454,14 +434,8 @@ export function buildPortfolioDisplay({
         standaloneChainIds.has(chain.chain.id) ||
         getPortfolioChainBalanceStatus(chain) !== 'ready')
   )
-  const starterAssetRanks =
-    network === 'mainnet' && (domain === 'public' || domain === 'all')
-      ? MAINNET_STARTER_ASSET_RANKS
-      : undefined
   const assetGroups = buildPortfolioAssetGroups(visibleChains, prices, {
-    includeZeroBalanceNativeAssets:
-      visibleChains.length === 1 || (domain === 'public' && !starterAssetRanks),
-    starterAssetRanks,
+    includeZeroBalanceNativeAssets: visibleChains.length === 1,
     confidentialZec
   })
 
@@ -471,26 +445,19 @@ export function buildPortfolioDisplay({
     selectedChainIds,
     visibleConfidential,
     separateConfidential,
-    ...partitionPortfolioAssetGroups(
-      assetGroups,
-      prices,
-      LOW_VALUE_USD_THRESHOLD,
-      starterAssetRanks
-    ),
+    ...partitionPortfolioAssetGroups(assetGroups, prices, LOW_VALUE_USD_THRESHOLD),
     sortedChains: sortPortfolioChains(visibleChains, prices, confidentialZec),
     networkOptions: sortPortfolioChains(selectableChains, prices, confidentialZec).map(
       ({ chain }) => chain
     ),
-    pendingStarterZcash: starterAssetRanks
-      ? visibleChains.find(chain => {
-          const status = getPortfolioChainBalanceStatus(chain)
-          return (
-            chain.chain.family === 'zcash' &&
-            !chain.assets.some(({ asset }) => asset.kind === 'native') &&
-            (status === 'loading' || status === 'updating')
-          )
-        })
-      : undefined,
+    pendingZcash: visibleChains.find(chain => {
+      const status = getPortfolioChainBalanceStatus(chain)
+      return (
+        chain.chain.family === 'zcash' &&
+        !chain.assets.some(({ asset }) => asset.kind === 'native') &&
+        (status === 'loading' || status === 'updating')
+      )
+    }),
     unavailableChains: visibleChains.filter(
       chain => chain.assets.length === 0 && getPortfolioChainBalanceStatus(chain) === 'unavailable'
     ),
@@ -521,13 +488,11 @@ export function isAssetVisibleInAssetView(
   asset: PortfolioAssetView,
   options: {
     readonly includeZeroBalanceNativeAssets?: boolean
-    readonly starterAssetRanks?: ReadonlyMap<string, number>
   } = {}
 ): boolean {
   if (BigInt(asset.balance.totalRaw) !== 0n) return true
   if (asset.asset.kind === 'token') return true
   if (options.includeZeroBalanceNativeAssets) return true
-  if (options.starterAssetRanks) return options.starterAssetRanks.has(asset.asset.id)
 
   const symbol = asset.metadata.symbol.toUpperCase()
   if (chain.family === 'zcash' && symbol === 'ZEC') return true

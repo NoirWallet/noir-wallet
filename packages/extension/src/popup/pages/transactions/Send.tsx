@@ -61,7 +61,7 @@ import { useSettingsStore } from '@/store/settings-store'
 import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-settings'
 import { getZcashChainId } from '@/core/chains/registry'
 import { usePortfolioSnapshot } from '@/popup/hooks/usePortfolioSnapshot'
-import { assetPriceClient } from '@/popup/services/asset-price-client'
+import { useAssetPrices, useZcashUsdPrice } from '@/popup/hooks/useAssetPrices'
 import { offerSaveRecipient } from '@/popup/services/save-recipient-prompt'
 import {
   buildSendAssetSelectionModel,
@@ -593,7 +593,7 @@ function SendAssetFlow() {
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
-  const zecPrice = useWalletStore(state => state.zecPrice)
+  const zecPrice = useZcashUsdPrice(currentNetwork)
   const chainEndpointRuntimeKey = useSettingsStore(state =>
     getChainEndpointRuntimeKey(state.chainEndpointSettings)
   )
@@ -601,10 +601,6 @@ function SendAssetFlow() {
   const currentWallet = useWalletStore(state => state.getCurrentWallet())
   const currentAccount = useWalletStore(state => state.getCurrentAccount())
   const appliedRequestedAssetRef = useRef<string | null>(null)
-  const [assetPriceSnapshot, setAssetPriceSnapshot] = useState<{
-    scopeKey: string
-    value: AssetPriceReadModel | null
-  } | null>(null)
   const [selectionSnapshot, setSelectionSnapshot] = useState<{
     scopeKey: string
     entryKey: string
@@ -749,7 +745,6 @@ function SendAssetFlow() {
   const activeCrossChainSend = crossChainSession?.key === sendEntryKey ? crossChainSession : null
   const navigationSnapshot = location.state as {
     initialPortfolio?: PortfolioReadModel | null
-    initialPrices?: AssetPriceReadModel | null
     walletId?: string | null
     accountId?: string | null
     network?: string
@@ -925,34 +920,11 @@ function SendAssetFlow() {
     : !entryScopeValid
       ? () => navigate(shieldActive ? '/?domain=shield' : '/', { replace: true })
       : goBack
-  const initialPortfolio =
-    navigationSnapshot?.walletId === effectiveWalletId &&
-    navigationSnapshot?.accountId === effectiveAccountId &&
-    navigationSnapshot?.network === currentNetwork &&
-    navigationSnapshot?.endpointRuntimeKey === chainEndpointRuntimeKey &&
-    isPortfolioModelForScope(
-      navigationSnapshot?.initialPortfolio ?? null,
-      effectiveWalletId,
-      effectiveAccountId
-    )
-      ? navigationSnapshot.initialPortfolio
-      : null
   const visibleModel = model
   const loadingSendAssets = accountLoading || loadStatus === 'loading'
   const sendAssetsError =
     !loadingSendAssets && !visibleModel && (loadStatus === 'error' || !effectiveAccount)
-  const initialPrices =
-    initialPortfolio && navigationSnapshot?.initialPrices?.status !== 'error'
-      ? (navigationSnapshot?.initialPrices ?? null)
-      : null
-  const cachedPrices = assetPriceSnapshot?.scopeKey === scopeKey ? assetPriceSnapshot.value : null
-  const assetPrices =
-    cachedPrices &&
-    (!initialPrices ||
-      (cachedPrices.fetchedAt >= initialPrices.fetchedAt &&
-        cachedPrices.quotes.length >= initialPrices.quotes.length))
-      ? cachedPrices
-      : initialPrices
+  const assetPrices = useAssetPrices(currentNetwork)
   const availableShieldProviders: ShieldProvider[] = [
     ...(confidentialEnabled ? (['near-confidential'] as const) : []),
     ...(shieldedZcashAvailable ? (['zcash-shield'] as const) : [])
@@ -976,20 +948,6 @@ function SendAssetFlow() {
     setSubmission(null)
     setAssetPickerState(null)
   }, [effectiveWalletId, effectiveAccountId, chainEndpointRuntimeKey])
-
-  useEffect(() => {
-    let cancelled = false
-    void assetPriceClient
-      .getPrices('read')
-      .then(prices => {
-        if (!cancelled && prices && prices.status !== 'error' && prices.quotes.length > 0)
-          setAssetPriceSnapshot({ scopeKey, value: prices })
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [scopeKey])
 
   const assets = useMemo<readonly SendAsset[]>(() => {
     if (!visibleModel) return []
@@ -1608,9 +1566,11 @@ function SendAssetFlow() {
                 policy="funded"
                 balancesHidden={nearPicker?.balancesHidden ?? false}
                 selectedKey={
-                  currentSession.shieldProvider === 'zcash-shield'
-                    ? 'zcash:shielded'
-                    : nearPicker?.selectedAssetId
+                  sourcePicker.initial
+                    ? undefined
+                    : currentSession.shieldProvider === 'zcash-shield'
+                      ? 'zcash:shielded'
+                      : nearPicker?.selectedAssetId
                 }
                 onSelect={item => {
                   if (item.zcashFundingSource) selectZcash(item.zcashFundingSource)

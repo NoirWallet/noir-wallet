@@ -365,7 +365,11 @@ function DAppTransactionReview({
         title={feeRow.title ?? feeRow.value}
         className="font-sans text-sm tabular-nums text-foreground/90"
       >
-        {feeRow.value}
+        {feeRow.amount?.profile === 'fee' ? (
+          <AmountDisplay value={feeRow.amount.value} symbol={feeRow.amount.symbol} profile="fee" />
+        ) : (
+          feeRow.value
+        )}
       </span>
     ) : undefined)
   const detailSections = model.sections

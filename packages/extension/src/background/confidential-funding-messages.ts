@@ -82,11 +82,16 @@ const handlers = {
     coordinator.prepare(message.request),
   PREVIEW_CONFIDENTIAL_FUNDING: (
     { coordinator }: FundingContext,
-    message: PrepareMessage & Readonly<{ clusterFeeOnly?: boolean }>
-  ) =>
-    message.clusterFeeOnly
+    message: PrepareMessage & Readonly<{ clusterFeeOnly?: boolean; depositMaximum?: string }>
+  ) => {
+    if (message.depositMaximum !== undefined) {
+      if (message.clusterFeeOnly) throw new Error('Confidential preview is ambiguous')
+      return coordinator.previewPrivateDepositMaximum(message.request, message.depositMaximum)
+    }
+    return message.clusterFeeOnly
       ? coordinator.preview(message.request, true)
-      : coordinator.preview(message.request),
+      : coordinator.preview(message.request)
+  },
   CREATE_EXTERNAL_SHIELD_DEPOSIT: (
     { coordinator }: FundingContext,
     message: Readonly<{ request: CreateExternalShieldDepositInput }>

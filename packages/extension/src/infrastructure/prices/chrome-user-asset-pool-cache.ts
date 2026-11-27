@@ -1,3 +1,4 @@
+import type { ChromeAssetPriceCacheScope } from './chrome-asset-price-cache-scope'
 import {
   parseDiscoveredDexPoolMapping,
   type DiscoveredDexPoolMapping,
@@ -42,11 +43,12 @@ function emptySnapshot(): UserAssetDexPoolCacheSnapshot {
 }
 
 export class ChromeUserAssetDexPoolCacheRepository implements UserAssetDexPoolCacheRepository {
+  constructor(private readonly scope: ChromeAssetPriceCacheScope) {}
+
   private mutationQueue: Promise<void> = Promise.resolve()
 
   private async readSnapshot(): Promise<UserAssetDexPoolCacheSnapshot> {
-    const result = await chrome.storage.local.get(USER_ASSET_DEX_POOL_CACHE_STORAGE_KEY)
-    const stored = result[USER_ASSET_DEX_POOL_CACHE_STORAGE_KEY]
+    const stored = await this.scope.read(USER_ASSET_DEX_POOL_CACHE_STORAGE_KEY)
     return stored === undefined ? emptySnapshot() : parseUserAssetDexPoolCacheSnapshot(stored)
   }
 
@@ -73,11 +75,9 @@ export class ChromeUserAssetDexPoolCacheRepository implements UserAssetDexPoolCa
       if (mappings.length > MAXIMUM_MAPPING_COUNT) {
         mappings.length = MAXIMUM_MAPPING_COUNT
       }
-      await chrome.storage.local.set({
-        [USER_ASSET_DEX_POOL_CACHE_STORAGE_KEY]: {
-          version: CACHE_VERSION,
-          mappings
-        }
+      await this.scope.write(USER_ASSET_DEX_POOL_CACHE_STORAGE_KEY, {
+        version: CACHE_VERSION,
+        mappings
       })
     })
   }
@@ -88,14 +88,12 @@ export class ChromeUserAssetDexPoolCacheRepository implements UserAssetDexPoolCa
       const mappings = snapshot.mappings.filter(mapping => mapping.assetId !== assetId)
       if (mappings.length === snapshot.mappings.length) return
       if (mappings.length === 0) {
-        await chrome.storage.local.remove(USER_ASSET_DEX_POOL_CACHE_STORAGE_KEY)
+        await this.scope.remove(USER_ASSET_DEX_POOL_CACHE_STORAGE_KEY)
         return
       }
-      await chrome.storage.local.set({
-        [USER_ASSET_DEX_POOL_CACHE_STORAGE_KEY]: {
-          version: CACHE_VERSION,
-          mappings
-        }
+      await this.scope.write(USER_ASSET_DEX_POOL_CACHE_STORAGE_KEY, {
+        version: CACHE_VERSION,
+        mappings
       })
     })
   }

@@ -44,15 +44,49 @@ describe('Build-channel logging', () => {
     )
   })
 
-  it('removes every console and debugger diagnostic from production bundles', () => {
+  it('strips raw console calls and debugger statements from production bundles', () => {
     assert.match(
       viteConfigSource,
       /drop:\s*debugLogsEnabled\s*\?\s*\[\]\s*:\s*\['console',\s*'debugger'\]/,
-      'production builds must remove all console calls and debugger statements'
+      'production builds must remove raw console calls and debugger statements'
     )
     assert.ok(viteConfigSource.includes("name: 'strip-production-diagnostic-callbacks'"))
     assert.ok(viteConfigSource.includes('generateBundle(_options, bundle)'))
     assert.match(viteConfigSource, /\.catch\\\(\\s\*console\\\./)
+  })
+
+  it('keeps error diagnostics in production and redacts them at both destinations', async () => {
+    const previousDebugFlag = Object.getOwnPropertyDescriptor(globalThis, '__DEBUG_LOGS__')
+    const originalError = console.error
+    const output = []
+    Object.defineProperty(globalThis, '__DEBUG_LOGS__', { value: false, configurable: true })
+    const { logger: productionLogger } = await import('../../../src/lib/logger.ts?production')
+    const recorded = new Promise(resolve => productionLogger.configureDiagnostics(resolve))
+    console.error = (...args) => output.push(args)
+    try {
+      const cause = Object.assign(
+        new Error('Request failed for 1.25 USDC; password=example-secret'),
+        {
+          status: 503,
+          businessCode: 'UNAVAILABLE',
+          request: { privatePayload: 'secret-payload' }
+        }
+      )
+      productionLogger.error('Shield confirmation failed', undefined, undefined, cause)
+      const entry = await recorded
+      assert.equal(entry.level, 'error')
+      assert.equal(output.length, 1)
+      assert.equal(output[0][0], '[Noir diagnostic]')
+      for (const message of [entry.message, output[0][1]]) {
+        assert.match(message, /Shield confirmation failed.*UNAVAILABLE.*503/)
+        assert.doesNotMatch(message, /1\.25|example-secret|secret-payload/)
+      }
+    } finally {
+      productionLogger.configureDiagnostics(null)
+      console.error = originalError
+      if (previousDebugFlag) Object.defineProperty(globalThis, '__DEBUG_LOGS__', previousDebugFlag)
+      else delete globalThis.__DEBUG_LOGS__
+    }
   })
 
   it('uses the deployed EVM history proxy by default in every build channel', () => {

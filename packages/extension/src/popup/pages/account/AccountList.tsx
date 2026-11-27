@@ -1,3 +1,5 @@
+import { logger } from '@/lib/logger'
+import { useZcashUsdPrice } from '@/popup/hooks/useAssetPrices'
 import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
 import { Button } from '../../components/ui/button'
@@ -126,7 +128,8 @@ function AccountChainIcons({ networks }: { networks: readonly AccountNetworkView
 export function AccountList() {
   const { navigate, replace } = useNavigate()
   const { alert, confirm } = useDialog()
-  const { wallets, accountDisplayNames, currentNetwork, zecPrice } = useWalletStore()
+  const { wallets, accountDisplayNames, currentNetwork } = useWalletStore()
+  const zecPrice = useZcashUsdPrice(currentNetwork)
   const portfolioValues = useAccountDataStore(state => state.portfolioValues)
   const zcashBalances = useAccountDataStore(state => state.balances)
   const balancesHidden = useSettingsStore(state => state.balancesHidden)
@@ -222,7 +225,7 @@ export function AccountList() {
       await loadWallets()
       replace('/')
     } catch (error) {
-      console.error('Failed to switch account:', error)
+      logger.error('Failed to switch account', undefined, undefined, error)
       if (isWalletLockedError(error)) {
         replace('/unlock?redirect=%2Faccount-list')
         return
@@ -356,7 +359,7 @@ export function AccountList() {
       await zcashWalletRuntimeClient.switchAccount(walletId, accountId)
       replace('/')
     } catch (e) {
-      console.error('Failed to add account:', e)
+      logger.error('Failed to add account', undefined, undefined, e)
       await alert({
         title: accountCreated ? 'Unable to switch account' : 'Account setup incomplete',
         message:

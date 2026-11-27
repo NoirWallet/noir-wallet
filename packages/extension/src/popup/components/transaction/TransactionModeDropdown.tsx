@@ -65,7 +65,11 @@ export function TransactionModeDropdown({
           }}
         >
           {options.map(mode => (
-            <DropdownMenuRadioItem key={mode} value={mode} className="min-h-10 justify-center px-8">
+            <DropdownMenuRadioItem
+              key={mode}
+              value={mode}
+              className="min-h-10 justify-center px-8 hover:bg-wallet-selected focus:bg-wallet-selected"
+            >
               {getLabel(mode)}
             </DropdownMenuRadioItem>
           ))}

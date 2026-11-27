@@ -382,8 +382,17 @@ test.describe('Bitcoin Esplora client', () => {
       expectRpcError(await captureError(failedClient.getTipHeight()), code)
     }
 
+    let rateLimitBodyCancelled = false
     const limited = scriptedFetch([
-      () => new Response('', { status: 429, headers: { 'Retry-After': '120' } })
+      () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              rateLimitBodyCancelled = true
+            }
+          }),
+          { status: 429, headers: { 'Retry-After': '120' } }
+        )
     ])
     const limitedClient = createBitcoinEsploraClient(
       { chainId: MAINNET, baseUrl: 'https://bitcoin.example/api' },
@@ -392,6 +401,7 @@ test.describe('Bitcoin Esplora client', () => {
     const limitedError = await captureError(limitedClient.getTipHeight())
     expectRpcError(limitedError, 'rate-limited')
     expect(limitedError.retryAfterMs).toBe(120_000)
+    expect(rateLimitBodyCancelled).toBe(true)
   })
 
   test('bounds responses and distinguishes cancellation from timeout', async () => {

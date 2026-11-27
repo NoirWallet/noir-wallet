@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { InlineError } from '@/popup/components/common/InlineError'
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -598,7 +599,7 @@ export function Approval() {
           success: false
         })
       } catch (err) {
-        console.error('Failed to send rejection:', err)
+        logger.error('Failed to send rejection', undefined, undefined, err)
       }
       window.close()
       return
@@ -709,7 +710,7 @@ export function Approval() {
         chrome.runtime.onMessage.removeListener(resultListenerRef.current)
         resultListenerRef.current = null
       }
-      console.error('Failed to send decision:', err)
+      logger.error('Failed to send decision', undefined, undefined, err)
       setError(classifyError(err).userMessage)
       setIsLoading(false)
       decisionInFlight.current = false

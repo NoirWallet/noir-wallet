@@ -571,6 +571,21 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
       birthdayHeight: isPositiveBirthdayHeight
     }
   },
+  RESCAN_ZCASH_TRANSACTION: {
+    required: {
+      walletId: isShortString,
+      accountId: isShortString,
+      txid: value => typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value.trim())
+    }
+  },
+  RESCAN_ZCASH_RANGE: {
+    required: {
+      walletId: isShortString,
+      accountId: isShortString,
+      startHeight: isPositiveBirthdayHeight,
+      endHeight: isPositiveBirthdayHeight
+    }
+  },
   GET_ZCASH_SEED_PHRASE: {
     required: { password: isLegacyPasswordString },
     optional: { walletId: isShortString }
@@ -634,7 +649,9 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   GET_WALLET_SESSION_STATE: {},
   CHECK_WALLET_AUTO_LOCK: {},
-  GET_BACKGROUND_INITIALIZATION_STATE: {},
+  GET_BACKGROUND_INITIALIZATION_STATE: {
+    optional: { includeZcashRecovery: value => typeof value === 'boolean' }
+  },
   GET_NETWORK_MODE: {},
   GET_ZERO_INDEXER_OPTIONS: { required: { network: isNetworkMode } },
   GET_ZERO_INDEXER_ENABLED: {},
@@ -648,6 +665,14 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   GET_EXTENSION_DISPLAY_MODE: {},
   SET_EXTENSION_DISPLAY_MODE: { required: { sidePanelMode: isBoolean } },
   SWITCH_NETWORK_MODE: { required: { networkMode: isNetworkMode } },
+  CLEAR_EVM_ACTIVITY: {
+    required: {
+      networkMode: isNetworkMode,
+      chainId: isEvmChainId,
+      walletId: isShortString,
+      accountId: isShortString
+    }
+  },
   GET_ACTIVITY: {
     optional: {
       action: isPortfolioAction,
@@ -660,8 +685,8 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   },
   GET_BITCOIN_ACTIVITY: { optional: { action: isPortfolioAction } },
   GET_BITCOIN_WALLET_IDENTITY: {},
-  GET_ASSET_PRICES: {
-    required: { action: isPortfolioAction },
+  REFRESH_ASSET_PRICES: {
+    required: { network: value => value === 'mainnet' || value === 'testnet' },
     optional: { assetId: isShortString }
   },
   GET_TOKEN_CONTRACT_ICON: {
@@ -734,7 +759,10 @@ const TRUSTED_RUNTIME_SCHEMAS: Readonly<Record<string, RuntimeMessageSchema>> = 
   PREPARE_CONFIDENTIAL_FUNDING: { required: { request: isRecord } },
   PREVIEW_CONFIDENTIAL_FUNDING: {
     required: { request: isRecord },
-    optional: { clusterFeeOnly: isBoolean }
+    optional: {
+      clusterFeeOnly: isBoolean,
+      depositMaximum: value => typeof value === 'string' && /^(0|[1-9]\d{0,77})$/.test(value)
+    }
   },
   CREATE_EXTERNAL_SHIELD_DEPOSIT: { required: { request: isRecord } },
   GET_EXTERNAL_SHIELD_DEPOSIT: { required: { depositId: isShortString } },
@@ -1138,6 +1166,8 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     IMPORT_PRIVATE_KEY_WALLET: ['extension-page'],
     EXPORT_PRIVATE_KEY: ['extension-page'],
     RESYNC_ZCASH_WALLET: ['extension-page'],
+    RESCAN_ZCASH_TRANSACTION: ['extension-page'],
+    RESCAN_ZCASH_RANGE: ['extension-page'],
     GET_ZCASH_SEED_PHRASE: ['extension-page'],
     GET_ZCASH_BLOCK_BY_TIME: ['extension-page'],
     GET_ZCASH_BLOCK_TIME: ['extension-page'],
@@ -1174,10 +1204,11 @@ const TRUSTED_RUNTIME_CONTEXTS: Readonly<Record<string, readonly OwnExtensionSen
     COMPLETE_ACCOUNT_INCOGNITO_SETUP: ['extension-page'],
     SET_DAPP_EXECUTION_MODE: ['extension-page'],
     SWITCH_NETWORK_MODE: ['extension-page'],
+    CLEAR_EVM_ACTIVITY: ['extension-page'],
     GET_ACTIVITY: ['extension-page'],
     GET_BITCOIN_ACTIVITY: ['extension-page'],
     GET_BITCOIN_WALLET_IDENTITY: ['extension-page'],
-    GET_ASSET_PRICES: ['extension-page'],
+    REFRESH_ASSET_PRICES: ['extension-page'],
     GET_TOKEN_CONTRACT_ICON: ['extension-page'],
     GET_RHEA_SWAP_TOKENS: ['extension-page'],
     QUOTE_RHEA_SWAP: ['extension-page'],

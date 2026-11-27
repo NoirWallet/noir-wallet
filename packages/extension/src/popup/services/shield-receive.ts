@@ -1,4 +1,5 @@
 import { getZcashChainId, type ChainDefinition } from '@/core/chains/registry'
+import { supportsEvmPrivateExecution } from '@/core/chains/evm'
 import type { PortfolioReadModel } from '@/core/portfolio'
 import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
 import { resolveSwapTokenIconUrl, type SwapToken } from '@/core/services/intents-api'
@@ -9,7 +10,7 @@ import type { Network } from '@/types/wallet'
 import type { AccountNetworksView } from './account-networks-client'
 import { getAssetDomainRaw, type ShieldProvider } from './asset-domains'
 import { getShieldTransferChainIds } from './shield-transfer'
-import { listDepositTokenChoices } from './shield-deposit-options'
+import { depositSourceNetworks, listDepositTokenChoices } from './shield-deposit-options'
 import { listExternalShieldReceiveAssets } from './shield-deposit-route'
 import { parseTokenBalanceDecimal } from './token-balance-format'
 import { sortTokenPickerRows } from './token-selector-visibility'
@@ -38,7 +39,12 @@ export interface ShieldReceiveToken {
 }
 
 export function canReceiveNearShield(network: Network, account: AccountNetworksView): boolean {
-  return getShieldTransferChainIds(account, network === 'mainnet').length > 0
+  if (!supportsEvmPrivateExecution(account.walletSource)) return false
+  const signingChains = getShieldTransferChainIds(account, network === 'mainnet')
+  return (
+    signingChains.length > 0 &&
+    depositSourceNetworks().some(chain => signingChains.includes(chain.id))
+  )
 }
 
 export function listShieldReceiveTokens(
@@ -132,10 +138,7 @@ export function sortShieldReceiveTokens(
         : native
           ? getAssetDomainRaw(native, 'shield')
           : null
-      const price =
-        [findAssetPrice(prices, route.assetId)?.priceUsd, holding?.priceUsd, catalogAsset?.price]
-          .map(parseTokenBalanceDecimal)
-          .find(value => value?.gt(0)) ?? null
+      const price = parseTokenBalanceDecimal(findAssetPrice(prices, route.assetId)?.priceUsd)
       if (raw === null) continue
       const quantity = new Big(
         formatBaseUnitDecimalAmount(raw, catalogAsset?.decimals ?? ZEC_DECIMALS)

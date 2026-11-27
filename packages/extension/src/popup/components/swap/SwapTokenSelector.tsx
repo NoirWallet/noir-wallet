@@ -1,3 +1,4 @@
+import { findCatalogPrice } from '@/core/prices/catalog-price-identity'
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RHEA_SWAP_CHAIN_CATALOG, type RheaSwapToken } from '@/core/services/rhea-swap'
 import { isZecToken, type SwapToken } from '@/core/services/intents-api'
@@ -23,11 +24,10 @@ import { buildWalletSwapSourceBalances } from '@/popup/services/swap-page-model'
 import { resolveAccountAvailableRaw } from '@/popup/services/transfer-availability'
 import { filterManuallyHiddenSwapTokens } from '@/popup/services/swap-token-visibility'
 import { useManagedTokenCatalog } from '@/popup/hooks/useManagedTokenCatalog'
-import { useCachedAssetPrices } from '@/popup/hooks/useCachedAssetPrices'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { findAssetPrice } from '@/core/prices'
 import { ZEC_ZCASH_ASSET } from '@/config/intents'
 import { resolveRheaSwapCanonicalAssetId } from '@/core/services/rhea-swap/rhea-swap-asset-identity'
-import { safeBig } from '@/lib/big'
 import {
   getSwapCatalogDisplaySeeds,
   mergeTokenCatalogs,
@@ -331,13 +331,12 @@ export function SwapTokenSelector({
     [resolvedItems.tokens, scopedPortfolio, scopedReceiveTargets, zcashAvailable, evmExecutionMode]
   )
   const network = scopeNetwork ?? activeNetwork
-  const prices = useCachedAssetPrices(network, !!balanceScope)
+  const prices = useAssetPrices(network)
   const pricesByTokenKey = useMemo(() => {
     if (!prices || !balances) return undefined
     const displayPrices = new Map<string, string>()
     const zecAssetId = resolveRheaSwapCanonicalAssetId(ZEC_ZCASH_ASSET, network)
     for (const token of resolvedItems.tokens) {
-      if (!balances.has(token.assetId)) continue
       const evmChainId = /^[1-9]\d*$/.test(token.rheaChainId) ? `eip155:${token.rheaChainId}` : null
       const assetId = isZecToken(token)
         ? zecAssetId
@@ -352,11 +351,13 @@ export function SwapTokenSelector({
                     asset.reference === token.contractAddress?.toLowerCase())
             )?.asset.id
           : resolveRheaSwapCanonicalAssetId(token.assetId, network)
-      const price = assetId ? findAssetPrice(prices, assetId)?.priceUsd : undefined
-      if (price && safeBig(price).gt(0)) displayPrices.set(swapTokenKey(token), price)
+      const price =
+        (assetId ? findAssetPrice(prices, assetId) : null) ??
+        findCatalogPrice(prices, token, network)
+      if (price) displayPrices.set(swapTokenKey(token), price.priceUsd)
     }
     return displayPrices
-  }, [balances, network, prices, resolvedItems.tokens, scopedAccountPortfolio])
+  }, [network, prices, resolvedItems.tokens, scopedAccountPortfolio])
   const defaultTokens = useMemo(
     () =>
       resolvedItems.tokens.filter(

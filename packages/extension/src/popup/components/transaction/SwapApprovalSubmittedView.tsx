@@ -20,6 +20,8 @@ export function SwapApprovalSubmittedView({
   error,
   continuingAutomatically,
   awaitingHardwareSignature,
+  onReturnToSigning,
+  signingError,
   onContinue,
   onOpenActivity
 }: {
@@ -33,6 +35,8 @@ export function SwapApprovalSubmittedView({
   error: string | null
   continuingAutomatically: boolean
   awaitingHardwareSignature: boolean
+  onReturnToSigning?: () => void
+  signingError?: string | null
   onContinue: () => void
   onOpenActivity: () => void
 }) {
@@ -53,12 +57,18 @@ export function SwapApprovalSubmittedView({
       footer={
         <div className="w-full space-y-2">
           {error && <TransactionNotice message={error} />}
+          {!error && signingError && <TransactionNotice message={signingError} />}
+          {!error && awaitingHardwareSignature && onReturnToSigning && (
+            <Button className="h-[45px] w-full" onClick={onReturnToSigning}>
+              Return to signing
+            </Button>
+          )}
           {!error && !awaitingHardwareSignature && (
             <p className="text-center text-xs text-muted" role="status">
               Waiting for token approval
             </p>
           )}
-          {!continuingAutomatically && !awaitingHardwareSignature && (
+          {!continuingAutomatically && (!awaitingHardwareSignature || error) && (
             <Button
               className="h-[45px] w-full"
               onClick={onContinue}

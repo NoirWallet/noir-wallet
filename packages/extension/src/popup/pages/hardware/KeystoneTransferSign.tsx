@@ -19,6 +19,7 @@ import { DetailRow } from '@/popup/components/common/DetailRow'
 import { useLocation } from '@/popup/provider/Router'
 import { ListSkeleton, Skeleton } from '@/popup/components/ui/skeleton'
 import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
+import { focusHardwareSignOrigin } from '@/lib/hardware-sign-launcher'
 import { logger } from '@/lib/logger'
 import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 
@@ -214,6 +215,7 @@ function KeystoneTransferSigning<SigningId extends string>({
     if (signingId && shouldReject) {
       await client.rejectTransfer(signingId).catch(() => {})
     }
+    await focusHardwareSignOrigin().catch(() => false)
     window.close()
   }
 

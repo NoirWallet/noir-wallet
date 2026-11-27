@@ -19,6 +19,7 @@ export interface ChainSelectorOption {
 interface ChainSelectorProps {
   readonly open: boolean
   readonly onOpenChange: (open: boolean) => void
+  readonly onCloseAutoFocus?: (event: Event) => void
   readonly options: readonly ChainSelectorOption[]
   readonly selectedId?: string | null
   readonly onSelect: (id: string) => void | Promise<void>
@@ -29,11 +30,13 @@ interface ChainSelectorProps {
   readonly error?: string
   readonly onRetry?: () => void
   readonly enabledFirst?: boolean
+  readonly dialogClassName?: string
 }
 
 export function ChainSelector({
   open,
   onOpenChange,
+  onCloseAutoFocus,
   options,
   selectedId,
   onSelect,
@@ -43,7 +46,8 @@ export function ChainSelector({
   allowSelectionWhileLoading = false,
   error,
   onRetry,
-  enabledFirst = false
+  enabledFirst = false,
+  dialogClassName
 }: ChainSelectorProps) {
   const [search, setSearch] = useState('')
   const [pendingId, setPendingId] = useState<string | null>(null)
@@ -86,8 +90,9 @@ export function ChainSelector({
         position="bottom"
         showCloseButton={false}
         scroll="body"
-        className="gap-0 p-0"
+        className={cn('gap-0 p-0', dialogClassName)}
         onOpenAutoFocus={event => event.preventDefault()}
+        onCloseAutoFocus={onCloseAutoFocus}
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>
         <DialogDescription className="sr-only">Choose a network</DialogDescription>

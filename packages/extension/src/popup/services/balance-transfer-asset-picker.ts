@@ -83,13 +83,7 @@ export function listBalanceTransferAssetPickerRows(input: {
         : getTransferDomainBalanceRaw(item.asset, input.from)
     if (sourceRaw === null || (!input.includeEmpty && BigInt(sourceRaw) === 0n)) return []
 
-    const priceUsd =
-      findAssetPrice(input.prices, item.asset.asset.id)?.priceUsd ??
-      (managed
-        ? input.portfolio?.confidential?.assets.find(
-            holding => holding.protocolAssetId === managed.protocolAssetId
-          )?.priceUsd
-        : undefined)
+    const priceUsd = findAssetPrice(input.prices, item.asset.asset.id)?.priceUsd
     const valueUsd = priceUsd
       ? new Big(formatBaseUnitDecimalAmount(sourceRaw, item.asset.metadata.decimals))
           .times(priceUsd)

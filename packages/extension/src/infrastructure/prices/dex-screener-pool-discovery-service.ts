@@ -1,6 +1,6 @@
 import { DEFAULT_REQUEST_TIMEOUT_MS } from '@/config/extension'
 import Big from 'big.js'
-import { readBoundedResponseText } from '@/lib/fetch-utils'
+import { fetchJsonWithTimeout } from '@/lib/fetch-utils'
 import type { UserAssetDexPoolDiscoveryPolicy } from '@/config/user-asset-market-policy'
 import { parseAssetId, parseChainId } from '@/core/chains/registry'
 import { DedupPromise } from '@/lib/async-utils'
@@ -206,14 +206,6 @@ export function parseDiscoveredDexPoolMapping(value: unknown): DiscoveredDexPool
   })
 }
 
-async function readBoundedResponse(response: Response, maximumBytes: number): Promise<string> {
-  return readBoundedResponseText(
-    response,
-    maximumBytes,
-    () => new Error('Pool discovery response exceeds the allowed size')
-  )
-}
-
 function parseCandidate(
   value: unknown,
   tokenAddress: string,
@@ -327,7 +319,6 @@ function cachedMappingMatches(
 }
 
 export class DexScreenerPoolDiscoveryService {
-  private readonly fetchImplementation: typeof fetch
   private readonly now: () => number
   private readonly timeoutMs: number
   private readonly maximumResponseBytes: number
@@ -335,8 +326,6 @@ export class DexScreenerPoolDiscoveryService {
   private readonly unavailableUntil = new Map<string, { observedAt: number; expiresAt: number }>()
 
   constructor(private readonly options: DexScreenerPoolDiscoveryServiceOptions) {
-    const fetchImplementation = options.fetch ?? globalThis.fetch.bind(globalThis)
-    this.fetchImplementation = (input, init) => fetchImplementation(input, init)
     this.now = options.now ?? Date.now
     this.timeoutMs = options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.maximumResponseBytes = options.maximumResponseBytes ?? DEFAULT_MAXIMUM_RESPONSE_BYTES
@@ -414,10 +403,8 @@ export class DexScreenerPoolDiscoveryService {
       cached = null
     }
 
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
-      const response = await this.fetchImplementation(
+      const value = await fetchJsonWithTimeout(
         `${DEX_SCREENER_TOKEN_PAIRS_URL}/${encodeURIComponent(policy.dexScreenerChainId)}/${encodeURIComponent(tokenAddress)}`,
         {
           method: 'GET',
@@ -425,15 +412,11 @@ export class DexScreenerPoolDiscoveryService {
           credentials: 'omit',
           redirect: 'error',
           referrerPolicy: 'no-referrer',
-          signal: controller.signal
+          fetcher: this.options.fetch,
+          timeoutMs: this.timeoutMs,
+          maxBytes: this.maximumResponseBytes
         }
       )
-      if (!response.ok) {
-        this.unavailableUntil.delete(assetId)
-        return Object.freeze({ status: 'failed' })
-      }
-      const text = await readBoundedResponse(response, this.maximumResponseBytes)
-      const value = JSON.parse(text) as unknown
       if (!Array.isArray(value) || value.length > MAXIMUM_PAIR_COUNT) {
         throw new Error('Invalid Pool discovery response')
       }
@@ -483,8 +466,6 @@ export class DexScreenerPoolDiscoveryService {
     } catch {
       this.unavailableUntil.delete(assetId)
       return Object.freeze({ status: 'failed' })
-    } finally {
-      clearTimeout(timeout)
     }
   }
 }

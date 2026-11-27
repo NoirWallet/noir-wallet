@@ -2,10 +2,8 @@
  * NEAR Intents API service for cross-chain swap quotes and status tracking
  */
 
+import { logger } from '@/lib/logger'
 import {
-  ZEC_ZCASH_ASSET,
-  WNEAR_NEAR_ASSET,
-  ONE_CLICK_TOKEN_CATALOG_URL,
   RHEA_TOKEN_ICONS_API,
   NOIR_SWAP_APP_FEES,
   NOIR_SWAP_REFERRAL,
@@ -24,6 +22,7 @@ import { formatUnits } from 'viem'
 import type { QuoteBinding } from '@/types/wallet'
 import { parseOneClickDepositMemo, type OneClickViewer } from './near-intents/one-click-order'
 import { requestOneClickQuote } from './near-intents/one-click-quote'
+import { fetchOneClickTokenCatalog } from './near-intents/one-click-token-catalog'
 
 const COINGECKO_MARKETS_API = 'https://api.coingecko.com/api/v3/coins/markets'
 const WALLET_TOKEN_BLOCKCHAINS = new Set(['sol', 'near'])
@@ -608,8 +607,7 @@ function enrichTokenIcons(tokens: SwapToken[]): SwapToken[] {
 }
 
 async function fetchAllTokens(): Promise<SwapToken[]> {
-  const response = await fetchWithTimeout(ONE_CLICK_TOKEN_CATALOG_URL)
-  const tokens = parseSwapTokenCatalogResponse(await response.json())
+  const tokens = parseSwapTokenCatalogResponse(await fetchOneClickTokenCatalog())
   tokenCache = enrichTokenIcons(tokens)
   tokenCacheTime = Date.now()
   return tokenCache
@@ -624,23 +622,18 @@ export function refreshSwapTokenCatalog(): Promise<SwapToken[]> {
 /**
  * Fetches the full swap token list (with USD prices) from the 1Click API.
  * Cached with a TTL; concurrent callers share one in-flight request.
- * Pass `forceRefresh` to bypass the cache — used by price polling.
  */
-export async function fetchSwapTokens(forceRefresh = false): Promise<SwapToken[]> {
+export async function fetchSwapTokens(): Promise<SwapToken[]> {
   assertMainnetProtocolFeature('Swap')
   const now = Date.now()
-  if (
-    !forceRefresh &&
-    tokenCache.length > 0 &&
-    now - tokenCacheTime < INTENTS_SWAP_TOKEN_CATALOG_TTL_MS
-  ) {
+  if (tokenCache.length > 0 && now - tokenCacheTime < INTENTS_SWAP_TOKEN_CATALOG_TTL_MS) {
     return tokenCache
   }
 
   try {
     return await refreshSwapTokenCatalog()
   } catch (error) {
-    console.error('Error fetching swap tokens:', error)
+    logger.error('Error fetching swap tokens', undefined, undefined, error)
     return tokenCache.length > 0 ? tokenCache : []
   }
 }
@@ -650,32 +643,6 @@ export async function fetchSwapTokens(forceRefresh = false): Promise<SwapToken[]
  */
 export function getCachedTokens(): SwapToken[] {
   return tokenCache
-}
-
-/**
- * Gets the ZEC token from the token list, prioritizing native ZEC
- */
-export function getZecToken(tokens: SwapToken[]): SwapToken | null {
-  return (
-    tokens.find(t => t.blockchain === 'zec' || t.blockchain === 'zcash') ||
-    tokens.find(t => t.symbol === 'ZEC' && t.assetId === ZEC_ZCASH_ASSET) ||
-    null
-  )
-}
-
-/**
- * Gets non-ZEC tokens for the token selector
- */
-export function getOtherTokens(tokens: SwapToken[]): SwapToken[] {
-  return tokens.filter(t => t.blockchain !== 'zec' && t.blockchain !== 'zcash')
-}
-
-/**
- * Default "to" token for the swap form: native NEAR (wNEAR), falling back to
- * the first non-ZEC token when unavailable.
- */
-export function getDefaultToToken(tokens: SwapToken[]): SwapToken | null {
-  return tokens.find(t => t.assetId === WNEAR_NEAR_ASSET) || getOtherTokens(tokens)[0] || null
 }
 
 /**

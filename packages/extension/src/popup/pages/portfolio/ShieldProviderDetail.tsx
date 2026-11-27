@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import type { ActivityItem } from '@/core/activity'
-import type { AssetPriceReadModel } from '@/core/prices'
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
 import Big from '@/lib/big'
@@ -14,7 +13,7 @@ import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-act
 import { useNavigate } from '@/popup/provider/Router'
 import { WalletActionIcon } from '@/popup/components/portfolio/WalletActionIcon'
 import { WalletActionButton } from '@/popup/components/portfolio/WalletActionButton'
-import { assetPriceClient } from '@/popup/services/asset-price-client'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { useSwapTokenCatalog } from '@/popup/hooks/useSwapTokenCatalog'
 import { resolveManagedIntentsCatalog } from '@/popup/services/intents-asset-manager-client'
 import {
@@ -98,8 +97,8 @@ function ShieldProviderContent() {
     : undefined
   const scopeKey = `${currentNetwork}:${account?.walletId ?? ''}:${account?.accountId ?? ''}`
   const { model, status } = useHomePortfolio(account?.walletId ?? null, account?.accountId ?? null)
-  const [prices, setPrices] = useState<AssetPriceReadModel | null>(null)
-  const [pricesLoading, setPricesLoading] = useState(true)
+  const prices = useAssetPrices(currentNetwork)
+  const pricesLoading = prices === null
   const directoryTokens = useSwapTokenCatalog(provider === 'near-confidential')
   const [detailTab, setDetailTab] = useState<'assets' | 'activity'>('assets')
   const appliedAssetSelection = useRef<string | null>(null)
@@ -110,25 +109,6 @@ function ShieldProviderContent() {
   const balancesHidden = useSettingsStore(state => state.balancesHidden)
   const hasZcashAccount =
     activeAccount?.networks.some(network => network.chain.family === 'zcash') ?? false
-
-  useEffect(() => {
-    let active = true
-    const load = async () => {
-      try {
-        const cached = await assetPriceClient.getPrices('read')
-        if (active && cached) setPrices(cached)
-      } catch {}
-      try {
-        const refreshed = await assetPriceClient.getPrices('refresh')
-        if (active && refreshed) setPrices(refreshed)
-      } catch {}
-      if (active) setPricesLoading(false)
-    }
-    void load()
-    return () => {
-      active = false
-    }
-  }, [])
 
   const near = useMemo(() => summarizeNearConfidentialHoldings(model, prices), [model, prices])
   const managedAssets = useMemo(
@@ -172,9 +152,19 @@ function ShieldProviderContent() {
   const openAssetDetail = useCallback(
     (assetId: string, replace = false) => {
       const query = new URLSearchParams({ assetId, domain: 'shield', mode })
-      navigate(`/asset-detail?${query}`, { replace })
+      const providerQuery = new URLSearchParams({ provider: provider ?? '', mode })
+      const shieldFundsOrigin =
+        replace && provider && account
+          ? {
+              path: `/shield-provider?${providerQuery}`,
+              network: currentNetwork,
+              walletId: account.walletId,
+              accountId: account.accountId
+            }
+          : undefined
+      navigate(`/asset-detail?${query}`, { replace, state: { shieldFundsOrigin } })
     },
-    [mode, navigate]
+    [account?.walletId, account?.accountId, currentNetwork, mode, navigate, provider]
   )
   useEffect(() => {
     if (provider !== 'near-confidential' || !requestedAssetId) return
@@ -193,7 +183,16 @@ function ShieldProviderContent() {
     provider === 'near-confidential' &&
     near.status === 'ready' &&
     near.entries.every(entry => Big(entry.asset.availableRaw).eq(0))
-  const showNearEmptyState = nearBalanceEmpty && !connecting && !connectionError
+  const nearBalanceAction =
+    provider === 'near-confidential' && canManageNear
+      ? connectionErrorCode === 'authorization_required'
+        ? 'Connect'
+        : near.status === 'ready'
+          ? 'Refresh Shield balance'
+          : connectionError
+            ? 'Retry'
+            : null
+      : null
   const networks = model?.chains.filter(chain => chain.chain.family === 'zcash') ?? []
   const nearSupport = useMemo(
     () => nearConfidentialVaultSupport(directoryTokens),
@@ -378,7 +377,7 @@ function ShieldProviderContent() {
                   <span>
                     {provider === 'near-confidential' ? 'Total balance' : 'Shield balance'}
                   </span>
-                  {provider === 'near-confidential' && near.status === 'ready' && canManageNear && (
+                  {nearBalanceAction === 'Refresh Shield balance' && (
                     <button
                       type="button"
                       title="Refresh Shield balance"
@@ -396,23 +395,15 @@ function ShieldProviderContent() {
                     </button>
                   )}
                 </div>
-                {provider === 'near-confidential' &&
-                  connectionError &&
-                  canManageNear &&
-                  !connecting && (
-                    <button
-                      type="button"
-                      onClick={() => void refreshShieldBalances()}
-                      disabled={connecting}
-                      className="wallet-interactive mt-2 rounded-md text-sm font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
-                    >
-                      {connectionErrorCode === 'authorization_required' ? 'Connect' : 'Retry'}
-                    </button>
-                  )}
-                {connectionError && (
-                  <p role="alert" className="px-4 pt-2 text-xs text-warning">
-                    {connectionError}
-                  </p>
+                {(nearBalanceAction === 'Connect' || nearBalanceAction === 'Retry') && (
+                  <button
+                    type="button"
+                    onClick={() => void refreshShieldBalances()}
+                    disabled={connecting}
+                    className="wallet-interactive mt-2 rounded-md text-sm font-medium text-primary enabled:hover:bg-primary/10 enabled:active:bg-primary/15 focus-visible:outline-2 focus-visible:outline-primary focus-visible:outline-offset-2 disabled:opacity-50"
+                  >
+                    {nearBalanceAction}
+                  </button>
                 )}
               </div>
               {provider === 'near-confidential' && near.entries.length > 0 && !nearBalanceEmpty ? (
@@ -456,12 +447,12 @@ function ShieldProviderContent() {
                     />
                   ))}
                 </div>
-              ) : nearBalanceEmpty ||
+              ) : provider === 'near-confidential' ||
                 providerLoading ||
                 (provider === 'zcash-shield' && group?.fiat === '0') ? null : (
                 <p className="px-4 py-5 text-center text-sm text-muted">Balance unavailable</p>
               )}
-              {showNearEmptyState && (
+              {nearBalanceEmpty && (
                 <p className="px-4 pb-6 pt-7 text-center text-sm text-muted">
                   No shielded assets yet.
                 </p>

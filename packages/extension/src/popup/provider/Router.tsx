@@ -4,6 +4,7 @@
  * Tracks user activity on route changes for auto-lock functionality
  */
 
+import { logger } from '@/lib/logger'
 import {
   createContext,
   useCallback,
@@ -57,7 +58,7 @@ export function useNavigate() {
     }
 
     SecureStorage.saveLastActivityTime().catch(err => {
-      console.error('[Router] Failed to save activity time:', err)
+      logger.error('[Router] Failed to save activity time', undefined, undefined, err)
     })
   }, [])
 
@@ -79,6 +80,11 @@ export function useNavigate() {
     },
     [navigate, trackActivity]
   )
+  const goBackIfAvailable = useCallback(() => {
+    if (getPreviousPath?.() === undefined) return false
+    goBack()
+    return true
+  }, [getPreviousPath, goBack])
   const goBackIfPrevious = useCallback(
     (path: string) => {
       if (getPreviousPath?.() !== path) return false
@@ -96,8 +102,15 @@ export function useNavigate() {
   )
 
   return useMemo(
-    () => ({ navigate: navigateTo, goBack, goBackIfPrevious, goBackSteps, replace }),
-    [goBack, goBackIfPrevious, goBackSteps, navigateTo, replace]
+    () => ({
+      navigate: navigateTo,
+      goBack,
+      goBackIfAvailable,
+      goBackIfPrevious,
+      goBackSteps,
+      replace
+    }),
+    [goBack, goBackIfAvailable, goBackIfPrevious, goBackSteps, navigateTo, replace]
   )
 }
 
@@ -160,7 +173,7 @@ function RouteActivityTracker() {
     }
 
     SecureStorage.saveLastActivityTime().catch(err => {
-      console.error('[Router] Route change activity tracking failed:', err)
+      logger.error('[Router] Route change activity tracking failed', undefined, undefined, err)
     })
   }, [location.pathname])
 

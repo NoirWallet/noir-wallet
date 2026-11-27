@@ -1,7 +1,9 @@
 import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import {
+  commitAccountMetadataDeletion,
   commitWalletMetadataDeletion,
+  completeAccountMetadataDeletion,
   completeWalletMetadataDeletion,
   getWalletDeletionRecord,
   markWalletBackupVerified,
@@ -10,6 +12,7 @@ import {
   reconcileReimportedNativeWallets,
   renameRetainedAccountMetadata,
   renameRetainedWalletMetadata,
+  selectReimportedWalletDefaultAccount,
   setAccountNetworkSelection,
   withUndeletedWalletAccountMetadata,
   writeWalletMetadata
@@ -37,6 +40,7 @@ function mockStorage(initial = {}) {
   let getFailure = null
   let setFailure = null
   let pendingGet = null
+  let lock = Promise.resolve()
   const local = {
     async get(keys) {
       if (pendingGet) await pendingGet.promise
@@ -61,7 +65,15 @@ function mockStorage(initial = {}) {
   })
   Object.defineProperty(globalThis, 'navigator', {
     configurable: true,
-    value: { locks: { request: async (_name, action) => action() } }
+    value: {
+      locks: {
+        request(_name, action) {
+          const result = lock.then(action)
+          lock = result.catch(() => {})
+          return result
+        }
+      }
+    }
   })
   return {
     values,
@@ -214,6 +226,82 @@ test.describe('Wallet metadata persistence', () => {
     }
   })
 
+  test('restores a deleted derivation zero once with a fresh identity after cleanup', async () => {
+    const previousDefault = { id: 'old-default', derivationIndex: 0 }
+    const retained = {
+      id: 'other-account',
+      derivationIndex: 1,
+      name: 'Savings',
+      isPinned: true,
+      networkSelections: { mainnet: ['zcash'], testnet: ['evm'] }
+    }
+    const original = { ...wallet, accounts: [previousDefault, retained] }
+    const snapshot = {
+      state: {
+        wallets: [original],
+        currentWalletId: original.id,
+        currentAccountId: previousDefault.id,
+        currentNetwork: 'mainnet'
+      }
+    }
+    const candidate = { id: 'recovered-default', derivationIndex: 0, name: 'Recovered' }
+    const storage = mockStorage({ wallet_state: snapshot })
+    try {
+      await commitAccountMetadataDeletion(wallet.id, previousDefault.id, 'mainnet', 0)
+      await expect(
+        selectReimportedWalletDefaultAccount(original, 'mainnet', candidate, () => true)
+      ).rejects.toThrow('Wallet cleanup is still pending')
+      await completeAccountMetadataDeletion(wallet.id, previousDefault.id, 'mainnet')
+
+      const afterDeletion = await readWalletMetadata()
+      await renameRetainedWalletMetadata(wallet.id, original.name, 'Renamed wallet')
+      storage.failSet(new Error('storage write failed'))
+      await expect(
+        selectReimportedWalletDefaultAccount(original, 'mainnet', candidate, () => true)
+      ).rejects.toThrow('storage write failed')
+      storage.failSet(null)
+
+      const competing = { ...candidate, id: 'competing-default', name: 'Competing' }
+      expect(
+        await Promise.all([
+          selectReimportedWalletDefaultAccount(original, 'mainnet', candidate, () => true),
+          selectReimportedWalletDefaultAccount(original, 'mainnet', competing, () => true)
+        ])
+      ).toEqual([candidate.id, candidate.id])
+      await writeWalletMetadata(afterDeletion)
+
+      const { state } = await readWalletMetadata()
+      expect(state.currentWalletId).toBe(wallet.id)
+      expect(state.currentAccountId).toBe(candidate.id)
+      expect(state.wallets).toMatchObject([
+        { ...original, name: 'Renamed wallet', accounts: [candidate, retained] }
+      ])
+      expect(storage.values.wallet_deleted_account_keys).toContain(
+        `mainnet_${wallet.id}_${previousDefault.id}`
+      )
+    } finally {
+      storage.restore()
+    }
+  })
+
+  test('rejects recovery when the authenticated Wallet was replaced or deleted', async () => {
+    const candidate = { id: 'recovered-default', derivationIndex: 0 }
+    const replacement = { ...wallet, createdAt: wallet.createdAt + 1 }
+    const storage = mockStorage({ wallet_state: { state: { wallets: [replacement] } } })
+    try {
+      await expect(
+        selectReimportedWalletDefaultAccount(wallet, 'mainnet', candidate, () => true)
+      ).rejects.toThrow('Wallet changed during import')
+      await commitWalletMetadataDeletion(wallet.id)
+      await expect(
+        selectReimportedWalletDefaultAccount(replacement, 'mainnet', candidate, () => true)
+      ).rejects.toThrow('Wallet changed during import')
+      expect((await readWalletMetadata()).state.wallets).toEqual([])
+    } finally {
+      storage.restore()
+    }
+  })
+
   test('does not mark a backup verified if its session ends during the awaited storage read', async () => {
     const storage = mockStorage({ wallet_state: { state: { wallets: [wallet] } } })
     try {
@@ -226,6 +314,7 @@ test.describe('Wallet metadata persistence', () => {
         Date.now(),
         () => current
       )
+      await Promise.resolve()
       current = false
       pending.resolve()
       await expect(operation).rejects.toThrow(/changed or was removed/i)

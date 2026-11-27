@@ -11,12 +11,12 @@ import {
 } from '@/lib/format'
 import {
   formatBaseUnitDecimalAmount,
-  formatFeeAmount,
   formatFiatAmount,
   formatTokenQuantity
 } from '@/lib/number-format'
 import { cn } from '@/lib/utils'
 import { ExecutionAccountBadge } from '../account/ExecutionAccountSelector'
+import { AmountDisplay } from '../common/AmountDisplay'
 import { ZcashFundingBadge } from '../zcash/ZcashFundingBadge'
 import { TokenIcon } from '../tokens/TokenIcon'
 import { Button } from '../ui/button'
@@ -154,6 +154,7 @@ interface SwapInputViewProps {
   onSwitchTokens: () => void
   onRetryTokenCatalog: () => void
   onRetryQuote?: () => void
+  retryQuoteLabel?: string
   onGetQuote: () => void
 }
 
@@ -643,6 +644,7 @@ export function SwapInputView({
   onSwitchTokens,
   onRetryTokenCatalog,
   onRetryQuote,
+  retryQuoteLabel,
   onGetQuote
 }: SwapInputViewProps) {
   const amountErrorId = useId()
@@ -663,10 +665,9 @@ export function SwapInputView({
       : undefined
   const hasQuoteDetails = Boolean(estimatedOut) && rate !== '...' && rate !== '0'
   const quoteNotice = getSwapQuoteNotice(quoteError)
-  const providerNetworkFeeLabel =
-    isZecSource && networkFee !== undefined ? `${formatFeeAmount(networkFee)} ZEC` : null
+  const showProviderNetworkFee = isZecSource && networkFee !== undefined
   const providerFees =
-    quoteFee || providerNetworkFeeLabel ? (
+    quoteFee || showProviderNetworkFee ? (
       <div className="mt-1.5 space-y-1.5 text-muted">
         {quoteFee && (
           <div className="flex justify-between gap-2">
@@ -674,10 +675,15 @@ export function SwapInputView({
             <span className="text-right text-foreground">{quoteFee}</span>
           </div>
         )}
-        {providerNetworkFeeLabel && (
+        {showProviderNetworkFee && (
           <div className="flex justify-between gap-2">
             <span>Network fee</span>
-            <span className="text-right text-foreground">{providerNetworkFeeLabel}</span>
+            <AmountDisplay
+              value={networkFee}
+              symbol="ZEC"
+              profile="fee"
+              className="text-right text-foreground"
+            />
           </div>
         )}
       </div>
@@ -885,10 +891,12 @@ export function SwapInputView({
             {networkFee && isZecSource && !showProviderCard && (
               <div className="flex items-center justify-between gap-2">
                 <span className="text-muted">Network fee</span>
-                <span>
-                  {feeIsApproximate ? '≈ ' : ''}
-                  {formatFeeAmount(networkFee)} ZEC
-                </span>
+                <AmountDisplay
+                  value={networkFee}
+                  symbol="ZEC"
+                  profile="fee"
+                  prefix={feeIsApproximate ? '≈ ' : undefined}
+                />
               </div>
             )}
             {walletManagedRefundAddress && (
@@ -942,6 +950,7 @@ export function SwapInputView({
             message={quoteNotice ?? quoteError}
             tone={quoteNotice ? 'muted' : onRetryQuote ? 'warning' : 'error'}
             onRetry={onRetryQuote}
+            retryLabel={retryQuoteLabel}
             className="mt-2"
           />
         ) : null}

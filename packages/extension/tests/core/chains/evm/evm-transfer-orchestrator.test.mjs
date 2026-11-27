@@ -1105,6 +1105,41 @@ test('keeps one signed raw transaction for exact rebroadcast after an ambiguous 
   await expect(testHarness.pendingStore.get(prepared.graph.root.id)).resolves.toBeNull()
 })
 
+test('clears the selected account and chain from the local nonce queue including signed recovery', async () => {
+  const { orchestrator, pendingStore, repository } = harness({
+    rpc: rpc({
+      broadcastRawTransaction: async () => {
+        throw new Error('network unavailable')
+      },
+      hasTransaction: async () => false
+    })
+  })
+  const review = await prepare(orchestrator)
+  const signed = await orchestrator.approve({
+    scope,
+    transactionId: review.graph.root.id,
+    payloadFingerprint: review.signing.payloadFingerprint.digestHex
+  })
+  expect(signed.status).toBe('signed-pending-broadcast')
+  await repository.create(localBroadcastGraph(9))
+  const otherScope = { ...scope, accountId: 'account:evm:1' }
+  await pendingStore.put({
+    ...(await pendingStore.get(review.graph.root.id)),
+    transactionId: 'transaction:evm:another-account',
+    scope: otherScope
+  })
+
+  await orchestrator.clearActivity(scope, parseChainId('eip155:137').id)
+  await expect(pendingStore.get(review.graph.root.id)).resolves.toMatchObject({ phase: 'signed' })
+
+  await orchestrator.clearActivity(scope, chainId)
+  await expect(pendingStore.list()).resolves.toMatchObject([{ scope: otherScope }])
+  await expect(repository.list({ scope })).resolves.toEqual([])
+  await expect(
+    orchestrator.resumeBroadcast({ scope, transactionId: review.graph.root.id })
+  ).rejects.toThrow(/not found/)
+})
+
 test('rejects a signed raw transaction that does not match the reviewed transfer', async () => {
   const calls = []
   const testHarness = harness({

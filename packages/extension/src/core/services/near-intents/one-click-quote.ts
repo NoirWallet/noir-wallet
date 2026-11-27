@@ -1,3 +1,4 @@
+import { jsonRequestInit } from '@/lib/fetch-utils'
 import type { OneClickChainFamily, OneClickViewer } from './one-click-order'
 
 function quoteViewerFields(viewer?: OneClickViewer): {
@@ -14,15 +15,13 @@ export function requestOneClickQuote<Result>(
   request: (url: string, init: RequestInit) => Promise<Result>,
   options: { viewer?: OneClickViewer; signal?: AbortSignal } = {}
 ): Promise<Result> {
-  return request(`${endpoint}/quote`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ...quote,
-      ...quoteViewerFields(quote.dry ? undefined : options.viewer)
-    }),
-    signal: options.signal
-  })
+  return request(
+    `${endpoint}/quote`,
+    jsonRequestInit(
+      { method: 'POST', signal: options.signal },
+      { ...quote, ...quoteViewerFields(quote.dry ? undefined : options.viewer) }
+    )
+  )
 }
 
 export function matchesOneClickQuoteViewer(

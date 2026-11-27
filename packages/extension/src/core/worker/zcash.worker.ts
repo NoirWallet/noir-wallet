@@ -7,9 +7,6 @@ import { findWasmAccountIdByHdIndex, mapWasmAccountIdsByHdIndex } from './accoun
 
 import './wasm-worker-runtime-setup'
 
-self.addEventListener('error', e => e.preventDefault())
-self.addEventListener('unhandledrejection', e => e.preventDefault())
-
 import init, {
   initThreadPool,
   generate_mnemonic,
@@ -33,6 +30,7 @@ import type {
   RPCSchema,
   HardwarePcztPair,
   LedgerPcztSignatures,
+  WasmUnifiedAddresses,
   ZcashCredentialCapsule
 } from './types'
 import type { Network } from '../../types'
@@ -51,11 +49,19 @@ import { encodeWorkerRpcError } from './rpc-errors'
 import { TimeoutError } from '../../lib/async-utils'
 import { proveHardwarePczt, toHardwarePcztError } from '../zcash/hardware-pczt'
 import { parseZeroIndexerRuntimeOptions, type ZeroIndexerOptions } from '../zcash/zero-indexer'
-import { serializeDiagnosticArgs } from '../../lib/diagnostic-log'
-import { developmentConsoleErrors } from '../../lib/development-console'
+import {
+  getDiagnosticErrorDetails,
+  serializeDiagnosticArgs,
+  writeDiagnosticConsoleError
+} from '../../lib/diagnostic-log'
 import { traceDebugStage } from '../../lib/debug-performance'
 import { loadVotingState, saveVotingState } from '../../lib/indexed-db'
 import { validateVotingDecisions } from '../../lib/voting'
+
+type RecoveryWebWallet = WebWallet & {
+  enhance_transaction?: (txid: string) => Promise<void>
+  rescan_range?: (startHeight: number, endExclusive: number) => Promise<void>
+}
 import { assertRheaSwapSubmissionDeadline } from '../services/rhea-swap/rhea-swap-quote-validity'
 
 /**
@@ -192,6 +198,42 @@ interface WalletEntry {
 const wallets = new Map<string, WalletEntry>()
 const accountIdsByHdIndex = new Map<string, Map<number, number>>()
 const feeQuotes = new FeeQuoteRegistry()
+
+async function recoverLedgerUfvkAccount(
+  entry: WalletEntry,
+  accountName: string,
+  ufvk: string,
+  fingerprint: Uint8Array,
+  accountHdIndex: number,
+  birthdayHeight: number
+): Promise<number | null> {
+  const wallet = entry.instance
+  const accountId = await wallet.get_account_id_by_name(accountName)
+  if ((await wallet.get_account_hd_index(accountId)) !== accountHdIndex) return null
+
+  const probe = new WebWallet(entry.network === 'mainnet' ? 'main' : 'test', entry.lightwalletdUrl)
+  try {
+    const probeId = await probe.create_account_ufvk(
+      accountName,
+      ufvk,
+      fingerprint,
+      accountHdIndex,
+      birthdayHeight,
+      'ledger'
+    )
+    const [expected, retained]: WasmUnifiedAddresses[] = await Promise.all([
+      probe.get_unified_addresses(probeId),
+      wallet.get_unified_addresses(accountId)
+    ])
+    return expected?.unified &&
+      retained?.unified === expected.unified &&
+      retained.transparent === expected.transparent
+      ? accountId
+      : null
+  } finally {
+    probe.free()
+  }
+}
 
 function feeQuoteContext(walletId: string, accountId: number): FeeQuoteContext {
   const entry = wallets.get(walletId)
@@ -559,31 +601,21 @@ async function createWalletAccount(
 const originalConsole = {
   log: console.log,
   warn: console.warn,
-  error: console.error,
   info: console.info
 }
 const debugLogsEnabled = typeof __DEBUG_LOGS__ !== 'boolean' || __DEBUG_LOGS__
 
 let activeWalletId: string | undefined
+let activeRecoveryCalls = 0
 
-function forwardLog(level: 'log' | 'warn' | 'error' | 'info', ...args: any[]) {
-  if (!debugLogsEnabled) return
-  const walletId = activeWalletId
-
-  const message = serializeDiagnosticArgs(args)
-  if (developmentConsoleErrors && (level === 'error' || level === 'warn')) {
-    originalConsole[level].apply(console, args)
-  } else if (!walletId) {
-    originalConsole[level].call(console, message)
-  }
-
+function forwardWorkerDiagnostic(level: 'log' | 'warn' | 'error' | 'info', message: string) {
   if (typeof self !== 'undefined' && typeof postMessage !== 'undefined') {
     try {
       self.postMessage({
         type: 'WORKER_LOG',
         level,
         message,
-        walletId,
+        walletId: activeWalletId,
         timestamp: Date.now()
       })
     } catch (e) {
@@ -592,11 +624,43 @@ function forwardLog(level: 'log' | 'warn' | 'error' | 'info', ...args: any[]) {
   }
 }
 
-if (__DEBUG_LOGS__) {
-  console.log = (...args) => forwardLog('log', ...args)
-  console.warn = (...args) => forwardLog('warn', ...args)
-  console.error = (...args) => forwardLog('error', ...args)
-  console.info = (...args) => forwardLog('info', ...args)
+function reportWorkerError(operation: string, error: unknown) {
+  const message = serializeDiagnosticArgs([operation, getDiagnosticErrorDetails(error)])
+  writeDiagnosticConsoleError(`[worker] ${message}`)
+  forwardWorkerDiagnostic('error', message)
+}
+
+self.addEventListener('error', event => {
+  event.preventDefault()
+  reportWorkerError('Unhandled wallet worker error', event.error ?? event.message)
+})
+self.addEventListener('unhandledrejection', event => {
+  event.preventDefault()
+  reportWorkerError('Unhandled wallet worker rejection', event.reason)
+})
+
+if (debugLogsEnabled) {
+  for (const level of ['log', 'warn', 'info', 'debug'] as const) {
+    const write = console[level].bind(console)
+    console[level] = (...args: unknown[]) => {
+      if (activeRecoveryCalls > 0) return
+      const message = serializeDiagnosticArgs(args)
+      if (level === 'debug') write(message)
+      else {
+        if (!activeWalletId) originalConsole[level].call(console, message)
+        forwardWorkerDiagnostic(level, message)
+      }
+    }
+  }
+}
+
+async function runWasmRecovery<T>(operation: () => Promise<T>): Promise<T> {
+  activeRecoveryCalls += 1
+  try {
+    return await operation()
+  } finally {
+    activeRecoveryCalls -= 1
+  }
 }
 
 //
@@ -647,7 +711,7 @@ async function initializeWasm() {
 
       isWasmInitialized = true
     } catch (e) {
-      console.error('[Worker] initializeWasm failed:', e)
+      reportWorkerError('Zcash WASM initialization failed', e)
       initPromise = null
       throw e
     } finally {
@@ -665,7 +729,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
 
   try {
     // Ensure WASM is initialized for all methods
-    if (!isWasmInitialized) {
+    if (method !== 'wallet.getRecoveryCapabilities' && !isWasmInitialized) {
       await initializeWasm()
     }
 
@@ -830,10 +894,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
                 }
                 restoredFromDb = true
               } catch (healthErr) {
-                console.error(
-                  `[Worker] ⚠️ Persisted DB health check failed (${dbData.length} bytes), data is corrupted:`,
-                  healthErr
-                )
+                reportWorkerError('Persisted Zcash database health check failed', healthErr)
                 const healthMsg = healthErr instanceof Error ? healthErr.message : ''
                 if (!healthMsg.includes('HEALTH_CHECK_TIMEOUT')) {
                   try {
@@ -853,17 +914,11 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
               throw e
             }
             if (dbData && entry) {
-              console.error(
-                `[Worker] ⚠️ Failed to restore from persisted DB (${dbData.length} bytes), keeping existing wallet:`,
-                e
-              )
+              reportWorkerError('Zcash database restore failed; keeping existing wallet', e)
               return true
             }
             if (dbData) {
-              console.error(
-                `[Worker] ⚠️ Failed to restore from persisted DB (${dbData.length} bytes), creating empty wallet:`,
-                e
-              )
+              reportWorkerError('Zcash database restore failed; creating wallet database', e)
               dbData = null
               restoredFromDb = false
               wallet = new WebWallet(
@@ -1139,6 +1194,64 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
         })
         break
       }
+      case 'wallet.getRecoveryCapabilities': {
+        const prototype: RecoveryWebWallet = WebWallet.prototype
+        result = {
+          transaction: typeof prototype.enhance_transaction === 'function',
+          range: typeof prototype.rescan_range === 'function'
+        } satisfies RPCSchema['wallet.getRecoveryCapabilities']['response']
+        break
+      }
+      case 'wallet.enhanceTransaction': {
+        const { walletId, txid } = payload as RPCSchema['wallet.enhanceTransaction']['request']
+        if (typeof txid !== 'string' || !/^[a-f0-9]{64}$/i.test(txid)) {
+          throw new Error('Invalid Zcash transaction ID')
+        }
+        result = await runForWallet(
+          walletId,
+          async (): Promise<RPCSchema['wallet.enhanceTransaction']['response']> => {
+            const wallet: RecoveryWebWallet = getWallet(walletId)
+            const enhance = wallet.enhance_transaction
+            if (typeof enhance !== 'function') {
+              throw new Error('Zcash transaction recovery is unsupported')
+            }
+            try {
+              await runWasmRecovery(() => enhance.call(wallet, txid))
+              return 'applied'
+            } catch (error) {
+              if (error instanceof Error && error.name === 'TransactionNotFound') return 'not-found'
+              throw new Error('Zcash transaction recovery failed')
+            }
+          }
+        )
+        break
+      }
+      case 'wallet.rescanRange': {
+        const { walletId, startHeight, endExclusive } =
+          payload as RPCSchema['wallet.rescanRange']['request']
+        if (
+          !Number.isInteger(startHeight) ||
+          !Number.isInteger(endExclusive) ||
+          startHeight < 0 ||
+          startHeight > endExclusive ||
+          endExclusive > 0xffffffff
+        ) {
+          throw new Error('Invalid Zcash recovery range')
+        }
+        await runForWallet(walletId, async () => {
+          const wallet: RecoveryWebWallet = getWallet(walletId)
+          const rescan = wallet.rescan_range
+          if (typeof rescan !== 'function') {
+            throw new Error('Zcash range recovery is unsupported')
+          }
+          try {
+            await runWasmRecovery(() => rescan.call(wallet, startHeight, endExclusive))
+          } catch {
+            throw new Error('Zcash range recovery failed')
+          }
+        })
+        break
+      }
       case 'wallet.dbToBytes': {
         const { walletId } = payload as RPCSchema['wallet.dbToBytes']['request']
         result = await runForWallet(walletId, async () => {
@@ -1331,14 +1444,38 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
             console.log(`[Worker] Using safe new-wallet UFVK birthday: ${effectiveBirthdayHeight}`)
           }
 
-          const newAccountId = await w.create_account_ufvk(
-            accountName,
-            ufvk,
-            hexToBytes(seedFingerprintHex),
-            accountHdIndex,
-            effectiveBirthdayHeight,
-            keySource
-          )
+          const fingerprint = hexToBytes(seedFingerprintHex)
+          let newAccountId: number
+          try {
+            newAccountId = await w.create_account_ufvk(
+              accountName,
+              ufvk,
+              fingerprint,
+              accountHdIndex,
+              effectiveBirthdayHeight,
+              keySource
+            )
+          } catch (error) {
+            const entry = wallets.get(walletId)
+            if (
+              !entry ||
+              keySource !== 'ledger' ||
+              !walletId.startsWith('wallet:ledger-v3:') ||
+              !/account with name .+ already exists/i.test(String(error))
+            ) {
+              throw error
+            }
+            const retained = await recoverLedgerUfvkAccount(
+              entry,
+              accountName,
+              ufvk,
+              fingerprint,
+              accountHdIndex,
+              effectiveBirthdayHeight
+            )
+            if (retained === null) throw error
+            newAccountId = retained
+          }
           blankInstances.delete(walletId)
           accountIdsByHdIndex.get(walletId)?.set(accountHdIndex, newAccountId)
           return newAccountId
@@ -1885,7 +2022,7 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
       self.postMessage(response)
     }
   } catch (error) {
-    console.error(`[Worker] Error handling ${method}:`, error)
+    reportWorkerError(`Zcash RPC ${method} failed`, error)
     let errorMessage = 'Unknown worker error'
     if (error) {
       if (typeof error === 'string') {
@@ -1904,7 +2041,6 @@ self.addEventListener('message', async (event: MessageEvent<RPCRequest<any>>) =>
         }
       }
     }
-    console.error(`[Worker] Error message extracted: ${errorMessage}`)
     // Send error response
     const response: RPCResponse<any> = {
       id,

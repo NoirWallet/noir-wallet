@@ -4,6 +4,49 @@ import type { ShieldProvider } from './asset-domains'
 import type { ConfidentialFundingReview } from '@/core/services/confidential-funding'
 import type { PrepareConfidentialFundingRequest } from './confidential-funding-client'
 import { buildExternalShieldWithdrawRequest, buildShieldTransferRequest } from './shield-transfer'
+import type { Network } from '@/types'
+
+export interface ShieldFundsOrigin {
+  readonly path: string
+  readonly network: Network
+  readonly walletId: string
+  readonly accountId: string
+}
+
+export function resolveShieldFundsOrigin(
+  origin: Partial<ShieldFundsOrigin> | null | undefined,
+  scope: Omit<ShieldFundsOrigin, 'path'>
+): string | null {
+  return origin?.network === scope.network &&
+    origin.walletId === scope.walletId &&
+    origin.accountId === scope.accountId &&
+    typeof origin.path === 'string' &&
+    /^\/(?:asset-detail|shield-provider)\?[^#]+$/.test(origin.path)
+    ? origin.path
+    : null
+}
+
+export function readShieldFundsOrigin(params: URLSearchParams): ShieldFundsOrigin | undefined {
+  const path = params.get('resultOrigin')
+  const network = params.get('resultNetwork')
+  const walletId = params.get('resultWalletId')
+  const accountId = params.get('resultAccountId')
+  if (!path || !walletId || !accountId || (network !== 'mainnet' && network !== 'testnet')) return
+  return { path, network, walletId, accountId }
+}
+
+function shieldFundsOriginQuery(origin: ShieldFundsOrigin) {
+  return {
+    resultOrigin: origin.path,
+    resultNetwork: origin.network,
+    resultWalletId: origin.walletId,
+    resultAccountId: origin.accountId
+  }
+}
+
+export function shieldFundsResultExitPath(origin: ShieldFundsOrigin): string {
+  return `/shield?${new URLSearchParams({ resultExit: '1', ...shieldFundsOriginQuery(origin) })}`
+}
 
 export type ShieldFundsDirection = 'shield' | 'unshield'
 
@@ -58,9 +101,14 @@ export function selectShieldFundsAsset(input: {
 export function shieldFundsPath(
   direction: ShieldFundsDirection,
   assetId: string,
-  provider: ShieldProvider
+  provider: ShieldProvider,
+  origin?: ShieldFundsOrigin
 ): string {
-  return `/${direction}?${new URLSearchParams({ assetId, provider })}`
+  return `/${direction}?${new URLSearchParams({
+    assetId,
+    provider,
+    ...(origin ? shieldFundsOriginQuery(origin) : {})
+  })}`
 }
 
 export function buildFixedShieldFundsRequest(

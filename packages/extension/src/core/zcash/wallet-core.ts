@@ -16,12 +16,15 @@ import type {
   HardwarePcztPair,
   JournalReplayOptions,
   LedgerPcztSignatures,
+  SyncOwner,
   VotingActionResult,
   VotingDiscovery,
   VotingEligibility,
   VotingProposal,
   VotingRoundStatus,
-  ZcashTransactionContext
+  ZcashRecoveryCapabilities,
+  ZcashTransactionContext,
+  ZcashTransactionRecoveryResult
 } from '../worker/types'
 import type { TransferResult } from './transfer-result'
 import type { FeeQuote, QuotedFeeEstimate } from '@/config/fee'
@@ -214,6 +217,25 @@ export class ZcashWalletCore {
 
   async endSyncSession(): Promise<void> {
     await this.client.endSyncSession()
+  }
+
+  async getRecoveryCapabilities(): Promise<ZcashRecoveryCapabilities> {
+    return this.client.getRecoveryCapabilities()
+  }
+
+  async enhanceTransaction(
+    txid: string,
+    syncOwner?: SyncOwner
+  ): Promise<ZcashTransactionRecoveryResult> {
+    return this.client.enhanceTransaction(txid, syncOwner)
+  }
+
+  async rescanRange(
+    startHeight: number,
+    endExclusive: number,
+    syncOwner?: SyncOwner
+  ): Promise<void> {
+    await this.client.rescanRange(startHeight, endExclusive, syncOwner)
   }
 
   async markDirty(): Promise<void> {
@@ -726,7 +748,10 @@ export class ZcashWalletCore {
     return this.client.getLatestBlock()
   }
 
-  async persistDb(key: string, options?: { allowDuringSyncSession?: boolean }): Promise<void> {
+  async persistDb(
+    key: string,
+    options?: { allowDuringSyncSession?: boolean; requireWrite?: boolean }
+  ): Promise<void> {
     return this.client.persistDb(key, options)
   }
 

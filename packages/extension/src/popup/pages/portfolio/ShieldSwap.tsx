@@ -1,3 +1,7 @@
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
+import { findAssetPrice } from '@/core/prices'
+import { getZcashChainId } from '@/core/chains/registry'
+import { findCatalogPrice } from '@/core/prices/catalog-price-identity'
 import {
   memo,
   useCallback,
@@ -326,13 +330,8 @@ function ShieldSwapForm({
     : null
   const matchesAsset = (asset: ShieldFundingAsset, id: string) =>
     isSameSwapAsset(asset.asset.asset.id, id) || isSameSwapAsset(asset.managed.protocolAssetId, id)
-  const defaultSource = selectDefaultShieldWithdrawSource(
-    options,
-    displayBalances,
-    model,
-    null,
-    network
-  )
+  const prices = useAssetPrices(network)
+  const defaultSource = selectDefaultShieldWithdrawSource(options, displayBalances, prices, network)
   const from = confidentialFromAssetId
     ? (sourceChoices.find(asset => matchesAsset(asset, confidentialFromAssetId)) ?? null)
     : balanceLoading || (!displayBalances && portfolioLoading)
@@ -494,28 +493,30 @@ function ShieldSwapForm({
     setAmount('')
     setError(null)
   }
+  const fromPrice = fromToken
+    ? findCatalogPrice(prices, fromToken, network, 'confidential')?.priceUsd
+    : undefined
+  const toPrice = toToken
+    ? findCatalogPrice(prices, toToken, network, 'confidential')?.priceUsd
+    : undefined
   const displayOutput =
     previewOutput ??
     (previewLoading
       ? estimateSwapOutputFromPrices({
           amountIn: amount,
-          tokenInPrice: fromToken?.price,
-          tokenOutPrice: toToken?.price
+          tokenInPrice: fromPrice ? Number(fromPrice) : undefined,
+          tokenOutPrice: toPrice ? Number(toPrice) : undefined
         })
       : '')
-  const tokenPrices = useMemo(
-    () => new Map(tokens.map(token => [token.assetId, token.price] as const)),
-    [tokens]
-  )
   const { fromFiat, toFiat } = getSwapAmountValues({
     amountIn: amount,
     amountOut: displayOutput,
-    tokenInPrice: fromToken?.price,
-    tokenOutPrice: toToken?.price
+    tokenInPrice: fromPrice ? Number(fromPrice) : undefined,
+    tokenOutPrice: toPrice ? Number(toPrice) : undefined
   })
   const fromPickerItems = useMemo((): readonly ShieldTokenPickerItem[] => {
     if (!fromPickerReady) return []
-    const zecPrice = tokenPrices.get(ZEC_ZCASH_ASSET)
+    const zecPrice = findAssetPrice(prices, `${getZcashChainId(network)}/slip44:133`)?.priceUsd
     const transparentZecRow: ShieldTokenPickerItem[] =
       onSelectTransparentZecSwap && nativeZecTransparentRaw !== null
         ? [
@@ -576,7 +577,7 @@ function ShieldSwapForm({
             : undefined,
           displayBalance: displayBalances ? undefined : '—',
           decimals: asset.asset.metadata.decimals,
-          priceUsd: tokenPrices.get(asset.managed.protocolAssetId) ?? null
+          priceUsd: findAssetPrice(prices, asset.asset.asset.id)?.priceUsd ?? null
         })
       )
     return [...transparentZecRow, ...zecRows, ...nonZecRows]
@@ -589,7 +590,7 @@ function ShieldSwapForm({
     canSelectConfidentialZec,
     zecSourceOptions,
     displayBalances,
-    tokenPrices,
+    prices,
     nativeZecTransparentRaw,
     onSelectNativeZecSwap,
     onSelectTransparentZecSwap
@@ -623,14 +624,14 @@ function ShieldSwapForm({
       toPickerReady
         ? buildShieldDestinationPickerRows({
             options,
-            tokens,
+            prices,
             balances: displayBalances,
             network,
             source: from,
             nativeZecDestinations
           })
         : [],
-    [toPickerReady, options, tokens, displayBalances, network, from, nativeZecDestinations]
+    [toPickerReady, options, prices, displayBalances, network, from, nativeZecDestinations]
   )
   const scopeStillCurrent = () => {
     const state = useWalletStore.getState()
@@ -1264,7 +1265,7 @@ function ShieldSwapForm({
           tokenBadgeBlockchain={fromPickerChain?.badgeBlockchain}
           tokenNetworkLabel="NEAR Confidential"
           amount={amount}
-          fiatValue={fromToken?.price ? fromFiat : ''}
+          fiatValue={fromPrice ? fromFiat : ''}
           balance={hidden ? '••••' : (balance ?? '—')}
           balanceLoading={!hidden && balanceLoading}
           tokenSelectDisabled={tokens.length === 0}
@@ -1313,7 +1314,7 @@ function ShieldSwapForm({
           zcashFundingSource={nativeZecDestination ?? undefined}
           accountAddress={nativeZecRecipient}
           amount={displayOutput}
-          fiatValue={toToken?.price ? toFiat : ''}
+          fiatValue={toPrice ? toFiat : ''}
           onTokenSelect={() => setPicker('to')}
           tokenSelectDisabled={tokens.length === 0}
           tokenSelectLocked={busy}

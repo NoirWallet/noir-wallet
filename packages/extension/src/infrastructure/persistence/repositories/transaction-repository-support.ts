@@ -90,6 +90,15 @@ export function parseTransactionRepositoryScope(value: unknown): ParsedTransacti
   })
 }
 
+export function transactionGraphOriginatesOn(graph: TransactionGraph, chainId: string): boolean {
+  return graph.segments.some(
+    segment =>
+      segment.role === 'origin' &&
+      segment.target.kind === 'onchain' &&
+      segment.target.chainId === chainId
+  )
+}
+
 export function transactionScopeKey(scope: ParsedTransactionScope): string {
   return JSON.stringify([scope.keyDomainId, scope.accountId])
 }

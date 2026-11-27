@@ -164,7 +164,7 @@ export async function broadcastShieldZcashDeposit(input: {
       .catch(() => undefined)
     void catchUpAfterOnChainTx(input.walletId, input.accountId).catch(error => {
       logger.warn('Shield ZEC deposit catch-up failed', input.walletId, input.accountId)
-      console.error('[ShieldZcashDeposit] catchUpAfterOnChainTx failed:', error)
+      logger.error('[Shield Zcash deposit] Post-broadcast sync failed', undefined, undefined, error)
       backgroundZcashWalletRuntime.requestSync()
     })
     return { txHash: broadcastHash }

@@ -17,6 +17,36 @@ export default tseslint.config(
     ]
   },
   {
+    files: ['packages/extension/src/**/*.{js,jsx,ts,tsx}'],
+    ignores: [
+      'packages/extension/src/lib/fetch-utils.ts',
+      'packages/extension/src/infrastructure/generated/**'
+    ],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {
+          globals: [
+            { name: 'fetch', message: 'Use the shared request helpers in src/lib/fetch-utils.ts.' },
+            {
+              name: 'XMLHttpRequest',
+              message: 'Use the shared request helpers in src/lib/fetch-utils.ts.'
+            }
+          ],
+          checkGlobalObject: true
+        }
+      ],
+      'no-restricted-properties': [
+        'error',
+        {
+          object: 'navigator',
+          property: 'sendBeacon',
+          message: 'Use the shared request helpers in src/lib/fetch-utils.ts.'
+        }
+      ]
+    }
+  },
+  {
     files: ['packages/extension/src/**/*.{ts,tsx}'],
     languageOptions: {
       parser: tseslint.parser,

@@ -3,21 +3,23 @@ import { syncScheduler } from './sync-scheduler'
 import { syncJobStore } from '@/lib/sync-job-store'
 import { logger } from '@/lib/logger'
 import { useWalletStore } from '@/store/wallet-store'
+import type { Network } from '@/types'
 
 // accountKey format from buildAccountKey: `${network}_${walletId}_${accountId}`
 // (network and UUIDs never contain underscores)
 export function parseAccountKey(
   accountKey: string
-): { walletId: string; accountId: string } | null {
-  const parts = accountKey.split('_')
-  if (parts.length < 3) return null
-  return { walletId: parts[1], accountId: parts[2] }
-}
-
-export function isForegroundWallet(walletId: string): boolean {
-  const { currentWalletId } = useWalletStore.getState()
-  const fg = syncScheduler.getForegroundWalletId() || currentWalletId
-  return fg === walletId
+): { network: Network; walletId: string; accountId: string } | null {
+  const [network, walletId, accountId, extra] = accountKey.split('_')
+  if (
+    (network !== 'mainnet' && network !== 'testnet') ||
+    !walletId ||
+    !accountId ||
+    extra !== undefined
+  ) {
+    return null
+  }
+  return { network, walletId, accountId }
 }
 
 // Persist the catch-up request before scheduling work so a service-worker
@@ -50,39 +52,27 @@ export async function refreshAfterOnChainBroadcast(walletId: string): Promise<vo
 }
 
 export async function catchUpAfterOnChainTx(walletId: string, accountId: string): Promise<boolean> {
-  await markWalletNeedsCatchUp(walletId, accountId)
-  const status = await syncScheduler.runTransactionCatchUp(walletId, accountId)
+  const network = backgroundZcashWalletRuntime.getNetwork()
+  const status = await syncScheduler.runTransactionCatchUp(network, walletId, accountId)
   if (status !== 'completed') {
-    logger.warn(`Tx catch-up sync ${status}, scheduling retry`, walletId, accountId)
     await markWalletNeedsCatchUp(walletId, accountId)
-    backgroundZcashWalletRuntime.requestSync()
   }
-
-  await backgroundZcashWalletRuntime.refreshBalances(walletId, true)
-  await backgroundZcashWalletRuntime
-    .refreshTransactionHistoryFromWasm(walletId, accountId)
-    .catch(() => {})
   return status === 'completed'
 }
 
-export async function finalizeTxCatchUp(accountKey: string): Promise<boolean> {
+export async function finalizeTxCatchUp(
+  accountKey: string,
+  requiredHeight?: number
+): Promise<boolean> {
   const parsed = parseAccountKey(accountKey)
   if (!parsed) return false
-
-  const { walletId, accountId } = parsed
-
-  if (isForegroundWallet(walletId)) {
-    try {
-      return await catchUpAfterOnChainTx(walletId, accountId)
-    } catch (err) {
-      logger.warn('Foreground catch-up after tx confirm failed', walletId, accountId)
-      console.error('[TxSync] catch-up failed:', err)
-      await markWalletNeedsCatchUp(walletId, accountId)
-      backgroundZcashWalletRuntime.requestSync()
-    }
-    return false
-  }
-
-  await markWalletNeedsCatchUp(walletId, accountId)
-  return false
+  const { network, walletId, accountId } = parsed
+  return (
+    (await syncScheduler.runTransactionCatchUp(
+      network,
+      walletId,
+      accountId,
+      requiredHeight ?? null
+    )) === 'completed'
+  )
 }

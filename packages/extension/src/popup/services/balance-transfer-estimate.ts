@@ -2,14 +2,18 @@ import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
 import { resolveRheaPrivateTransferToken, type RheaSwapQuoteMode } from '@/core/services/rhea-swap'
 import { preferWalletEvmQuoteToken, toWalletEvmQuoteToken } from './token-address-discovery'
 import type { ConfidentialFundingPreview } from '@/core/services/confidential-funding'
-import { formatBaseUnitDecimalAmount, formatFeeAmount } from '@/lib/number-format'
+import {
+  compactFractionalZeros,
+  formatBaseUnitDecimalAmount,
+  formatFeeAmount
+} from '@/lib/number-format'
 import { evmWalletClient, type EvmFeeEstimate } from './evm-wallet-client'
 import { rheaSwapClient } from './rhea-swap-client'
 import { requiredRheaEvmApproval } from './rhea-evm-approval'
 import { formatIntentsConfirmationTime } from './confirmation-time-format'
 import { readSwapErrorReason } from './swap-quote-error-message'
 
-const BRIDGE_MINIMUM_RAW = /amount is too low for bridge,?\s*try at least ([0-9]+)/i
+const BRIDGE_MINIMUM_RAW = /amount is too low for bridge,?\s*try at least ([1-9][0-9]{0,77})\b/i
 
 export function formatTransferQuoteMinimumError(
   error: string,
@@ -18,7 +22,7 @@ export function formatTransferQuoteMinimumError(
 ): string | null {
   const match = BRIDGE_MINIMUM_RAW.exec(readSwapErrorReason(error))
   if (!match) return null
-  const amount = formatFeeAmount(formatBaseUnitDecimalAmount(match[1]!, decimals))
+  const amount = formatBaseUnitDecimalAmount(match[1]!, decimals)
   return `Minimum transfer amount is ${amount} ${symbol}.`
 }
 
@@ -220,7 +224,7 @@ export function formatBalanceTransferFee(
   const format = (raw: string, decimals: number, symbol: string) => {
     const value = BigInt(raw)
     const amount = formatBaseUnitDecimalAmount(value < 0n ? -value : value, decimals)
-    const display = formatFeeAmount(amount)
+    const display = compactFractionalZeros(formatFeeAmount(amount))
     return `${display.startsWith('<') ? '' : '≈ '}${value < 0n ? '-' : ''}${display} ${symbol}`
   }
   return {

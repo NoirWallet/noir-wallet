@@ -1,8 +1,6 @@
-self.addEventListener('error', e => e.preventDefault())
-self.addEventListener('unhandledrejection', e => e.preventDefault())
-
+import { logger } from '@/lib/logger'
 import { getOffscreenClient } from '@/core/worker/client'
-import type { RPCSchema, ZcashTransactionContext } from '@/core/worker/types'
+import type { RPCSchema, SyncOwner, ZcashTransactionContext } from '@/core/worker/types'
 import { decodeWorkerRpcError, encodeWorkerRpcError } from '@/core/worker/rpc-errors'
 import { isTransactionSubmissionUnknown } from '@/core/zcash/transfer-result'
 import { replayJournalPages } from '@/lib/sync-journal'
@@ -49,6 +47,7 @@ import {
   type ZcashCredentialSessionPort
 } from '@/infrastructure/keyring/session'
 
+logger.captureUnhandledErrors(window)
 registerOffscreenSyncAbortListener()
 
 const zcashWorkerClient = getOffscreenClient()
@@ -145,7 +144,6 @@ const zcashCredentialSessionPort: ZcashCredentialSessionPort = {
   },
   forceRestart() {
     zcashWorkerClient.recreateWorker()
-    logForwardingEnabled = false
     clearAllWalletRuntimeState()
   }
 }
@@ -176,13 +174,11 @@ interface WalletInitPayload {
   dbKey?: string
 }
 
-let logForwardingEnabled = false
 const initPayloadsByWallet = new Map<string, WalletInitPayload>()
 const reinitializingByWallet = new Map<string, Promise<void>>()
 const pendingInitByWallet = new Map<string, Promise<any>>()
 const pendingInitStartedAt = new Map<string, number>()
 const activeSyncBatchByWallet = new Map<string, Promise<unknown>>()
-type SyncOwner = { ownerId: string; ownerStartedAt: number }
 type SyncSessionEntry = SyncOwner & { promise: Promise<void>; resolve: () => void }
 const activeSyncSessionByWallet = new Map<string, SyncSessionEntry>()
 const syncOwnerByWallet = new Map<string, SyncOwner>()
@@ -275,6 +271,14 @@ function assertCurrentSyncOwner(walletId: string, owner: SyncOwner): void {
   const current = syncOwnerByWallet.get(walletId)
   if (current && current.ownerId !== owner.ownerId) {
     throw new Error('STALE_WALLET_RPC: sync session owner changed')
+  }
+}
+
+function assertActiveRecoveryOwner(walletId: string, owner: SyncOwner): void {
+  assertCurrentSyncOwner(walletId, owner)
+  const active = activeSyncSessionByWallet.get(walletId)
+  if (active?.ownerId !== owner.ownerId || active.ownerStartedAt !== owner.ownerStartedAt) {
+    throw new Error('STALE_WALLET_RPC: active sync session required for Zcash recovery')
   }
 }
 
@@ -412,7 +416,6 @@ async function executeWalletReload(payload: {
     }
     rememberInitPayload({ walletId, network, lightwalletdUrl, compactBlockCdn, dbKey })
     clearWalletDirty(walletId)
-    trySetupLogForwarding()
     const generation = getWalletGeneration(walletId)
     offscreenLog(`[WALLET RELOAD] completed generation=${generation}`, walletId)
     return { generation }
@@ -717,9 +720,7 @@ async function waitForSyncOperationsWithGeneration(
   assertWalletGeneration(walletId, generationBefore)
 }
 
-zcashWorkerClient.onWorkerRecreated = () => {
-  logForwardingEnabled = false
-}
+zcashWorkerClient.onWorkerRecreated = () => {}
 
 function getMessageWalletId(message: any): string | undefined {
   return message?.payload?.walletId
@@ -735,8 +736,7 @@ function offscreenWarn(message: string, walletId?: string): void {
 }
 
 function offscreenError(message: string, error: unknown, walletId?: string): void {
-  const detail = error instanceof Error ? error.message : String(error)
-  forwardOffscreenLog('error', `${message}: ${detail}`, walletId)
+  logger.error(message, walletId, undefined, error)
 }
 
 function forwardOffscreenLog(
@@ -808,7 +808,6 @@ async function ensureWalletInitialized(walletId?: string): Promise<void> {
         compactBlockCdn: payload.compactBlockCdn,
         dbBytes
       })
-      trySetupLogForwarding()
       offscreenLog('Wallet reinitialized successfully', payload.walletId)
     } catch (e) {
       if (getWalletGeneration(walletId) === generationBefore) {
@@ -823,29 +822,6 @@ async function ensureWalletInitialized(walletId?: string): Promise<void> {
 
   reinitializingByWallet.set(walletId, reinitializing)
   return reinitializing
-}
-
-const setupLogForwarding = () => {
-  if (!debugLogsEnabled) return false
-  if (logForwardingEnabled) return
-
-  const worker = zcashWorkerClient.getWorker()
-  if (!worker) return false
-
-  worker.addEventListener('message', event => {
-    if (event.data?.type === 'WORKER_LOG') {
-      const { level, message, walletId } = event.data
-      chrome.runtime.sendMessage({ type: 'WORKER_LOG', level, message, walletId }).catch(() => {})
-    }
-  })
-
-  logForwardingEnabled = true
-  return true
-}
-
-function trySetupLogForwarding() {
-  if (!debugLogsEnabled) return
-  if (!logForwardingEnabled) setupLogForwarding()
 }
 
 function isWalletNotInitializedError(msg: string): boolean {
@@ -972,7 +948,6 @@ async function restoreWalletFromPersistedDb(walletId: string): Promise<boolean> 
     dbBytes
   })
   clearWalletDirty(walletId)
-  trySetupLogForwarding()
   return true
 }
 
@@ -1264,7 +1239,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     void credentialSessionHost
       .invalidateForWorkerRestart()
       .then(() => {
-        trySetupLogForwarding()
         sendResponse({ result: true })
       })
       .catch(() => sendResponse({ error: 'Credential session invalidation failed' }))
@@ -1348,7 +1322,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           })()
             .then(async result => {
               assertWalletGeneration(walletId, generationBefore)
-              trySetupLogForwarding()
               rememberInitPayload({ walletId, network, lightwalletdUrl, compactBlockCdn, dbKey })
               offscreenLog('RPC init completed (fast-path)', walletId)
               return result
@@ -1393,7 +1366,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           })()
             .then(async result => {
               assertWalletGeneration(walletId, generationBefore)
-              trySetupLogForwarding()
               if (result === 'empty' && loadedDbBytes && dbKey) {
                 offscreenWarn(`Persisted DB restore was rejected; quarantining ${dbKey}`, walletId)
                 await quarantineWalletPersistence({
@@ -1517,6 +1489,79 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
 
+  if (rpcMessage.method === 'wallet.getRecoveryCapabilities') {
+    void zcashWorkerClient
+      .requestToWorker('wallet.getRecoveryCapabilities', {})
+      .then(result => sendResponse({ result }))
+      .catch(() => sendResponse({ error: 'Could not determine Zcash recovery capabilities' }))
+    return true
+  }
+
+  if (
+    rpcMessage.method === 'wallet.enhanceTransaction' ||
+    rpcMessage.method === 'wallet.rescanRange'
+  ) {
+    const method = rpcMessage.method
+    const { walletId, txid, startHeight, endExclusive } = rpcMessage.payload
+    if (typeof walletId !== 'string' || !walletId) {
+      sendResponse({ error: 'Missing sync wallet ID' })
+      return true
+    }
+
+    const generation = getWalletGeneration(walletId)
+    let owner: SyncOwner
+    let request: Promise<RPCSchema[typeof method]['response']>
+    try {
+      owner = parseSyncOwner(rpcMessage.payload)
+      assertActiveRecoveryOwner(walletId, owner)
+      if (isWalletDirty(walletId)) throw new Error('WALLET_DIRTY: in-memory wallet is stale')
+      if (isSyncBatchActive(walletId) || getWalletLane(walletId)?.state === 'reload') {
+        throw new Error('SYNC_BUSY: wallet operation in progress')
+      }
+      if (method === 'wallet.enhanceTransaction') {
+        if (typeof txid !== 'string') throw new Error('Invalid Zcash transaction ID')
+        request = zcashWorkerClient.requestToWorker(method, { ...owner, walletId, txid })
+      } else {
+        if (typeof startHeight !== 'number' || typeof endExclusive !== 'number') {
+          throw new Error('Invalid Zcash recovery range')
+        }
+        request = zcashWorkerClient.requestToWorker(method, {
+          ...owner,
+          walletId,
+          startHeight,
+          endExclusive
+        })
+      }
+    } catch (error) {
+      sendResponse({
+        error: error instanceof Error ? error.message : 'Invalid Zcash recovery request'
+      })
+      return true
+    }
+
+    const operation = request
+      .then(result => {
+        assertWalletGeneration(walletId, generation)
+        assertActiveRecoveryOwner(walletId, owner)
+        sendResponse({ result })
+      })
+      .catch(error => {
+        if (error instanceof TimeoutError) {
+          if (getWalletGeneration(walletId) === generation) markWalletDirty(walletId)
+          sendResponse(encodeWorkerRpcError(error))
+        } else {
+          sendResponse({ error: error instanceof Error ? error.message : 'Zcash recovery failed' })
+        }
+      })
+      .finally(() => {
+        if (activeSyncBatchByWallet.get(walletId) === operation) {
+          activeSyncBatchByWallet.delete(walletId)
+        }
+      })
+    activeSyncBatchByWallet.set(walletId, operation)
+    return true
+  }
+
   if (message.method === 'wallet.syncSessionSetup') {
     const walletId = message.payload?.walletId as string | undefined
     if (!walletId) {
@@ -1555,6 +1600,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (activeSyncSessionByWallet.get(walletId)?.ownerId !== message.payload.ownerId) {
         throw new Error('STALE_WALLET_RPC: sync session owner changed')
       }
+      if (isSyncBatchActive(walletId)) {
+        throw new Error('SYNC_BUSY: wallet operation in progress')
+      }
     } catch (error) {
       sendResponse({ error: error instanceof Error ? error.message : String(error) })
       return true
@@ -1563,7 +1611,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const batchOperation = zcashWorkerClient
       .requestToWorker('wallet.prepareSyncBatch', { walletId, batchSize, refresh })
       .then(async (result: any) => {
-        trySetupLogForwarding()
         if (!result) {
           sendResponse({ result: null })
           return
@@ -1629,7 +1676,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
           }
         })
-        trySetupLogForwarding()
         sendResponse({ result: replayed })
       } catch (error: any) {
         offscreenError('replayJournalEntries failed', error, walletId)
@@ -1790,7 +1836,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (debugRequestId) {
         logDebugTiming(debugRequestId, 'offscreen-worker-roundtrip', workerStartedAt)
       }
-      trySetupLogForwarding()
       if (message.method === 'wallet.reset' && rpcWalletId) {
         clearWalletDirty(rpcWalletId)
       }
@@ -1839,7 +1884,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             message.payload,
             transactionContext
           )
-          trySetupLogForwarding()
           if (isTransactionMutation(message.method)) {
             await persistBroadcastHashSafely(
               message.method,
@@ -1884,8 +1928,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 })
 
 setTimeout(() => {
-  setupLogForwarding()
-
   chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' }).catch(err => {
     console.warn('[Offscreen] Failed to send ready signal:', err)
   })

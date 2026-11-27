@@ -28,6 +28,7 @@ function createSync({
   abortAfterFirstBatch = true
 } = {}) {
   const events = []
+  const batchSizes = []
   const progressUpdates = []
   const state = {
     snapshot,
@@ -116,6 +117,10 @@ function createSync({
       }
     },
     '@/lib/sync-job-store': { syncJobStore: jobs, shouldMarkSyncJobInterrupted },
+    '@/lib/sync-abort': { clearSyncAbort: async () => {} },
+    '@/core/worker/client': {
+      getWorkerClient: () => ({ abortPendingInit() {}, clearUnhealthy() {} })
+    },
     '@/core/wallet/pending-zcash-tx': { hasPendingZcashTxForWallet: async () => false },
     '@/config/wallet': { WALLET_CONFIG },
     '@/lib/async-utils': { withTimeout, waitForDelayOrAbort },
@@ -145,15 +150,16 @@ function createSync({
       events.push('end-session')
       if (completeWithPendingBalance) state.pendingBalance = true
     },
-    async prepareSyncBatchWithJournal() {
+    async prepareSyncBatchWithJournal(batchSize) {
       events.push('prepare-batch')
+      batchSizes.push(batchSize)
       if (completeWithPendingBalance) {
         state.scannedHeight = 3000
         return null
       }
       if (state.scannedHeight >= chainTip) return null
       state.pendingJournal += 1
-      const rangeEnd = Math.min(1100, chainTip + 1)
+      const rangeEnd = Math.min(state.scannedHeight + 1 + batchSize, chainTip + 1)
       state.scannedHeight = rangeEnd - 1
       state.aborted = abortAfterFirstBatch
       return { rangeStart: 100, rangeEnd, journalSize: 32 }
@@ -190,6 +196,7 @@ function createSync({
     runtime,
     state,
     events,
+    batchSizes,
     progressUpdates,
     run: options => runtime.syncBlocks(() => state.aborted, wallet.id, 'account', options)
   }
@@ -208,6 +215,45 @@ test('cancellation ends the chain-tip polling delay without waiting for the next
   } finally {
     clearTimeout(timer)
   }
+})
+
+test('a reload waits for recovery rollback after a failed snapshot commit', async () => {
+  const { runtime, state } = createSync({ snapshot: true, pendingJournal: 2, failPersistAt: 2 })
+  const core = runtime.walletCores.get('wallet')
+  runtime.ensureWalletReadyForSync = async () => {}
+  runtime.ensureSingleWalletSyncTarget = async () => {}
+  runtime.clearRuntimeCaches = () => {}
+  core.clearSession = () => {}
+  let loadedHeight
+  core.reloadRuntime = async () => {
+    loadedHeight = state.persistedHeight
+    state.scannedHeight = loadedHeight
+  }
+  const started = Promise.withResolvers()
+  const continueRecovery = Promise.withResolvers()
+  const recovery = assert.rejects(
+    runtime.runRecoveryMutation(
+      'wallet',
+      'account',
+      async () => {},
+      async () => {
+        state.scannedHeight = 199
+        started.resolve()
+        await continueRecovery.promise
+      }
+    ),
+    /Zcash recovery could not be saved/
+  )
+  await started.promise
+  const reload = runtime.reloadWalletRuntime('wallet', { mode: 'rpc_switch' })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(loadedHeight, undefined)
+  continueRecovery.resolve()
+  await Promise.all([recovery, reload])
+  assert.equal(state.pendingJournal, 0)
+  assert.equal(state.persistedHeight, 99)
+  assert.equal(state.scannedHeight, 99)
+  assert.equal(loadedHeight, 99)
 })
 
 test('cancelled initial chain reads leave the snapshot and journal intact without marking failure', async () => {
@@ -238,10 +284,32 @@ test('a routine background scan advances the persisted height without showing pr
     chainTip: 104,
     abortAfterFirstBatch: false
   })
-  const result = await run({ priority: 'background' })
+  const result = await run({ priority: 'background', routine: true })
   assert.equal(result.status, 'completed', JSON.stringify(result))
   assert.equal(state.persistedHeight, 104)
-  assert.equal(progressUpdates.some(update => update.isSyncing === true), false)
+  assert.equal(
+    progressUpdates.some(update => update.isSyncing === true),
+    false
+  )
+})
+
+test('routine catch-up persists at most one batch per run', async () => {
+  const { run, state, batchSizes } = createSync({ snapshot: true, abortAfterFirstBatch: false })
+  const result = await run({ priority: 'background', routine: true })
+  assert.deepEqual(result, { status: 'partial', reason: undefined })
+  assert.deepEqual(batchSizes, [100])
+  assert.equal(state.persistedHeight, 199)
+  assert.equal(state.pendingJournal, 0)
+  assert.equal(state.job.resumeOnStartup, false)
+})
+
+test('routine catch-up keeps the journal when a user action interrupts its batch', async () => {
+  const { run, state, batchSizes } = createSync({ snapshot: true })
+  assert.equal((await run({ priority: 'background', routine: true })).status, 'partial')
+  assert.deepEqual(batchSizes, [100])
+  assert.equal(state.persistedHeight, 99)
+  assert.equal(state.pendingJournal, 1)
+  assert.equal(state.job.resumeOnStartup, false)
 })
 
 test('anchors the first scan and saves its completed journal batch when interrupted', async () => {

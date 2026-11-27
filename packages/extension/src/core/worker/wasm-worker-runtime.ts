@@ -1,3 +1,5 @@
+import { fetchWithTimeout } from '@/lib/fetch-utils'
+
 interface WasmWorkerRuntime {
   Window?: unknown
   window?: unknown
@@ -26,7 +28,12 @@ export function installWasmWorkerWindowCompatibility(runtime: WasmWorkerRuntime)
   })
   compatibilityWindow = Object.freeze(
     Object.assign(Object.create(WasmWorkerWindow.prototype), {
-      fetch: (input: RequestInfo | URL, init?: RequestInit) => runtime.fetch(input, init),
+      fetch: (input: RequestInfo | URL, init?: RequestInit) =>
+        fetchWithTimeout(input, {
+          ...init,
+          fetcher: runtime.fetch.bind(runtime),
+          acceptHttpErrors: true
+        }),
       setTimeout: (...args: Parameters<WasmWorkerRuntime['setTimeout']>) =>
         runtime.setTimeout(...args),
       clearTimeout: (handle: number | undefined) => runtime.clearTimeout(handle),

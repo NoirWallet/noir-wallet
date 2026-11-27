@@ -14,6 +14,7 @@ import {
   parseEvmFeeSelection,
   parseEvmTransferIntent,
   type EvmFeeSelection,
+  type EvmReviewedFeeBudget,
   type EvmFeeEstimate,
   type EvmNonceRecoveryState,
   type ActiveEvmPortfolioContext,
@@ -393,7 +394,7 @@ export class BackgroundEvmTransferController {
     executionAccount?: PeaEvmExecutionAccount,
     executionModeValue: unknown = 'main',
     debugRequestId?: string,
-    reviewedMaxFeePerGas?: bigint
+    reviewedFeeBudget?: EvmReviewedFeeBudget
   ): Promise<BackgroundEvmTransferReview> {
     const intent = parseEvmContractCallIntent(intentValue)
     const rheaSwapBinding =
@@ -437,7 +438,7 @@ export class BackgroundEvmTransferController {
             chainAccount: context.chainAccount,
             intent,
             feeSelection,
-            reviewedMaxFeePerGas,
+            reviewedFeeBudget,
             ...(scopedRheaSwapBinding === undefined
               ? {}
               : { rheaSwapBinding: scopedRheaSwapBinding }),
@@ -764,6 +765,21 @@ export class BackgroundEvmTransferController {
 
   clearPendingTransfers(): Promise<number> {
     return this.orchestrator.clearPendingTransfers()
+  }
+
+  async clearActivity(
+    expected: TransactionAccountScope,
+    assertAvailable: () => Promise<void>
+  ): Promise<void> {
+    await accountContextTransition.runActiveOperation(async () => {
+      const { chainAccount } = await this.requireActiveContext()
+      const { keyDomainId, accountId, chainId } = chainAccount.scope
+      if (keyDomainId !== expected.keyDomainId || accountId !== expected.accountId) {
+        throw new Error('The active account changed')
+      }
+      await assertAvailable()
+      await this.orchestrator.clearActivity({ keyDomainId, accountId }, chainId)
+    })
   }
 
   cancelAllAwaitingApprovals(): Promise<number> {

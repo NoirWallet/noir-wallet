@@ -1,3 +1,4 @@
+import type { ChromeAssetPriceCacheScope } from './chrome-asset-price-cache-scope'
 import {
   parseMarketChangeCacheSnapshot,
   type MarketChangeCacheRepository,
@@ -7,12 +8,13 @@ import {
 const STORAGE_KEY = 'asset_market_change_cache_v1'
 
 export class ChromeMarketChangeCacheRepository implements MarketChangeCacheRepository {
+  constructor(private readonly scope: ChromeAssetPriceCacheScope) {}
+
   async get(): Promise<MarketChangeCacheSnapshot | null> {
-    const result = await chrome.storage.local.get(STORAGE_KEY)
-    return parseMarketChangeCacheSnapshot(result[STORAGE_KEY] ?? null)
+    return parseMarketChangeCacheSnapshot((await this.scope.read(STORAGE_KEY)) ?? null)
   }
 
   async put(snapshot: MarketChangeCacheSnapshot): Promise<void> {
-    await chrome.storage.local.set({ [STORAGE_KEY]: snapshot })
+    await this.scope.write(STORAGE_KEY, snapshot)
   }
 }

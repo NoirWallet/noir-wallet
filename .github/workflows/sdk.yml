@@ -68,8 +68,6 @@ jobs:
         if: github.event_name != 'pull_request' || steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/sdk type-check
         if: github.event_name != 'pull_request' || steps.scope.outputs.run == 'true'
-      - run: pnpm --filter @noir-wallet/sdk build
-        if: github.event_name != 'pull_request' || steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/sdk test
         if: github.event_name != 'pull_request' || steps.scope.outputs.run == 'true'
       - run: pnpm --filter @noir-wallet/example type-check

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 import { createChromeStorageAdapter } from '@/lib/chrome-storage-adapter'
@@ -170,7 +171,12 @@ export const useAddressBookStore = create<AddressBookStore>()(
         try {
           contacts = parseAddressBookContacts(value.contacts ?? [])
         } catch (error) {
-          console.error('[AddressBook] Ignoring invalid persisted contacts:', error)
+          logger.error(
+            '[AddressBook] Ignoring invalid persisted contacts',
+            undefined,
+            undefined,
+            error
+          )
         }
         return {
           ...current,
@@ -197,7 +203,7 @@ export function initializeAddressBook(): Promise<void> {
     useAddressBookStore.getState().importLegacyContacts(migration.contacts, migration.skippedCount)
   })().catch(error => {
     initialization = null
-    console.error('[AddressBook] V1 contact migration failed:', error)
+    logger.error('[AddressBook] V1 contact migration failed', undefined, undefined, error)
     throw error
   })
   return initialization

@@ -235,7 +235,7 @@ export function SwapCatalogTokenPicker({
           <TokenBalanceDisplay
             amount={balance}
             symbol={symbol}
-            priceUsd={pricesByTokenKey?.get(tokenKey(token)) ?? token.price}
+            priceUsd={pricesByTokenKey?.get(tokenKey(token))}
           />
         )
     }

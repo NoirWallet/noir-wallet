@@ -480,37 +480,29 @@ test('defaults Shield withdrawal to the highest USD balance or Ethereum USDC whe
     { tokenId: 'other', available: '1000000000000000000' },
     { tokenId: 'ethereum-usdc', available: '2000000' }
   ]
-  const model = {
-    confidential: {
-      status: 'ready',
-      assets: [
-        { protocolAssetId: 'base-usdc', availableRaw: '10000000', priceUsd: '1' },
-        { protocolAssetId: 'other', availableRaw: '1000000000000000000', priceUsd: '20' },
-        { protocolAssetId: 'ethereum-usdc', availableRaw: '2000000', priceUsd: '1' }
-      ]
-    }
-  }
+  const quotes = [
+    { assetId: baseUsdc.asset.asset.id, priceUsd: '1' },
+    { assetId: ethereumOther.asset.asset.id, priceUsd: '20' }
+  ]
 
-  expect(selectDefaultShieldWithdrawSource(options, balances, model, null, 'mainnet')).toBe(
+  expect(selectDefaultShieldWithdrawSource(options, balances, { quotes }, 'mainnet')).toBe(
     ethereumOther
   )
   expect(
     selectDefaultShieldWithdrawSource(
       options,
       balances,
-      model,
       {
-        quotes: [{ assetId: ethereumUsdc.asset.asset.id, priceUsd: '15' }]
+        quotes: [...quotes, { assetId: ethereumUsdc.asset.asset.id, priceUsd: '15' }]
       },
       'mainnet'
     )
   ).toBe(ethereumUsdc)
-  expect(selectDefaultShieldWithdrawSource(options, balances, null, null, 'mainnet')).toBe(baseUsdc)
+  expect(selectDefaultShieldWithdrawSource(options, balances, null, 'mainnet')).toBe(baseUsdc)
   expect(
     selectDefaultShieldWithdrawSource(
       options,
       balances.map(balance => ({ ...balance, available: '0' })),
-      model,
       null,
       'mainnet'
     )
@@ -684,7 +676,6 @@ test('uses independently held Shield tokens without adding them to Public assets
     selectDefaultShieldWithdrawSource(
       sendRoutes.getSources(ZCASH_CHAIN_IDS.mainnet),
       balances,
-      model,
       null,
       'mainnet'
     )

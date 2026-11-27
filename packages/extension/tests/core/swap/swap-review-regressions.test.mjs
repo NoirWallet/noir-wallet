@@ -48,7 +48,6 @@ import {
   getRheaSwapMinimumAmountMessage,
   getSafeRheaSwapRuntimeErrorMessage
 } from '../../../src/core/services/rhea-swap/rhea-swap-error.ts'
-import { createRheaSwapFetch } from '../../../src/core/services/rhea-swap/rhea-swap-fetch.ts'
 import { RheaSwapApi } from '../../../src/core/services/rhea-swap/rhea-swap-api.ts'
 import { classifyError } from '../../../src/lib/errors.ts'
 import { selectSwapFeeEstimate } from '../../../src/lib/swap-fee.ts'
@@ -185,7 +184,7 @@ function combinedSwapFixture(t, executionMode) {
         ? { status: 'signed-pending-broadcast', graph: setStatus(id, 'swap', 'signed', swapHash) }
         : { status: 'broadcast', graph: setStatus(id, 'swap', 'broadcast', swapHash) }
     },
-    prepareContractCall: async (_intent, _fee, reviewedBinding, mode, _debugId, reviewedCap) => {
+    prepareContractCall: async (_intent, _fee, reviewedBinding, mode, _debugId, reviewedBudget) => {
       assert.equal(mode, executionMode ?? 'main')
       assert.equal(reviewedBinding.sender, owner)
       calls.push('prepare-swap')
@@ -194,7 +193,7 @@ function combinedSwapFixture(t, executionMode) {
         graph: setStatus(swapId, 'swap', 'prepared'),
         review: {
           payloadFingerprint: { digestHex: 'b'.repeat(64) },
-          summary: summary(transaction, '450000', reviewedCap?.toString() ?? '2')
+          summary: summary(transaction, '450000', reviewedBudget?.maxFeePerGas.toString() ?? '2')
         }
       }
     },
@@ -263,6 +262,9 @@ function combinedSwapFixture(t, executionMode) {
     },
     changeUnlock: () => {
       account.unlockEpoch = 'different'
+    },
+    switchAccount: () => {
+      account.accountId = 'account:other'
     }
   }
 }
@@ -296,6 +298,20 @@ it('resumes an approved swap from background storage and retries only the same s
       ])
     })
   }
+})
+
+it('stops a combined swap from continuing after the active account changes', async t => {
+  const fixture = combinedSwapFixture(t)
+  const combined = fixture.create()
+  await combined.start(fixture.input)
+  fixture.approveOnchain()
+  fixture.setAllowance()
+  fixture.switchAccount()
+
+  assert.equal(await combined.get(fixture.input.approvalId), null)
+  await assert.rejects(combined.start(fixture.input))
+  await combined.poll()
+  assert.deepEqual(fixture.calls, ['approve-token'])
 })
 
 it('stops before signing when authorization, quote or transaction preparation requires another review', async t => {
@@ -882,8 +898,10 @@ it('keeps minimum amounts while removing nested provider metadata without changi
 })
 
 it('keeps a quote timeout retryable when a successful HTTP response also mentions an unsupported route', async () => {
-  const fetchQuote = createRheaSwapFetch(
-    async () =>
+  const api = new RheaSwapApi({
+    baseUrl: 'https://api.rhea.finance',
+    retry: { maxRetries: 0 },
+    fetch: async () =>
       new Response(
         JSON.stringify({
           code: -1,
@@ -894,8 +912,8 @@ it('keeps a quote timeout retryable when a successful HTTP response also mention
         }),
         { status: 200, headers: { 'content-type': 'application/json' } }
       )
-  )
-  await assert.rejects(fetchQuote('https://api.rhea.finance/api/swap/quote'), error => {
+  })
+  await assert.rejects(api.quote({}), error => {
     assert.equal(error.code, 'REQUEST_TIMEOUT')
     const runtimeMessage = getSafeRheaSwapRuntimeErrorMessage(error)
     assert.equal(runtimeMessage, 'quote_timeout')
@@ -962,7 +980,7 @@ it('uses the native RHEA paths and retries quote reads without replaying writes'
       requests.push({
         url: new URL(url),
         method: init.method,
-        auth: init.headers.Authorization,
+        auth: new Headers(init.headers).get('Authorization'),
         body: init.body && JSON.parse(init.body)
       })
       const path = new URL(url).pathname
@@ -1264,11 +1282,11 @@ it('ranks Shield Swap destinations by wallet balance value and distinguishes EVM
   const rows = buildShieldDestinationPickerRows({
     network: 'mainnet',
     options: [ethereum, base],
-    tokens: [
-      { assetId: 'nep141:zec.omft.near', price: 100 },
-      { assetId: ethereum.managed.protocolAssetId, price: 2000 },
-      { assetId: base.managed.protocolAssetId, price: 2000 }
-    ],
+    prices: { quotes: [
+      { assetId: 'bip122:00040fe8ec8471911baa1db1266ea15d/slip44:133', priceUsd: '100' },
+      { assetId: ethereum.managed.assetId, priceUsd: '2000' },
+      { assetId: base.managed.assetId, priceUsd: '2000' }
+    ] },
     balances: [
       { tokenId: ethereum.managed.protocolAssetId, available: '60000000000000000' },
       { tokenId: base.managed.protocolAssetId, available: '25000000000000000' }
@@ -1316,7 +1334,7 @@ it('only routes same-asset Confidential ZEC to the account Unified Address and b
     network: 'mainnet',
     source: zec,
     options: [zec],
-    tokens: [],
+    prices: null,
     balances,
     nativeZecDestinations: [
       { fundingSource: 'transparent', address: transparent, availableRaw: '0' },

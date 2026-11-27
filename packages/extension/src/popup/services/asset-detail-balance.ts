@@ -91,8 +91,6 @@ export function getAssetDetailCategories(
     shield: zcash ? getAssetDomainRaw(asset, 'shield') : null,
     private: evm ? getAssetDomainRaw(asset, 'private') : null
   }
-  let shieldPriceUsd: string | undefined
-
   if (evm && model?.confidential?.status === 'ready') {
     const candidates = model.confidential.assets.filter(entry => entry.assetId === asset.asset.id)
     if (
@@ -101,15 +99,6 @@ export function getAssetDetailCategories(
       candidates[0]!.decimals === asset.metadata.decimals
     ) {
       raw.shield = candidates[0]!.availableRaw
-      const candidatePrice = candidates[0]!.priceUsd
-      if (
-        candidatePrice &&
-        candidatePrice.length <= 128 &&
-        /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(candidatePrice) &&
-        new Big(candidatePrice).gt(0)
-      ) {
-        shieldPriceUsd = candidatePrice
-      }
     } else if (candidates.length === 0 && asset.balance.confidentialRaw === '0') {
       raw.shield = '0'
     }
@@ -125,11 +114,10 @@ export function getAssetDetailCategories(
   }
 
   const fiat = Object.fromEntries(
-    (['all', 'public', 'shield', 'private'] as const).map(domain => {
-      const amount = raw[domain]
-      const quote = domain === 'shield' ? (priceUsd ?? shieldPriceUsd) : priceUsd
-      return [domain, getAssetDetailBalanceFiat(amount, asset.metadata.decimals, quote)]
-    })
+    (['all', 'public', 'shield', 'private'] as const).map(domain => [
+      domain,
+      getAssetDetailBalanceFiat(raw[domain], asset.metadata.decimals, priceUsd)
+    ])
   ) as Record<AssetDomain, string | null>
   return { domains, raw, fiat }
 }

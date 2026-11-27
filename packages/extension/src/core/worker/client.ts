@@ -21,7 +21,10 @@ import type {
   RPCResponse,
   RPCMethod,
   JournalReplayOptions,
-  ZcashTransactionContext
+  SyncOwner,
+  ZcashRecoveryCapabilities,
+  ZcashTransactionContext,
+  ZcashTransactionRecoveryResult
 } from './types'
 import type { Network } from '@/types'
 import { DEFAULT_NETWORK, getNetworkConfig } from '@/lib/runtime-network'
@@ -32,9 +35,13 @@ import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { decodeWorkerRpcError } from './rpc-errors'
 import { readZeroIndexerOptionsForWorker } from '@/infrastructure/chains/zero-indexer-preferences'
 import type { ZeroIndexerOptions } from '@/core/zcash/zero-indexer'
+import { logger } from '@/lib/logger'
 
 const { LIGHT, MEDIUM, WASM_HEAVY, TRANSACTION } = WALLET_CONFIG.SYNC.RPC_TIMEOUT_MS
-const syncOwner = { ownerId: crypto.randomUUID(), ownerStartedAt: performance.timeOrigin }
+const syncOwner: SyncOwner = {
+  ownerId: crypto.randomUUID(),
+  ownerStartedAt: performance.timeOrigin
+}
 
 // Worker instance singleton
 let worker: Worker | null = null
@@ -122,6 +129,9 @@ const RPC_TIMEOUTS: Record<string, number> = {
   'wallet.syncNextBatchOptimized': WASM_HEAVY,
   'wallet.dbToBytes': WASM_HEAVY,
   'wallet.persistDb': WASM_HEAVY,
+  'wallet.getRecoveryCapabilities': LIGHT,
+  'wallet.enhanceTransaction': WASM_HEAVY,
+  'wallet.rescanRange': WASM_HEAVY,
   'wallet.getLatestHeight': LIGHT,
   'wallet.getWalletSummary': LIGHT,
   'wallet.getAccountIds': LIGHT,
@@ -164,6 +174,8 @@ const WORKER_RECOVERY_ON_TIMEOUT_METHODS = new Set([
   'init',
   'wallet.dbToBytes',
   'wallet.persistDb',
+  'wallet.enhanceTransaction',
+  'wallet.rescanRange',
   'wallet.prepareSyncBatchWithJournal',
   'wallet.prepareSyncBatch',
   'wallet.syncSessionSetup',
@@ -335,7 +347,7 @@ async function forwardToOffscreen<T = any>(
         console.log('[ZcashWorkerClient] Offscreen Document created')
       })
       .catch(err => {
-        console.error('[ZcashWorkerClient] Failed to create Offscreen:', err)
+        logger.error('Could not create Zcash offscreen document', undefined, undefined, err)
         throw err
       })
       .finally(() => {
@@ -454,7 +466,7 @@ export class ZcashWorkerClient {
 
     // Offscreen environment: create Worker directly
     if (typeof Worker === 'undefined') {
-      console.error('[ZcashWorker] Worker is not available in this environment')
+      logger.error('Zcash Worker is unavailable in this environment')
       throw new Error('Web Worker is not supported in this environment')
     }
 
@@ -462,22 +474,31 @@ export class ZcashWorkerClient {
     worker = new Worker(new URL('./zcash.worker.ts', import.meta.url), {
       type: 'module'
     })
-
     // Handle responses
-    worker.onmessage = (event: MessageEvent<RPCResponse<any>>) => {
-      const { id, result, error } = event.data
+    worker.onmessage = (
+      event: MessageEvent<
+        RPCResponse<any> | { type: 'WORKER_LOG'; level: string; message: string; walletId?: string }
+      >
+    ) => {
+      const response = event.data
+      if ('type' in response) {
+        const { level, message, walletId } = response
+        void chrome.runtime
+          .sendMessage({ type: 'WORKER_LOG', level, message, walletId })
+          .catch(() => {})
+        return
+      }
+      const { id, result, error } = response
       const pending = pendingRequests.get(id)
 
       if (pending) {
         pendingRequests.delete(id)
         if (pending.timedOut) {
-          pending.onLateResult?.(event.data)
+          pending.onLateResult?.(response)
           return
         }
         if (error) {
-          pending.reject(
-            decodeWorkerRpcError(event.data as OffscreenRpcResponse & { error: string })
-          )
+          pending.reject(decodeWorkerRpcError(response as OffscreenRpcResponse & { error: string }))
         } else {
           pending.resolve(result)
         }
@@ -486,7 +507,7 @@ export class ZcashWorkerClient {
 
     worker.onerror = error => {
       error.preventDefault()
-      console.warn('[ZcashWorker] Worker error:', error.message)
+      logger.error('Zcash Worker crashed', undefined, undefined, error.error ?? error.message)
       this.handleWorkerCrash(error.message || 'Worker error')
     }
   }
@@ -730,7 +751,7 @@ export class ZcashWorkerClient {
       } else {
         clearTimeout(timeoutId)
         pendingRequests.delete(id)
-        console.error('[ZcashWorkerClient] Worker is null before postMessage!')
+        logger.error('Zcash Worker is unavailable before the RPC request')
         reject(new Error('Worker not initialized'))
       }
     })
@@ -971,6 +992,30 @@ export class ZcashWorkerClient {
     return this.request('wallet.reconcile', { walletId: this.wid(), ...syncOwner, force })
   }
 
+  async getRecoveryCapabilities(): Promise<ZcashRecoveryCapabilities> {
+    return this.request('wallet.getRecoveryCapabilities', {})
+  }
+
+  async enhanceTransaction(
+    txid: string,
+    owner: SyncOwner = syncOwner
+  ): Promise<ZcashTransactionRecoveryResult> {
+    return this.request('wallet.enhanceTransaction', { ...owner, walletId: this.wid(), txid })
+  }
+
+  async rescanRange(
+    startHeight: number,
+    endExclusive: number,
+    owner: SyncOwner = syncOwner
+  ): Promise<void> {
+    return this.request('wallet.rescanRange', {
+      ...owner,
+      walletId: this.wid(),
+      startHeight,
+      endExclusive
+    })
+  }
+
   async sync(): Promise<void> {
     await this.ensureInitialized()
     return this.request('wallet.sync', { walletId: this.wid() })
@@ -1045,14 +1090,18 @@ export class ZcashWorkerClient {
     return this.request('wallet.getAccountBirthday', { walletId: this.wid(), accountId })
   }
 
-  async persistDb(key: string, options?: { allowDuringSyncSession?: boolean }): Promise<void> {
+  async persistDb(
+    key: string,
+    options?: { allowDuringSyncSession?: boolean; requireWrite?: boolean }
+  ): Promise<void> {
     await this.ensureInitialized()
     if (this.environment === 'extension') {
-      await this.request('wallet.persistDb', {
+      const saved = await this.request('wallet.persistDb', {
         walletId: this.wid(),
         key,
         allowDuringSyncSession: options?.allowDuringSyncSession
       })
+      if (options?.requireWrite && saved !== true) throw new Error('Wallet snapshot was not saved')
     } else {
       const { saveWalletDb } = await import('@/lib/indexed-db')
       const result = await this.requestToWorker('wallet.dbToBytes', { walletId: this.wid() })

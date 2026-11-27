@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import {
   getCachedTokens,
   parseSwapStatusResponse,
@@ -255,11 +256,6 @@ export class TransactionMonitor {
     await this.runCheck()
   }
 
-  async hasPendingTransactions(): Promise<boolean> {
-    await this.loadFromStorage()
-    return this.pendingTransactions.size > 0
-  }
-
   async handleAlarm() {
     await this.loadFromStorage()
     if (this.pendingTransactions.size === 0) {
@@ -314,7 +310,12 @@ export class TransactionMonitor {
       }
       if (migrated) await this.saveToStorage()
     } catch (error) {
-      console.error('[TransactionMonitor] Failed to load pending transactions:', error)
+      logger.error(
+        '[TransactionMonitor] Failed to load pending transactions',
+        undefined,
+        undefined,
+        error
+      )
     }
   }
 
@@ -323,7 +324,12 @@ export class TransactionMonitor {
       const txs = Array.from(this.pendingTransactions.values())
       await chrome.storage.local.set({ [STORAGE_KEY]: txs })
     } catch (error) {
-      console.error('[TransactionMonitor] Failed to save pending transactions:', error)
+      logger.error(
+        '[TransactionMonitor] Failed to save pending transactions',
+        undefined,
+        undefined,
+        error
+      )
       throw error
     }
   }
@@ -382,7 +388,12 @@ export class TransactionMonitor {
         await this.handleStale(updated)
       }
     } catch (error) {
-      console.error('[TransactionMonitor] Failed to check Intents status:', error)
+      logger.error(
+        '[TransactionMonitor] Failed to check Intents status',
+        undefined,
+        undefined,
+        error
+      )
     }
   }
 
@@ -522,7 +533,7 @@ export class TransactionMonitor {
         await this.registerZcashDestinationMonitor(tx, pendingTx, status)
       }
     } catch (error) {
-      console.error('[TransactionMonitor] Failed to update transaction:', error)
+      logger.error('[TransactionMonitor] Failed to update transaction', undefined, undefined, error)
       return
     }
 

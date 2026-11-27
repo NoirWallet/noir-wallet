@@ -67,7 +67,6 @@ export interface ShieldTokenPickerItem {
   readonly pinned?: boolean
   readonly decimals: number
   readonly priceUsd?: string | number | null
-  readonly valueUsd?: string | null
   readonly disabledReason?: string
   readonly subtitle?: string
   readonly title?: string
@@ -314,7 +313,6 @@ export function shieldFundingSources(
 export function selectDefaultShieldWithdrawSource(
   options: readonly ShieldFundingAsset[],
   balances: readonly Readonly<{ tokenId: string; available: string }>[] | null,
-  model: PortfolioReadModel | null,
   prices: AssetPriceReadModel | null,
   network: Network
 ): ShieldFundingAsset | null {
@@ -322,16 +320,7 @@ export function selectDefaultShieldWithdrawSource(
   let highestValue: Big | null = null
   let highestValueSource: ShieldFundingAsset | null = null
   for (const option of funded) {
-    const holding =
-      model?.confidential?.status === 'ready'
-        ? model.confidential.assets.find(
-            item =>
-              item.protocolAssetId === option.managed.protocolAssetId &&
-              (item.assetId === undefined || item.assetId === option.asset.asset.id) &&
-              (item.chainId === undefined || item.chainId === option.asset.asset.chainId)
-          )
-        : undefined
-    const priceUsd = findAssetPrice(prices, option.asset.asset.id)?.priceUsd ?? holding?.priceUsd
+    const priceUsd = findAssetPrice(prices, option.asset.asset.id)?.priceUsd
     if (!priceUsd) continue
     const value = new Big(
       formatBaseUnitDecimalAmount(

@@ -104,8 +104,10 @@ export const WALLET_CONFIG = {
     /** Base interval for background chain-tip probes (minutes) */
     BACKGROUND_POLL_MINUTES: 2,
     BACKGROUND_POLL_MAX_BACKOFF_MINUTES: 120,
-    BACKGROUND_MIN_GAP_BLOCKS: 1,
-    BACKGROUND_MAX_STALE_MS: 60 * 60 * 1000,
+    BACKGROUND_MIN_GAP_BLOCKS: 3,
+    ROUTINE_MAX_LAG_MS: 5 * 60 * 1000,
+    ROUTINE_TIP_CACHE_MS: 15_000,
+    ROUTINE_BATCH_MAX_BLOCKS: 100,
     BACKGROUND_SYNC_BUDGET_MS: 90 * 1000,
     BACKGROUND_SILENT_SYNC_MAX_BLOCKS: 10,
     /** Minimum age of cached wallet state before a dApp balance read requests a sync */

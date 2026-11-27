@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { useEffect, useSyncExternalStore } from 'react'
 import { SETTINGS_STORAGE_KEY, useSettingsStore } from '@/store/settings-store'
 import { SWAP_PREFERENCES_STORAGE_KEY, useSwapPreferences } from '@/store/swap-store'
@@ -198,7 +199,12 @@ export function usePersistedExtensionContextSync(): void {
           }
         })
         .catch(error => {
-          console.error('[Popup] Failed to synchronize persisted wallet context:', error)
+          logger.error(
+            '[Popup] Failed to synchronize persisted wallet context',
+            undefined,
+            undefined,
+            error
+          )
         })
     }
 

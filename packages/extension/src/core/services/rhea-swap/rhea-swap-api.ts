@@ -1,5 +1,10 @@
-import { readBoundedResponseText } from '@/lib/fetch-utils'
-import { createRheaSwapFetch } from './rhea-swap-fetch'
+import {
+  FetchResponseTooLargeError,
+  FetchTimeoutError,
+  fetchWithTimeout,
+  jsonRequestInit
+} from '@/lib/fetch-utils'
+import { classifyRheaQuoteFailure } from './rhea-swap-quote-failure'
 import {
   getRheaSwapMinimumAmountMessage,
   RheaSwapHttpError,
@@ -38,11 +43,8 @@ function safeProviderMessage(value: unknown): string | null {
 
 export class RheaSwapApi {
   private readonly baseUrl: string
-  private readonly fetch: typeof fetch
-
   constructor(private readonly config: RheaSwapApiConfig) {
     this.baseUrl = config.baseUrl.replace(/\/$/, '')
-    this.fetch = createRheaSwapFetch(config.fetch ?? globalThis.fetch)
   }
 
   quote(body: unknown, signal?: AbortSignal): Promise<unknown> {
@@ -149,60 +151,24 @@ export class RheaSwapApi {
       throw new RheaSwapHttpError('REQUEST_ABORTED', stage, 'Request aborted')
     }
     const timeoutMs = this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS
-    const controller = new AbortController()
-    let timedOut = false
-    const onCallerAbort = () => controller.abort()
-    options.signal?.addEventListener('abort', onCallerAbort, { once: true })
-    const timeout = setTimeout(() => {
-      timedOut = true
-      controller.abort()
-    }, timeoutMs)
-    const aborted = new Promise<never>((_, reject) => {
-      controller.signal.addEventListener(
-        'abort',
-        () =>
-          reject(
-            new RheaSwapHttpError(
-              timedOut ? 'REQUEST_TIMEOUT' : 'REQUEST_ABORTED',
-              stage,
-              timedOut ? `Request timed out after ${timeoutMs}ms` : 'Request aborted',
-              timedOut
-            )
-          ),
-        { once: true }
-      )
-    })
     try {
-      const response = await Promise.race([
-        (async () => {
-          const result = await this.fetch(url.toString(), {
-            method,
-            headers: {
-              'Content-Type': 'application/json',
-              ...(this.config.apiKey ? { Authorization: `Bearer ${this.config.apiKey}` } : {})
-            },
-            ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-            signal: controller.signal
-          })
-          const text = await readBoundedResponseText(
-            result,
-            stage === 'tokens' ? MAXIMUM_TOKEN_CATALOG_RESPONSE_BYTES : MAXIMUM_RESPONSE_BYTES,
-            () =>
-              new RheaSwapHttpError(
-                'INVALID_API_RESPONSE',
-                stage,
-                'RHEA Swap response is too large'
-              )
-          )
-          return { result, text }
-        })(),
-        aborted
-      ])
+      const response = await fetchWithTimeout(url.toString(), {
+        ...jsonRequestInit({ method, signal: options.signal }, options.body, {
+          'Content-Type': 'application/json',
+          ...(this.config.apiKey ? { Authorization: `Bearer ${this.config.apiKey}` } : {})
+        }),
+        fetcher: this.config.fetch,
+        timeoutMs,
+        maxBytes:
+          stage === 'tokens' ? MAXIMUM_TOKEN_CATALOG_RESPONSE_BYTES : MAXIMUM_RESPONSE_BYTES,
+        acceptHttpErrors: true
+      })
       let payload: unknown
+      const bytes = await response.arrayBuffer()
       try {
-        payload = JSON.parse(response.text)
+        payload = JSON.parse(new TextDecoder().decode(bytes))
       } catch {
-        if (response.result.ok) {
+        if (response.ok) {
           throw new RheaSwapHttpError(
             'INVALID_API_RESPONSE',
             stage,
@@ -210,9 +176,13 @@ export class RheaSwapApi {
           )
         }
       }
+      if (stage === 'quote') {
+        const failure = classifyRheaQuoteFailure(payload, response.status, bytes.byteLength)
+        if (failure) throw failure
+      }
       const minimum = safeProviderMessage(payload)
-      if (!response.result.ok) {
-        const status = response.result.status
+      if (!response.ok) {
+        const status = response.status
         const code =
           status === 401 || status === 403
             ? 'AUTH_FAILED'
@@ -255,18 +225,20 @@ export class RheaSwapApi {
       return payload.data
     } catch (error) {
       if (error instanceof RheaSwapHttpError) throw error
-      if (controller.signal.aborted) {
+      if (options.signal?.aborted) {
+        throw new RheaSwapHttpError('REQUEST_ABORTED', stage, 'Request aborted')
+      }
+      if (error instanceof FetchTimeoutError) {
+        throw new RheaSwapHttpError('REQUEST_TIMEOUT', stage, error.message, true)
+      }
+      if (error instanceof FetchResponseTooLargeError) {
         throw new RheaSwapHttpError(
-          timedOut ? 'REQUEST_TIMEOUT' : 'REQUEST_ABORTED',
+          'INVALID_API_RESPONSE',
           stage,
-          timedOut ? `Request timed out after ${timeoutMs}ms` : 'Request aborted',
-          timedOut
+          'RHEA Swap response is too large'
         )
       }
       throw new RheaSwapHttpError('HTTP_ERROR', stage, 'Network request failed', true)
-    } finally {
-      clearTimeout(timeout)
-      options.signal?.removeEventListener('abort', onCallerAbort)
     }
   }
 

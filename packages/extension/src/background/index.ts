@@ -13,13 +13,21 @@ import { handleEvmWalletChoiceMessage } from './evm-wallet-choice'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { isNativeHardwareWalletId } from '@/core/wallet/native-hardware-identity'
 import {
+  getHardwareSignOriginTab,
+  registerHardwareSignOriginLifecycle
+} from '@/lib/hardware-sign-launcher'
+import {
   isAccountChainEnabled,
   isAccountNetworkEnabled,
   parseSelectedChainIds,
   parseSelectedNetworkFamilies
 } from '@/core/wallet/account-network-selection'
 import { setAccountNetworkSelection } from '@/lib/wallet-metadata-storage'
-import { COMBINED_EVM_SWAP_ALARM, CombinedEvmSwap } from './combined-evm-swap'
+import {
+  COMBINED_EVM_SWAP_ALARM,
+  CombinedEvmSwap,
+  CombinedEvmSwapReviewError
+} from './combined-evm-swap'
 import {
   saveSwapApprovalContinuation,
   readSwapApprovalContinuation,
@@ -53,7 +61,11 @@ import {
 import { toShieldProviderErrorShape } from '@/core/dapp/shield-provider'
 import { evmDAppOperationStore } from './evm-dapp-operation-store'
 import { backgroundZcashWalletRuntime } from './zcash-wallet-runtime'
-import { DEFAULT_REQUEST_TIMEOUT_MS, UI_CONFIG } from '@/config/extension'
+import {
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  FOREGROUND_ZCASH_PROBE_PORT,
+  UI_CONFIG
+} from '@/config/extension'
 import { WALLET_CONFIG, ZEC_DECIMALS, type MnemonicWordCount } from '@/config/wallet'
 import {
   DEFAULT_NETWORK,
@@ -76,7 +88,11 @@ import { syncJobStore } from '@/lib/sync-job-store'
 import { toHardwarePcztError } from '@/core/zcash/hardware-pczt'
 import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
 import { appendDiagnosticLog, exportDiagnosticLogs } from '@/lib/diagnostic-log-store'
-import { parseDiagnosticLogDraft, sanitizeDiagnosticMessage } from '@/lib/diagnostic-log'
+import {
+  parseDiagnosticLogDraft,
+  sanitizeDiagnosticMessage,
+  writeDiagnosticConsoleError
+} from '@/lib/diagnostic-log'
 import { logDebugTiming, traceDebugStage } from '@/lib/debug-performance'
 import { hasWalletDb, loadTransactions, observeLegacyTransactionCommits } from '@/lib/indexed-db'
 import { isExternalActivityReceipt } from '@/core/activity/activity-notification'
@@ -210,6 +226,8 @@ import {
   hydrateBackgroundRheaSwapCatalog,
   prewarmBackgroundRheaSwapCatalog,
   getCachedBackgroundRheaSwapTokens,
+  getBackgroundRheaCatalogPriceTokens,
+  setRheaCatalogPriceListener,
   readRheaZcashTransferDeadline,
   recoverRheaWithdrawActivity
 } from './rhea-swap'
@@ -261,7 +279,6 @@ import {
 import {
   computeEvmSigningPayloadFingerprint,
   createConfiguredEvmRpcClient,
-  EvmRpcError,
   EvmTransactionError,
   type EvmSigningPreparePayload,
   ChromeSessionEvmPendingTransferStore,
@@ -435,10 +452,14 @@ import { readLedgerProvisioningCredential } from './ledger-signing-bridge'
 import type { ChromeTokenVisibilityRepository } from '@/infrastructure/portfolio/chrome-token-visibility'
 import type { DetectedEvmAssetRecord, UserEvmAssetRecord } from '@/core/chains/user-assets'
 import { createBackgroundUserEvmAssetRuntime } from './user-evm-assets'
-import { type SwapToken } from '@/core/services/intents-api'
+import { getCachedTokens, type SwapToken } from '@/core/services/intents-api'
+import { ASSET_PRICE_ALARM, ASSET_PRICE_PORT } from '@/core/prices/asset-price-channel'
+import { resolveCatalogPriceAssetId } from '@/core/prices/catalog-price-identity'
+import { AssetPriceStore } from './asset-price-store'
 import {
   readBackgroundSwapCatalog,
   refreshBackgroundSwapCatalog,
+  setIntentsCatalogPriceListener,
   SWAP_CATALOG_REFRESH_ALARM
 } from './swap-token-catalog'
 import {
@@ -463,6 +484,7 @@ import {
 } from './extension-display-mode'
 import { computePassiveSyncDelayMinutes, shouldRequestPeriodicSync } from './passive-sync-policy'
 import { fetchLatestBlockHeight } from '@/infrastructure/chains/rpc-registry-client'
+import { requestZcashRangeRecovery, requestZcashTransactionRecovery } from './zcash-recovery'
 import { DedupPromise, SerialTaskQueue, TimeoutError, withTimeout } from '@/lib/async-utils'
 
 import {
@@ -535,14 +557,15 @@ subscribeTransactionPortfolioInvalidations(async ({ scope, chainIds }) => {
   }
 })
 let activityCoordinator!: ReturnType<typeof createBackgroundActivityCoordinator>
-const activityStorageRepository = new IndexedDbStorageV2Repository()
+const walletStorageRepository = new IndexedDbStorageV2Repository()
+async function readActiveWalletScope() {
+  if (networkRestartRequired) return null
+  const active = (await readActiveStorageV2Snapshot(walletStorageRepository))?.manifest
+    .activeAccount
+  return active ? { ...active, network: DEFAULT_NETWORK } : null
+}
 const activityNotifications = new ActivityNotifications({
-  activeScope: async () => {
-    if (networkRestartRequired) return null
-    const active = (await readActiveStorageV2Snapshot(activityStorageRepository))?.manifest
-      .activeAccount
-    return active ? { ...active, network: DEFAULT_NETWORK } : null
-  },
+  activeScope: readActiveWalletScope,
   hasUnlockSession: () =>
     walletLockCleanupPending ? Promise.resolve(false) : credentialSession.hasUnlockSession(),
   assetMetadata: assetId =>
@@ -554,7 +577,7 @@ const activityNotifications = new ActivityNotifications({
     await rehydrateWalletStore()
     const { network, keyDomainId, accountId } = scope
     const account = useWalletStore.getState().getAccount(keyDomainId, accountId)
-    const snapshot = await readActiveStorageV2Snapshot(activityStorageRepository)
+    const snapshot = await readActiveStorageV2Snapshot(walletStorageRepository)
     const storedChains = (snapshot?.chainAccounts ?? [])
       .filter(
         chain => chain.scope.keyDomainId === keyDomainId && chain.scope.accountId === accountId
@@ -624,13 +647,35 @@ observeLegacyTransactionCommits((accountKey, previous, current) => {
     )
     .catch(() => {})
 })
-let assetPriceService = createBackgroundAssetPriceService()
-setObservationPriceReader(() => assetPriceService.readCached())
-let assetPriceRefreshTail: Promise<void> = Promise.resolve()
-const assetPriceRefreshes = new Map<
-  string,
-  { service: typeof assetPriceService; operation: ReturnType<typeof assetPriceService.refresh> }
->()
+const assetPriceStore = runtimeNetworkReady.then(
+  network =>
+    new AssetPriceStore(
+      network,
+      isCurrent => createBackgroundAssetPriceService([], [], [], isCurrent),
+      () =>
+        network === 'mainnet'
+          ? (
+              [
+                ['confidential', getCachedTokens()],
+                ['rhea', getBackgroundRheaCatalogPriceTokens()]
+              ] as const
+            ).flatMap(([provider, tokens]) =>
+              tokens.map(token => ({
+                assetId: resolveCatalogPriceAssetId(token, network, provider),
+                provider,
+                priceUsd: token.price,
+                updatedAt: token.priceUpdatedAt
+              }))
+            )
+          : []
+    )
+)
+const readAssetPrices = () => assetPriceStore.then(store => store.readCached())
+setObservationPriceReader(readAssetPrices)
+const onCatalogPricesChanged = () =>
+  void assetPriceStore.then(store => store.catalogChanged()).catch(() => {})
+setRheaCatalogPriceListener(onCatalogPricesChanged)
+setIntentsCatalogPriceListener(onCatalogPricesChanged)
 let assetMarketHistoryService = createBackgroundAssetMarketHistoryService()
 const rheaSwapService = DEFAULT_NETWORK === 'mainnet' ? createBackgroundRheaSwapService() : null
 const combinedSwapRepository = new IndexedDbTransactionRepository()
@@ -638,14 +683,13 @@ const combinedEvmSwap = new CombinedEvmSwap({
   router: () => evmTransferRouter,
   quote: rheaSwapService,
   readAccount: async () => {
-    await rehydrateWalletStore()
-    const state = useWalletStore.getState()
+    const active = await readActiveWalletScope()
     return {
-      network: state.currentNetwork,
-      walletId: state.currentWalletId,
-      accountId: state.currentAccountId,
+      network: DEFAULT_NETWORK,
+      walletId: active?.keyDomainId ?? null,
+      accountId: active?.accountId ?? null,
       unlockEpoch:
-        networkRestartRequired || walletLockCleanupPending
+        !active || networkRestartRequired || walletLockCleanupPending
           ? null
           : await credentialSession.getUnlockEpoch()
     }
@@ -821,25 +865,7 @@ const chainEndpointSettingsCoordinator = new ChainEndpointSettingsCoordinator()
 const evmDAppNetworkSwitchCoordinator = new EvmDAppNetworkSwitchCoordinator()
 
 function refreshAssetPrices(assetId?: string) {
-  const service = assetPriceService
-  const fullRefresh = assetPriceRefreshes.get('*')
-  if (assetId && fullRefresh?.service === service) return fullRefresh.operation
-  const key = assetId ?? '*'
-  const pending = assetPriceRefreshes.get(key)
-  if (pending?.service === service) return pending.operation
-  const operation = assetPriceRefreshTail.then(
-    () => service.refresh(assetId),
-    () => service.refresh(assetId)
-  )
-  assetPriceRefreshes.set(key, { service, operation })
-  assetPriceRefreshTail = operation.then(
-    () => undefined,
-    () => undefined
-  )
-  void assetPriceRefreshTail.then(() => {
-    if (assetPriceRefreshes.get(key)?.operation === operation) assetPriceRefreshes.delete(key)
-  })
-  return operation
+  return assetPriceStore.then(store => store.refresh(assetId))
 }
 const networkSwitchBitcoinDerivation = new BitcoinMultichainDerivationClient({
   credentials: credentialSession
@@ -901,31 +927,21 @@ const walletDAppConnection = new WalletDAppConnectionCoordinator({
 
 const currentDAppEvmNetworks = new CurrentDAppEvmNetworkCoordinator({
   read: async (): Promise<CurrentDAppEvmNetworkState | null> => {
-    await rehydrateWalletStore()
+    if (networkRestartRequired) return null
     const dapp = await dappManager.getCurrentTabDApp()
     if (!dapp) return null
-    const wallet = useWalletStore.getState()
     const active = await accountNetworksCoordinator.readActiveAccount()
     const networkState = await dappManager.getEvmNetworkState(dapp.origin)
-    if (
-      !active ||
-      !networkState ||
-      !wallet.currentWalletId ||
-      !wallet.currentAccountId ||
-      wallet.currentNetwork !== DEFAULT_NETWORK ||
-      active.reference.walletId !== wallet.currentWalletId ||
-      active.reference.accountId !== wallet.currentAccountId
-    )
-      return null
+    if (!active || !networkState) return null
+    const { walletId, accountId } = active.reference
     const sourceChainId = (await evmDAppOrigins.get(dapp.origin)).getCaip2ChainId()
     if (!active.chainIds.includes(sourceChainId)) return null
     const authorization = await dappManager.getChainAuthorization(dapp.origin, sourceChainId)
     if (
-      !authorization?.accounts.some(
-        ref => ref.walletId === wallet.currentWalletId && ref.accountId === wallet.currentAccountId
-      )
-    )
+      !authorization?.accounts.some(ref => ref.walletId === walletId && ref.accountId === accountId)
+    ) {
       return null
+    }
     const unlockEpoch = await credentialSession.getUnlockEpoch()
     if (!unlockEpoch) return null
     const catalog = resolveEvmNetworkCatalog(
@@ -942,9 +958,7 @@ const currentDAppEvmNetworks = new CurrentDAppEvmNetworkCoordinator({
               scope.chainId === network.chainId &&
               (scope.accounts === undefined ||
                 scope.accounts.some(
-                  ref =>
-                    ref.walletId === wallet.currentWalletId &&
-                    ref.accountId === wallet.currentAccountId
+                  ref => ref.walletId === walletId && ref.accountId === accountId
                 ))
           )
       )
@@ -955,8 +969,8 @@ const currentDAppEvmNetworks = new CurrentDAppEvmNetworkCoordinator({
       options,
       selectionContext: {
         origin: dapp.origin,
-        walletId: wallet.currentWalletId,
-        accountId: wallet.currentAccountId,
+        walletId,
+        accountId,
         networkMode: DEFAULT_NETWORK,
         activeChainId: sourceChainId,
         authorizationRevision: await dappManager.getAuthorizationRevision(dapp.origin),
@@ -1206,53 +1220,44 @@ async function handleEvmDAppNetworkRequest(
 ): Promise<void> {
   const runtime = await evmDAppOrigins.get(origin)
   const networkState = await dappManager.getEvmNetworkState(origin)
-  const account = useWalletStore.getState()
-  const accountIdentity = [
-    account.currentWalletId,
-    account.currentAccountId,
-    account.currentNetwork
-  ]
+  const readActiveAccount = readActiveWalletScope
+  const account = await readActiveAccount()
+  const networkMode = DEFAULT_NETWORK
   const sourceChainId = runtime.getCaip2ChainId()
   const sourceRuntimeKey = multichainRuntimeKey
   const sourceRuntimeGeneration = currentDAppEvmRuntimeGeneration
   const authorizationRevision = await dappManager.getAuthorizationRevision(origin)
-  const authorization = JSON.stringify(
-    await dappManager.getChainAuthorization(origin, sourceChainId)
-  )
-  if (action === 'switch') {
-    const grant = await dappManager.getChainAuthorization(origin, sourceChainId)
-    if (
-      !grant?.accounts.some(
-        ref =>
-          ref.walletId === account.currentWalletId && ref.accountId === account.currentAccountId
-      )
-    ) {
-      throw new Eip1193ProviderError(
-        4100,
-        'Connect the current EVM account before switching networks.'
-      )
-    }
+  const grant = await dappManager.getChainAuthorization(origin, sourceChainId)
+  const authorization = JSON.stringify(grant)
+  if (
+    action === 'switch' &&
+    !grant?.accounts.some(
+      ref => ref.walletId === account?.keyDomainId && ref.accountId === account?.accountId
+    )
+  ) {
+    throw new Eip1193ProviderError(
+      4100,
+      'Connect the current EVM account before switching networks.'
+    )
   }
   const readUnlockEpoch = async () =>
-    account.currentWalletId
-      ? (await credentialSession.getCredentialBinding(account.currentWalletId).catch(() => null))
+    account
+      ? (await credentialSession.getCredentialBinding(account.keyDomainId).catch(() => null))
           ?.globalUnlockEpoch
       : undefined
   const unlockEpoch = await readUnlockEpoch()
   const validateRequest = async (): Promise<void> => {
-    const current = useWalletStore.getState()
+    const current = await readActiveAccount()
     if (
+      networkRestartRequired ||
+      networkMode !== DEFAULT_NETWORK ||
       sourceRuntimeKey !== multichainRuntimeKey ||
       sourceRuntimeGeneration !== currentDAppEvmRuntimeGeneration ||
       sourceChainId !== (await evmDAppOrigins.get(origin)).getCaip2ChainId() ||
       JSON.stringify(networkState) !==
         JSON.stringify(await dappManager.getEvmNetworkState(origin)) ||
-      JSON.stringify(accountIdentity) !==
-        JSON.stringify([
-          current.currentWalletId,
-          current.currentAccountId,
-          current.currentNetwork
-        ]) ||
+      current?.keyDomainId !== account?.keyDomainId ||
+      current?.accountId !== account?.accountId ||
       authorization !==
         JSON.stringify(await dappManager.getChainAuthorization(origin, sourceChainId)) ||
       unlockEpoch !== (await readUnlockEpoch()) ||
@@ -1269,7 +1274,17 @@ async function handleEvmDAppNetworkRequest(
     requested,
     origin,
     action,
-    JSON.stringify([accountIdentity, sourceChainId, sourceRuntimeKey, authorization, unlockEpoch]),
+    JSON.stringify([
+      account?.keyDomainId,
+      account?.accountId,
+      networkMode,
+      sourceChainId,
+      sourceRuntimeKey,
+      sourceRuntimeGeneration,
+      authorizationRevision,
+      authorization,
+      unlockEpoch
+    ]),
     {
       readSettings: () => chainEndpointSettingsCoordinator.read(),
       isChainAuthorized: async chainId => {
@@ -1297,16 +1312,9 @@ async function handleEvmDAppNetworkRequest(
           validateRequest
         ),
       requestApproval: async (approvalOrigin, approvalAction, data) => {
-        const executionMode =
-          account.currentWalletId && account.currentAccountId
-            ? (
-                await dappExecutionModeCoordinator.read({
-                  network: DEFAULT_NETWORK,
-                  keyDomainId: account.currentWalletId,
-                  accountId: account.currentAccountId
-                })
-              ).mode
-            : 'main'
+        const executionMode = account
+          ? (await dappExecutionModeCoordinator.read(account)).mode
+          : 'main'
         await validateRequest()
         return dappHandler.requestExternalApproval(approvalOrigin, approvalAction, {
           ...data,
@@ -1642,10 +1650,14 @@ async function reloadMultichainRuntime(
         }),
     dispatch: dispatchDAppChainRequest
   })
-  assetPriceService = createBackgroundAssetPriceService(
-    userAssets.definitions,
-    intentsProtocolAssets,
-    intentsProtocolPriceMappings
+  const priceStore = await assetPriceStore
+  priceStore.replaceSources(isCurrent =>
+    createBackgroundAssetPriceService(
+      userAssets.definitions,
+      intentsProtocolAssets,
+      intentsProtocolPriceMappings,
+      isCurrent
+    )
   )
   assetMarketHistoryService = createBackgroundAssetMarketHistoryService(
     userAssets.definitions,
@@ -2214,6 +2226,7 @@ if (__EXTENSION_UPDATES_ENABLED__) {
 const debugLogsEnabled = typeof __DEBUG_LOGS__ !== 'boolean' || __DEBUG_LOGS__
 let forwardedDiagnosticSequence = 0
 logger.configureDiagnostics(appendDiagnosticLog)
+logger.captureUnhandledErrors(self)
 configureLedgerSigningCoordinator(async scope => {
   if (networkRestartRequired || !(await credentialSession.hasUnlockSession()))
     throw new Error('Wallet is locked or restarting')
@@ -2237,6 +2250,7 @@ configureLedgerSigningCoordinator(async scope => {
 })
 registerLedgerSigningTabLifecycle()
 registerKeystoneEvmSigningTabLifecycle()
+registerHardwareSignOriginLifecycle()
 
 logger.info(`Background service worker started version=${__APP_VERSION__} build=${__BUILD_TIME__}`)
 
@@ -2246,7 +2260,12 @@ const trustedStorageAccessReady = Promise.all([
 ])
   .then(() => true)
   .catch(error => {
-    console.error('[Security] Failed to restrict extension storage access:', error)
+    logger.error(
+      '[Security] Failed to restrict extension storage access',
+      undefined,
+      undefined,
+      error
+    )
     return false
   })
 
@@ -2387,8 +2406,15 @@ async function ensureBalanceSyncAlarm(probeFailed?: boolean): Promise<void> {
   }
 }
 
-syncScheduler.onPassiveSyncOutcome = status => {
+function routineLagKey(network: Network, walletId: string): string {
+  return `zcash-routine-lag:${network}:${walletId}`
+}
+
+syncScheduler.onPassiveSyncOutcome = (status, network, walletId) => {
   if (status === 'aborted' || status === 'skipped') return
+  if (status === 'completed') {
+    void chrome.storage.session.remove(routineLagKey(network, walletId)).catch(() => {})
+  }
   void ensureBalanceSyncAlarm(status === 'failed').catch(error => {
     console.warn('[Background] Failed to schedule next balance sync after scan:', error)
   })
@@ -2523,14 +2549,17 @@ async function checkOffscreenHealth(): Promise<void> {
   }
 }
 
-async function requestPeriodicBalanceSync(): Promise<
-  'scheduled' | 'idle' | 'skipped' | 'probe-failed'
-> {
-  if (syncScheduler.isRunning()) return 'skipped'
+const routineTipProbes = new Map<string, DedupPromise<number>>()
+let routineTip: { key: string; height: number; observedAt: number } | undefined
+
+async function requestPeriodicBalanceSync(
+  homeSignal?: AbortSignal
+): Promise<'scheduled' | 'idle' | 'skipped' | 'probe-failed'> {
+  if (homeSignal?.aborted || syncScheduler.isRunning() || syncScheduler.isTxPaused())
+    return 'skipped'
   await Promise.all([rehydrateWalletStore(), useAccountDataStore.persist.rehydrate()])
-  const { currentWalletId, currentNetwork } = useWalletStore.getState()
-  if (!currentWalletId) return 'skipped'
-  const currentAccountId = useWalletStore.getState().currentAccountId
+  const { currentWalletId, currentNetwork, currentAccountId } = useWalletStore.getState()
+  if (!currentWalletId || homeSignal?.aborted) return 'skipped'
   const currentAccount = currentAccountId
     ? useWalletStore.getState().getAccount(currentWalletId, currentAccountId)
     : null
@@ -2538,45 +2567,127 @@ async function requestPeriodicBalanceSync(): Promise<
     return 'skipped'
   }
 
-  const syncState = useAccountDataStore
+  const rpcUrl = getNetworkConfig(currentNetwork).rpcUrl
+  const isCurrent = () => {
+    const state = useWalletStore.getState()
+    const account = state.getAccount(currentWalletId, currentAccount.id)
+    return (
+      !homeSignal?.aborted &&
+      !syncScheduler.isRunning() &&
+      !syncScheduler.isTxPaused() &&
+      state.currentNetwork === currentNetwork &&
+      state.currentWalletId === currentWalletId &&
+      state.currentAccountId === currentAccountId &&
+      getNetworkConfig(currentNetwork).rpcUrl === rpcUrl &&
+      !!account &&
+      isAccountNetworkEnabled(account, currentNetwork, 'zcash')
+    )
+  }
+  const [hasUnlockSession, snapshot] = await Promise.all([
+    credentialSession.hasUnlockSession(),
+    hasWalletDb(`${currentNetwork}_${currentWalletId}`)
+  ])
+  if (!isCurrent() || (!hasUnlockSession && (homeSignal || !snapshot))) return 'skipped'
+  const key = `${currentNetwork}:${currentWalletId}:${rpcUrl}`
+  let networkHeight: number
+  try {
+    if (
+      routineTip?.key === key &&
+      Date.now() - routineTip.observedAt < WALLET_CONFIG.SYNC.ROUTINE_TIP_CACHE_MS
+    ) {
+      networkHeight = routineTip.height
+    } else {
+      let probe = routineTipProbes.get(key)
+      if (!probe) {
+        probe = new DedupPromise<number>()
+        routineTipProbes.set(key, probe)
+      }
+      try {
+        networkHeight = await probe.run(
+          () => fetchLatestBlockHeight(rpcUrl),
+          height => {
+            routineTip = { key, height, observedAt: Date.now() }
+          }
+        )
+      } finally {
+        if (routineTipProbes.get(key) === probe) routineTipProbes.delete(key)
+      }
+    }
+  } catch {
+    return isCurrent() ? 'probe-failed' : 'skipped'
+  }
+  if (!isCurrent()) return 'skipped'
+  const { currentHeight } = useAccountDataStore
     .getState()
     .getWalletSyncState(currentNetwork, currentWalletId)
-  const hasUnlockSession = await credentialSession.hasUnlockSession()
-  const [isWalletUiOpen, hasPendingCrossChainTransaction, hasPendingZcashTransaction, snapshot] =
-    await Promise.all([
-      isWalletUiContextOpen(),
-      transactionMonitor.hasPendingTransactions(),
-      zcashTxMonitor.hasPendingTransactions(),
-      hasWalletDb(`${currentNetwork}_${currentWalletId}`)
-    ])
-  const hasPendingTransactions = hasPendingCrossChainTransaction || hasPendingZcashTransaction
-  let networkHeight: number | null = null
-  if (!isWalletUiOpen && !hasPendingTransactions) {
-    try {
-      networkHeight = await fetchLatestBlockHeight(getNetworkConfig(currentNetwork).rpcUrl)
-    } catch {
-      return 'probe-failed'
-    }
+  const lagKey = routineLagKey(currentNetwork, currentWalletId)
+  const now = Date.now()
+  const stored = (await chrome.storage.session.get(lagKey))[lagKey]
+  if (!isCurrent()) return 'skipped'
+  if (networkHeight <= currentHeight) {
+    if (typeof stored === 'number') await chrome.storage.session.remove(lagKey)
+    return 'idle'
   }
+  const lagObservedAt = typeof stored === 'number' && stored <= now ? stored : now
+  if (lagObservedAt !== stored) await chrome.storage.session.set({ [lagKey]: lagObservedAt })
+  if (!isCurrent() || (homeSignal && !(await credentialSession.hasUnlockSession())))
+    return 'skipped'
   if (
     !shouldRequestPeriodicSync({
       isSchedulerRunning: syncScheduler.isRunning(),
-      isWalletUiOpen,
-      hasPendingTransactions,
-      isWalletLocked: backgroundZcashWalletRuntime.isLocked() && !hasUnlockSession,
+      isWalletLocked: !hasUnlockSession,
       hasPersistedSnapshot: snapshot,
-      currentHeight: syncState.currentHeight,
+      currentHeight,
       networkHeight,
-      lastSyncTime: syncState.lastSyncTime,
-      now: Date.now(),
+      lagObservedAt,
+      now,
       minBlockGap: WALLET_CONFIG.SYNC.BACKGROUND_MIN_GAP_BLOCKS,
-      maxStaleMs: WALLET_CONFIG.SYNC.BACKGROUND_MAX_STALE_MS
+      maxLagMs: WALLET_CONFIG.SYNC.ROUTINE_MAX_LAG_MS
     })
   ) {
-    return networkHeight !== null ? 'idle' : 'skipped'
+    return 'idle'
   }
 
-  return syncScheduler.requestPassiveSync(0) ? 'scheduled' : 'skipped'
+  return isCurrent() && syncScheduler.requestPassiveSync() ? 'scheduled' : 'skipped'
+}
+
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name === ASSET_PRICE_PORT) {
+    if (
+      !port.sender ||
+      getOwnExtensionSenderContext(port.sender, chrome.runtime.id) !== 'extension-page'
+    ) {
+      port.disconnect()
+      return
+    }
+    let disconnected = false
+    port.onDisconnect.addListener(() => {
+      disconnected = true
+    })
+    void assetPriceStore
+      .then(store => {
+        if (!disconnected) store.attach(port)
+      })
+      .catch(() => port.disconnect())
+    return
+  }
+  if (port.name !== FOREGROUND_ZCASH_PROBE_PORT) return
+  if (
+    !port.sender ||
+    getOwnExtensionSenderContext(port.sender, chrome.runtime.id) !== 'extension-page'
+  ) {
+    port.disconnect()
+    return
+  }
+  const controller = new AbortController()
+  port.onDisconnect.addListener(() => controller.abort())
+  void requestPeriodicBalanceSync(controller.signal)
+    .catch(() => {})
+    .finally(() => port.disconnect())
+})
+
+syncScheduler.onRoutineYielded = () => {
+  void requestPeriodicBalanceSync().catch(() => {})
 }
 
 async function handlePeriodicBalanceSyncAlarm(): Promise<void> {
@@ -2601,27 +2712,13 @@ function refreshActiveZcashReceiveConfirmations(): void {
   }
 }
 
-async function isWalletUiContextOpen(): Promise<boolean> {
-  if (typeof chrome.runtime.getContexts !== 'function') return false
-
-  try {
-    const contexts = await chrome.runtime.getContexts({
-      contextTypes: [
-        chrome.runtime.ContextType.TAB,
-        chrome.runtime.ContextType.POPUP,
-        chrome.runtime.ContextType.SIDE_PANEL
-      ],
-      documentOrigins: [new URL(chrome.runtime.getURL('/')).origin]
-    })
-    return contexts.length > 0
-  } catch {
-    return false
-  }
-}
-
 void trustedStorageAccessReady.then(() => initializeAnalyticsReporting()).catch(() => {})
 
 chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === ASSET_PRICE_ALARM) {
+    void assetPriceStore.then(store => store.onAlarm()).catch(() => {})
+    return
+  }
   if (alarm.name === COMBINED_EVM_SWAP_ALARM) {
     void multichainStartupReady.then(() => combinedEvmSwap.poll()).catch(() => {})
     return
@@ -3164,7 +3261,16 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       )
       .then(
         result => sendResponse({ result }),
-        () => sendResponse({ error: 'Swap review is unavailable. Review the Swap again.' })
+        error => {
+          if (runtimeMessage.type === 'START_COMBINED_EVM_SWAP') {
+            const reason =
+              error instanceof CombinedEvmSwapReviewError
+                ? error.reason
+                : mapEvmWalletRuntimeError(error).code
+            logger.warn(`[Swap] ${runtimeMessage.type} failed (${reason})`)
+          }
+          sendResponse({ error: 'Swap review is unavailable. Review the Swap again.' })
+        }
       )
     return true
   }
@@ -3603,8 +3709,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       },
       { walletId: message.walletId }
     ).catch(() => {})
+    if (message.level === 'error') {
+      writeDiagnosticConsoleError(`[worker] ${message.message}`)
+      return false
+    }
     if (!debugLogsEnabled) return false
-    if (message.walletId || message.level === 'error' || message.level === 'warn') {
+    if (message.walletId || message.level === 'warn') {
       const rawLevel = message.level as string
       const fallbackPrefix = `[Worker ${rawLevel.toUpperCase()}]`
       const prefix = message.walletId ? logger.getPrefix(message.walletId) : fallbackPrefix
@@ -3764,6 +3874,17 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'GET_BACKGROUND_INITIALIZATION_STATE') {
+    if (message.includeZcashRecovery === true) {
+      void getWorkerClient('')
+        .getRecoveryCapabilities()
+        .catch(() => null)
+        .then(capabilities => {
+          sendResponse({
+            zcashRecoverySupported: !!(capabilities?.transaction && capabilities.range)
+          })
+        })
+      return true
+    }
     silentInitializeWasm()
       .then(() => sendResponse({ ready: true }))
       .catch(() => sendResponse({ ready: false }))
@@ -3876,6 +3997,41 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
               : 'Network mode could not be switched'
         })
       })
+    return true
+  }
+
+  if (message.type === 'CLEAR_EVM_ACTIVITY') {
+    void Promise.resolve()
+      .then(async () => {
+        if (!evmTransferRouter) throw new Error('EVM transfers are unavailable')
+        await evmTransferRouter.clearActivity(
+          message.chainId as string,
+          {
+            keyDomainId: parseKeyDomainId(message.walletId),
+            accountId: parseAccountId(message.accountId)
+          },
+          async () => {
+            const settings = await chainEndpointSettingsCoordinator.read()
+            if (
+              networkRestartRequired ||
+              message.networkMode !== DEFAULT_NETWORK ||
+              walletLockCleanupPending ||
+              resolveActiveEvmNetworkConfig(DEFAULT_NETWORK, settings).chainId !==
+                message.chainId ||
+              !(await credentialSession.hasUnlockSession())
+            ) {
+              throw new Error('The wallet is locked or the active network changed')
+            }
+          }
+        )
+        void chrome.runtime.sendMessage({ type: 'TRANSACTION_UPDATED' }).catch(() => {})
+        sendResponse({ result: true })
+      })
+      .catch(() =>
+        sendResponse({
+          error: 'Could not clear activity. Check the account and network and try again.'
+        })
+      )
     return true
   }
 
@@ -4285,8 +4441,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         }
       }
       if (message.action === 'refresh' && model) {
-        void assetPriceService
-          .readCached()
+        void readAssetPrices()
           .then(prices => observePortfolioBalances(model, prices))
           .catch(() => {})
       }
@@ -4360,10 +4515,7 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       })
       .then(result => {
         if (result && message.action !== 'read') {
-          void Promise.allSettled([
-            assetPriceService.readCached(),
-            portfolioCoordinator?.readCachedActive()
-          ])
+          void Promise.allSettled([readAssetPrices(), portfolioCoordinator?.readCachedActive()])
             .then(([prices, portfolio]) =>
               observeActivityReceipts(
                 result.scope,
@@ -4416,12 +4568,15 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
     return true
   }
 
-  if (message.type === 'GET_ASSET_PRICES') {
-    const operation =
-      message.action === 'read'
-        ? assetPriceService.readCached()
-        : refreshAssetPrices(typeof message.assetId === 'string' ? message.assetId : undefined)
-    void operation
+  if (message.type === 'REFRESH_ASSET_PRICES') {
+    void runtimeNetworkReady
+      .then(network =>
+        message.network === network
+          ? refreshAssetPrices(
+              typeof message.assetId === 'string' ? parseAssetId(message.assetId).id : undefined
+            )
+          : null
+      )
       .then(result => sendResponse({ result }))
       .catch(() => sendResponse({ result: null }))
     return true
@@ -4697,10 +4852,9 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       })
       .catch(error => {
         const safeMessage = getSafeRheaSwapRuntimeErrorMessage(error)
-        console.error('[RHEA Swap] Request failed', {
-          operation: message.type,
-          errorName: error instanceof Error ? error.name : 'UnknownError',
-          errorMessage: safeMessage
+        logger.error(`[RHEA Swap] ${message.type} failed`, undefined, undefined, {
+          name: error instanceof Error ? error.name : 'UnknownError',
+          message: safeMessage
         })
         sendResponse({ error: safeMessage })
       })
@@ -5022,27 +5176,20 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         sendResponse({ result })
       })
       .catch(error => {
-        logger.warn(
-          `[EVM Transfer] ${message.type} failed (${error instanceof Error ? error.name : 'UnknownError'})`
+        logger.error(
+          `[EVM Transfer] ${message.type} failed`,
+          undefined,
+          undefined,
+          error instanceof EvmTransactionError && error.rpcFailure
+            ? {
+                name: error.name,
+                message: error.message,
+                code: error.code,
+                rpcCode: error.rpcFailure.code,
+                rpcMethod: error.rpcFailure.method
+              }
+            : error
         )
-        console.error('[EVM Transfer] Request failed', {
-          operation: message.type,
-          errorName: error instanceof Error ? error.name : 'UnknownError',
-          ...(message.type === 'GET_EVM_TOKEN_BALANCE'
-            ? {}
-            : {
-                errorMessage: error instanceof Error ? error.message : 'EVM transfer request failed'
-              }),
-          ...(error instanceof EvmRpcError
-            ? { rpcErrorCode: error.code, rpcCode: error.rpcCode, rpcMethod: error.rpcMethod }
-            : error instanceof EvmTransactionError && error.rpcFailure
-              ? {
-                  rpcErrorCode: error.code,
-                  rpcCode: error.rpcFailure.code,
-                  rpcMethod: error.rpcFailure.method
-                }
-              : {})
-        })
         sendResponse({ error: mapEvmWalletRuntimeError(error, message.type) })
       })
     return true
@@ -5622,19 +5769,37 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
   }
 
   if (message.type === 'RESYNC_ZCASH_WALLET') {
-    enqueueWalletSessionTransition(() =>
-      accountContextTransition.runActiveOperation(() =>
-        handleResyncZcashWallet(
-          message.walletId as string,
-          message.accountId as string,
-          message.birthdayHeight as number
-        )
+    const scope = createZcashRecoveryScope(message.walletId, message.accountId)
+    scope
+      .assertCurrent()
+      .then(() =>
+        syncScheduler.runRecoveryStep(() => handleResyncZcashWallet(scope, message.birthdayHeight))
       )
-    )
       .then(() => sendResponse({ success: true }))
       .catch(error =>
         sendResponse({
           error: error instanceof Error ? error.message : 'Zcash resync failed'
+        })
+      )
+    return true
+  }
+
+  if (message.type === 'RESCAN_ZCASH_TRANSACTION' || message.type === 'RESCAN_ZCASH_RANGE') {
+    const scope = createZcashRecoveryScope(message.walletId, message.accountId)
+    const request =
+      message.type === 'RESCAN_ZCASH_TRANSACTION'
+        ? requestZcashTransactionRecovery(scope, message.txid)
+        : requestZcashRangeRecovery(scope, message.startHeight, message.endHeight)
+    request
+      .then(data => sendResponse({ success: true, data }))
+      .catch(error =>
+        sendResponse({
+          error:
+            message.type === 'RESCAN_ZCASH_TRANSACTION'
+              ? 'Zcash transaction recovery could not complete. Try again.'
+              : error instanceof Error
+                ? error.message
+                : 'Zcash range recovery failed.'
         })
       )
     return true
@@ -6798,30 +6963,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
   if (isRuntimeRecord(message) && message.type === 'CONTINUE_LEDGER_SWAP_IN_PANEL') {
-    const windowId = sender.tab?.windowId
+    const tab = sender.tab
+    const transactionId = message.transactionId
     if (
       !hasExactRuntimeKeys(message, ['type', 'transactionId']) ||
       !isOwnExtensionRouteSender(sender, chrome.runtime.id, '/hardware/ledger-sign') ||
-      typeof windowId !== 'number' ||
-      !Number.isInteger(windowId) ||
-      typeof message.transactionId !== 'string' ||
-      message.transactionId.length === 0 ||
-      message.transactionId.length > 128 ||
-      message.transactionId.trim() !== message.transactionId
+      !tab ||
+      !Number.isInteger(tab.windowId) ||
+      typeof transactionId !== 'string' ||
+      transactionId.length === 0 ||
+      transactionId.length > 128 ||
+      transactionId.trim() !== transactionId
     ) {
       sendResponse({ error: 'Unauthorized Ledger continuation sender' })
       return true
     }
-    void chrome.runtime
-      .sendMessage({
+    void (async () => {
+      const originTabId = await getHardwareSignOriginTab(tab, sender.url)
+      const windowId =
+        originTabId === undefined ? tab.windowId : (await chrome.tabs.get(originTabId)).windowId
+      return chrome.runtime.sendMessage({
         type: 'LEDGER_SWAP_APPROVAL_SIGNED',
-        transactionId: message.transactionId,
+        transactionId,
         windowId
       })
-      .then(
-        handled => sendResponse({ result: handled === true }),
-        () => sendResponse({ result: false })
-      )
+    })().then(
+      handled => sendResponse({ result: handled === true }),
+      () => sendResponse({ result: false })
+    )
     return true
   }
   if (isRuntimeRecord(message) && message.type === 'REFRESH_EXTENSION_UPDATE') {
@@ -6845,6 +7014,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true
   }
   if (isRuntimeRecord(message) && message.type === 'GET_WALLET_SESSION_STATE') {
+    return handleRuntimeMessage(message, sender, sendResponse)
+  }
+  if (
+    isRuntimeRecord(message) &&
+    message.type === 'GET_BACKGROUND_INITIALIZATION_STATE' &&
+    message.includeZcashRecovery === true
+  ) {
     return handleRuntimeMessage(message, sender, sendResponse)
   }
   if (isRuntimeRecord(message) && message.type === 'GET_ACTIVE_WALLET_PRESENCE') {
@@ -7164,10 +7340,10 @@ async function performWalletUnlock(password: string): Promise<any> {
   try {
     await rehydrateWalletStore()
     await backgroundZcashWalletRuntime.initialize()
-    await backgroundZcashWalletRuntime.lock()
     if (!(await syncScheduler.waitForActiveSyncIdle(30_000))) {
       throw new Error('Wallet sync is still stopping. Please try unlocking again.')
     }
+    await backgroundZcashWalletRuntime.lock()
 
     const walletState = useWalletStore.getState()
     const hasRetainedV1Wallet = walletState.wallets.some(
@@ -7235,7 +7411,6 @@ async function performWalletUnlock(password: string): Promise<any> {
         }
       }
     }
-
     let result = await backgroundZcashWalletRuntime.unlock(password, {
       allowMissingCredentialRecovery: true
     })
@@ -7368,6 +7543,7 @@ function handleWalletCreated(
 function beginWalletLockQuiesce(): Promise<
   { readonly success: true } | { readonly success: false; readonly error: unknown }
 > {
+  zcashRecoveryScopeVersion++
   walletLockCleanupPending = true
   cancelAllKeystoneEvmSigning('Wallet was locked. Review this action again.')
   backgroundZcashWalletRuntime.beginLock()
@@ -7375,10 +7551,16 @@ function beginWalletLockQuiesce(): Promise<
   syncScheduler.pauseForTx()
   syncScheduler.abortSync()
   const walletId = useWalletStore.getState().currentWalletId
-  return (walletId ? getWorkerClient(walletId).reconcileWallet(true) : Promise.resolve(true)).then(
-    () => ({ success: true as const }),
-    (error: unknown) => ({ success: false as const, error })
-  )
+  return syncScheduler
+    .waitForActiveSyncIdle(30_000)
+    .then(async idle => {
+      if (!idle) throw new Error('Wallet sync is still stopping.')
+      if (walletId) await getWorkerClient(walletId).reconcileWallet(true)
+    })
+    .then(
+      () => ({ success: true as const }),
+      (error: unknown) => ({ success: false as const, error })
+    )
 }
 
 async function completeWalletLock(
@@ -7650,37 +7832,58 @@ async function handleAddWalletAccount(
   }
 }
 
-async function handleResyncZcashWallet(
-  walletId: string,
-  accountId: string,
-  birthdayHeight: number
-): Promise<void> {
-  await assertActiveBackgroundAccountScope(walletId, accountId)
-  syncScheduler.pauseForTx()
-  try {
-    const syncIdle = await syncScheduler.quiesceWalletForMutation(walletId)
-    if (!syncIdle) {
-      throw new Error('Wallet sync did not stop before Zcash resync')
-    }
+let zcashRecoveryScopeVersion = 0
+useWalletStore.subscribe((state, previous) => {
+  if (
+    state.currentNetwork !== previous.currentNetwork ||
+    state.currentWalletId !== previous.currentWalletId ||
+    state.currentAccountId !== previous.currentAccountId
+  )
+    zcashRecoveryScopeVersion++
+})
 
-    await backgroundZcashWalletRuntime.initialize()
-    if (!(await credentialSession.hasUnlockSession())) {
-      if (!backgroundZcashWalletRuntime.isLocked()) await backgroundZcashWalletRuntime.lock()
-      throw new Error('Wallet is locked. Please unlock and try again.')
-    }
-
-    if (backgroundZcashWalletRuntime.getSessionPassword() === null) {
-      const password = await credentialSession.getProvisioningPassword()
-      const unlocked = await backgroundZcashWalletRuntime.unlock(password, { skipFailCount: true })
-      if (!unlocked.success) {
-        throw new Error('Wallet credential session could not authorize Zcash resync')
+function createZcashRecoveryScope(walletId: string, accountId: string) {
+  const network = backgroundZcashWalletRuntime.getNetwork()
+  const scopeVersion = zcashRecoveryScopeVersion
+  const accountKey = buildAccountKey(network, walletId, accountId)
+  const isCurrent = () => {
+    const state = useWalletStore.getState()
+    return (
+      !networkRestartRequired &&
+      !walletLockCleanupPending &&
+      zcashRecoveryScopeVersion === scopeVersion &&
+      state.currentNetwork === network &&
+      state.currentWalletId === walletId &&
+      state.currentAccountId === accountId
+    )
+  }
+  return {
+    walletId,
+    accountId,
+    network,
+    scopeVersion,
+    isCurrent,
+    assertCurrent: async () => {
+      await assertActiveBackgroundAccountScope(walletId, accountId, accountKey)
+      if (!(await credentialSession.hasUnlockSession()) || !isCurrent()) {
+        throw new Error('Unlock this wallet to recover Zcash.')
       }
     }
-
-    await backgroundZcashWalletRuntime.resyncZcashWallet(walletId, accountId, birthdayHeight)
-  } finally {
-    syncScheduler.resumeAfterTx()
   }
+}
+
+async function handleResyncZcashWallet(
+  scope: ReturnType<typeof createZcashRecoveryScope>,
+  birthdayHeight: number
+): Promise<void> {
+  await scope.assertCurrent()
+  await ensureZcashAccountProvisioningSession()
+  await scope.assertCurrent()
+  await backgroundZcashWalletRuntime.resyncZcashWallet(
+    scope.walletId,
+    scope.accountId,
+    birthdayHeight
+  )
 }
 
 async function handleSwitchWalletAccount(walletId: string, accountId: string) {
@@ -8339,8 +8542,7 @@ async function handleBackgroundZcashTx(params: {
 
     if (walletId && accountId) {
       void refreshAfterOnChainBroadcast(walletId).catch(error => {
-        logger.warn('Post-send balance refresh failed', walletId, accountId)
-        console.error('[Background] refreshAfterOnChainBroadcast failed:', error)
+        logger.error('Post-send balance refresh failed', walletId, accountId, error)
       })
     }
   } catch (error: any) {

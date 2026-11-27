@@ -21,7 +21,7 @@ import { TransactionNotice } from '@/popup/components/transaction/TransactionNot
 import { SearchInput } from '@/popup/components/ui/input'
 import { ListSkeleton, Skeleton } from '@/popup/components/ui/skeleton'
 import { useActiveAccountNetworks } from '@/popup/hooks/useActiveAccountNetworks'
-import { useCachedAssetPrices } from '@/popup/hooks/useCachedAssetPrices'
+import { useAssetPrices } from '@/popup/hooks/useAssetPrices'
 import { usePortfolioSnapshot } from '@/popup/hooks/usePortfolioSnapshot'
 import { useShieldReceiveCatalog } from '@/popup/hooks/useShieldReceiveCatalog'
 import type {
@@ -236,7 +236,7 @@ function ShieldReceiveForm({
   account,
   accountCatalog,
   network,
-  entry,
+  entry: requestedEntry,
   onBack
 }: {
   readonly account: AccountNetworksView
@@ -246,7 +246,12 @@ function ShieldReceiveForm({
   readonly onBack: () => void
 }) {
   const slippageBps = useSwapPreferences(state => Math.round(state.slippage * 100))
-  const catalog = useShieldReceiveCatalog(canReceiveNearShield(network, account))
+  const nearEnabled = canReceiveNearShield(network, account)
+  const catalog = useShieldReceiveCatalog(nearEnabled)
+  const entry =
+    !nearEnabled && requestedEntry.provider === 'near-confidential'
+      ? { ...requestedEntry, provider: null }
+      : requestedEntry
   const tokens = useMemo(
     () => listShieldReceiveTokens(network, account, catalog.tokens),
     [network, account, catalog.tokens]
@@ -254,7 +259,7 @@ function ShieldReceiveForm({
   const { model } = usePortfolioSnapshot(account.walletId, account.accountId, {
     autoRefresh: false
   })
-  const prices = useCachedAssetPrices(network)
+  const prices = useAssetPrices(network)
   const orderedTokens = useMemo(
     () => sortShieldReceiveTokens(tokens, model, prices),
     [tokens, model, prices]
@@ -401,6 +406,7 @@ function ShieldReceiveForm({
         open={picker === 'provider'}
         onClose={closePicker}
         selected={route?.provider ?? null}
+        showNearConfidential={nearEnabled}
         available={{
           'zcash-shield': providerRoutes.some(item => item.provider === 'zcash-shield'),
           'near-confidential': providerRoutes.some(item => item.provider === 'near-confidential')

@@ -40,6 +40,11 @@ const profilePath = fileURLToPath(
   new URL('../fixtures/v1.0.30-mainnet-software-golden.json', import.meta.url)
 )
 const golden = JSON.parse(readFileSync(profilePath, 'utf8')) as GoldenProfile
+const targetManifest = JSON.parse(
+  readFileSync(path.join(extensionDir, 'manifest.json'), 'utf8')
+) as {
+  readonly version: string
+}
 
 if (
   golden.schemaVersion !== 1 ||
@@ -368,7 +373,9 @@ test('upgrades the frozen v1.0.30 Golden Profile and remains idempotent after re
     const popup = await openExtensionPage(context, upgradedExtensionId, '?v1-golden-upgrade=1', {
       waitForReload: Boolean(v1ExtensionDir)
     })
-    expect(await popup.evaluate(() => chrome.runtime.getManifest().version)).toBe('2.0.0')
+    expect(await popup.evaluate(() => chrome.runtime.getManifest().version)).toBe(
+      targetManifest.version
+    )
     await waitForBackgroundWalletInitialization(popup)
 
     const retainedBeforeUnlock = await inspectRetainedV1Data(popup)

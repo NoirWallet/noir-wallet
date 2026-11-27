@@ -1,9 +1,22 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useLocation, useNavigate as useRouterNavigate, useSearchParams } from 'react-router-dom'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
+import {
+  Navigate,
+  useLocation,
+  useNavigate as useRouterNavigate,
+  useSearchParams
+} from 'react-router-dom'
 import { Icon } from '@iconify/react'
 import { NOIR_PUBLIC_CONFIDENTIAL_TRANSFER_APP_FEES } from '@/config/intents'
 import type { PortfolioAssetView, PortfolioChainView } from '@/core/portfolio'
-import { findAssetPrice, type AssetPriceReadModel } from '@/core/prices'
+import { findAssetPrice } from '@/core/prices'
 import {
   formatBaseUnitAmount,
   formatBaseUnitDecimalAmount,
@@ -12,6 +25,7 @@ import {
   parseDisplayUnitAmount
 } from '@/lib/number-format'
 import {
+  formatInsufficientBalance,
   formatSortAddress,
   formatSymbol,
   formatWalletNameAtIndex,
@@ -21,6 +35,7 @@ import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-setting
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { cn } from '@/lib/utils'
 import { classifyError } from '@/lib/errors'
+import { logger } from '@/lib/logger'
 import { getSwapQuoteFailureMessage } from '@/popup/services/swap-quote-error-message'
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
@@ -99,7 +114,7 @@ import { resolveEffectiveActiveAccountIdentity } from '@/popup/lib/effective-act
 import { toWalletEvmQuoteToken } from '@/popup/services/token-address-discovery'
 import type { SwapToken } from '@/core/services/intents-api'
 import { resolvePortfolioTransferAvailability } from '@/popup/services/transfer-availability'
-import { assetPriceClient } from '@/popup/services/asset-price-client'
+import { useAssetPrices, useZcashUsdPrice } from '@/popup/hooks/useAssetPrices'
 import {
   listBalanceTransferAssetPickerRows,
   listPrivateTransferDestinationAssets
@@ -139,8 +154,8 @@ import { TransactionReviewView } from '@/popup/components/transaction/Transactio
 import { TransactionReviewParty } from '@/popup/components/transaction/TransactionReviewParty'
 import {
   ConfidentialActivityView,
-  openConfidentialActivity,
-  type ConfidentialActivityDisplay
+  type ConfidentialActivityDisplay,
+  type ConfidentialActivityTarget
 } from '@/popup/components/transaction/ConfidentialActivitySheet'
 import { homeActivityPath, homeAssetDomainPath } from '@/popup/services/home-navigation'
 import { resolveTransferMaximum } from '@/popup/services/transfer-maximum'
@@ -180,9 +195,13 @@ import {
   buildFixedShieldFundsRequest,
   fixedShieldFundsDomains,
   matchesFixedShieldFundsRecipient,
+  readShieldFundsOrigin,
+  resolveShieldFundsOrigin,
   selectShieldFundsAsset,
   shieldFundsPath,
-  type ShieldFundsFormProps
+  shieldFundsResultExitPath,
+  type ShieldFundsFormProps,
+  type ShieldFundsOrigin
 } from '@/popup/services/shield-funds-route'
 import { getZcashChainId } from '@/core/chains/registry'
 import { ZEC_DECIMALS } from '@/config/wallet'
@@ -288,6 +307,7 @@ function MethodCard({
   estimate,
   fee,
   loading,
+  networkFeeLoading = loading,
   disabled,
   unavailableReason,
   onClick
@@ -299,6 +319,7 @@ function MethodCard({
   estimate: BalanceTransferEstimate | null
   fee: ReturnType<typeof formatBalanceTransferFee>
   loading?: boolean
+  networkFeeLoading?: boolean
   disabled?: boolean
   unavailableReason?: string | null
   onClick: () => void
@@ -357,14 +378,29 @@ function MethodCard({
           )}
         </span>
       </span>
-      {fee.networkFee && !loading && (
-        <span className="mt-2 flex justify-between gap-2">
-          <span className="shrink-0 text-muted">Network fee</span>
-          <span className="min-w-0 break-words text-right">{fee.networkFee}</span>
+      <span className="mt-2 flex justify-between gap-2">
+        <span className="shrink-0 text-muted">Network fee</span>
+        <span className="min-w-0 break-words text-right">
+          {networkFeeLoading ? (
+            <Skeleton className="ml-auto h-4 w-16 max-w-full" />
+          ) : (
+            (fee.networkFee ?? '—')
+          )}
         </span>
-      )}
+      </span>
     </button>
   )
+}
+
+interface ShieldTransferActivity {
+  readonly plan: ConfidentialActivityTarget
+  readonly display?: ConfidentialActivityDisplay
+  readonly domain: TransferDomain
+}
+
+interface ShieldTransferNavigationState {
+  readonly shieldFundsOrigin?: ShieldFundsOrigin
+  readonly shieldTransferActivity?: ShieldTransferActivity
 }
 
 export function DepositWithdraw({
@@ -379,6 +415,13 @@ export function DepositWithdraw({
   const accountId = useWalletStore(state => state.currentAccountId)
   const network = useWalletStore(state => state.currentNetwork)
   const scope = `${network}:${walletId}:${accountId}`
+  if (fixedShield && !fixedShield.onBack && params.get('resultExit') === '1') {
+    const origin =
+      walletId && accountId
+        ? resolveShieldFundsOrigin(readShieldFundsOrigin(params), { network, walletId, accountId })
+        : null
+    return <Navigate to={origin ?? homeAssetDomainPath('', 'shield')} replace />
+  }
   const entryKey = fixedShield
     ? JSON.stringify([fixedShield.direction, fixedShield.assetId, fixedShield.provider])
     : params.toString()
@@ -507,7 +550,7 @@ function DepositWithdrawForm({
     receiveEntry ||
     (entry === 'shield' &&
       (params.get('provider') === null || params.get('provider') === 'near-confidential'))
-  const { goBack, navigate } = useNavigate()
+  const { goBack, goBackIfPrevious, navigate } = useNavigate()
   const currentWalletId = useWalletStore(state => state.currentWalletId)
   const currentAccountId = useWalletStore(state => state.currentAccountId)
   const wallets = useWalletStore(state => state.wallets)
@@ -515,7 +558,7 @@ function DepositWithdrawForm({
   const currentNetwork = useWalletStore(state => state.currentNetwork)
   const currentWallet = useWalletStore(state => state.getCurrentWallet())
   const zcashBalance = useAccountDataStore(state => state.getCurrentBalance())
-  const zecPrice = useWalletStore(state => state.zecPrice)
+  const zecPrice = useZcashUsdPrice(currentNetwork)
   const balancesHidden = useSettingsStore(state => state.balancesHidden)
   const endpointRuntimeKey = useSettingsStore(state =>
     getChainEndpointRuntimeKey(state.chainEndpointSettings)
@@ -576,7 +619,7 @@ function DepositWithdrawForm({
   const [destinationAssetId, setDestinationAssetId] = useState<string | null>(
     initialDraft.destinationAssetId ?? null
   )
-  const [assetPrices, setAssetPrices] = useState<AssetPriceReadModel | null>(null)
+  const assetPrices = useAssetPrices(currentNetwork)
   const [domainPicker, setDomainPicker] = useState<'from' | 'to' | null>(null)
   const [providerPickerOpen, setProviderPickerOpen] = useState(false)
   const [receiveExternal, setReceiveExternal] = useState(
@@ -593,10 +636,41 @@ function DepositWithdrawForm({
     }
   )
   const [nativeReceiveState, setNativeReceiveState] = useState({ reviewing: false, busy: false })
-  const [shieldActivity, setShieldActivity] = useState<{
-    plan: ConfidentialFundingPlan
-    display?: ConfidentialActivityDisplay
-  } | null>(null)
+  const [localShieldActivity, setShieldActivity] = useState<ShieldTransferActivity | null>(null)
+  const transferNavigation = location.state as ShieldTransferNavigationState | null
+  const shieldActivity = localShieldActivity ?? transferNavigation?.shieldTransferActivity
+  const shieldFundsOrigin = transferNavigation?.shieldFundsOrigin ?? readShieldFundsOrigin(params)
+  const originPath =
+    effective &&
+    resolveShieldFundsOrigin(shieldFundsOrigin, {
+      network: currentNetwork,
+      walletId: effective.walletId,
+      accountId: effective.accountId
+    })
+  const nativeResultReturnPath =
+    originPath && shieldFundsOrigin
+      ? shieldFundsResultExitPath(shieldFundsOrigin)
+      : homeAssetDomainPath('', 'shield')
+  const activityFallbackDomain = shieldActivity?.domain ?? 'shield'
+  const closeShieldActivity = useCallback(() => {
+    const current = useWalletStore.getState()
+    const matchingOrigin =
+      current.currentNetwork === currentNetwork &&
+      current.currentWalletId === currentWalletId &&
+      current.currentAccountId === currentAccountId
+        ? originPath
+        : null
+    if (matchingOrigin && goBackIfPrevious(matchingOrigin)) return
+    navigate(matchingOrigin || homeAssetDomainPath('', activityFallbackDomain), { replace: true })
+  }, [
+    activityFallbackDomain,
+    currentAccountId,
+    currentNetwork,
+    currentWalletId,
+    goBackIfPrevious,
+    navigate,
+    originPath
+  ])
   const [pickerAccountId, setPickerAccountId] = useState<string | null>(null)
   const [draftScope, setDraftScope] = useState(scopeKey)
   const [selectedAssetId, setSelectedAssetId] = useState(initialDraft.assetId)
@@ -695,6 +769,7 @@ function DepositWithdrawForm({
   const [preparedShield, setPreparedShield] = useState<{
     key: string
     review: ConfidentialFundingReview
+    sourcePriceUsd: string | null
   } | null>(null)
 
   useEffect(() => {
@@ -745,25 +820,6 @@ function DepositWithdrawForm({
       cancelled = true
     }
   }, [preferenceKey])
-
-  useEffect(() => {
-    if (!assetPickerOpen) return
-    let cancelled = false
-    const apply = (prices: AssetPriceReadModel | null) => {
-      if (!cancelled && prices) setAssetPrices(prices)
-    }
-    void (async () => {
-      try {
-        apply(await assetPriceClient.getPrices('read'))
-      } catch {}
-      try {
-        apply(await assetPriceClient.getPrices('refresh'))
-      } catch {}
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [assetPickerOpen, currentNetwork])
 
   useEffect(() => {
     setShieldConnection('checking')
@@ -1218,10 +1274,7 @@ function DepositWithdrawForm({
     ),
     availableRaw: item.sourceRaw,
     decimals: item.asset.metadata.decimals,
-    priceUsd:
-      findAssetPrice(assetPrices, item.asset.asset.id)?.priceUsd ??
-      portfolio?.confidential?.assets.find(holding => holding.assetId === item.asset.asset.id)
-        ?.priceUsd,
+    priceUsd: findAssetPrice(assetPrices, item.asset.asset.id)?.priceUsd,
     disabledReason:
       withdrawalPicker && BigInt(item.sourceRaw) === 0n ? 'No available balance' : undefined
   }))
@@ -1406,19 +1459,6 @@ function DepositWithdrawForm({
   const fundingRoute = Boolean(shieldPair || clusterSelected)
   const fundingReady =
     !shieldPair || (from === 'shield' ? shieldConnection === 'connected' : canLoadShield)
-  useEffect(() => {
-    if (!supportedPair && !fundingRoute) return
-    let cancelled = false
-    void (async () => {
-      try {
-        const prices = await assetPriceClient.getPrices('read')
-        if (!cancelled && prices) setAssetPrices(prices)
-      } catch {}
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [scopeKey, supportedPair, fundingRoute])
   const managedAsset = useMemo(
     () =>
       fixedNearZecWithdraw
@@ -1586,7 +1626,7 @@ function DepositWithdrawForm({
   const methodAvailable = supportedPair && routeState === 'supported'
 
   const maximumBalanceRaw = fundingRoute ? shieldSourceRaw : source?.availableRaw
-  const maximumRaw =
+  const reserveMaximumRaw =
     selected && maximumBalanceRaw != null
       ? resolveTransferMaximum({
           mode: 'reserve',
@@ -1598,6 +1638,57 @@ function DepositWithdrawForm({
           payFeeFromAsset: from !== 'shield' && selected.asset.asset.kind === 'native'
         })
       : null
+  const privateShieldMaximum = shieldPair && from === 'private' && to === 'shield'
+  const canEstimatePrivateShieldMax = Boolean(
+    privateShieldMaximum &&
+    draftScope === scopeKey &&
+    effective &&
+    eligible &&
+    managedAsset &&
+    privateAddress &&
+    fundingReady
+  )
+  const privateShieldMaxEstimate = useBalanceTransferEstimate({
+    enabled:
+      canEstimatePrivateShieldMax &&
+      maxSelected &&
+      shieldSourceRaw !== null &&
+      shieldSourceRaw !== '0',
+    requestKey: JSON.stringify([
+      routeKey,
+      privateAddress,
+      managedAsset?.protocolAssetId,
+      shieldSourceRaw,
+      reserveMaximumRaw,
+      nativeFeeRaw,
+      evmMoveFee,
+      slippageBps,
+      retry
+    ]),
+    estimate: () =>
+      confidentialFundingClient.previewPrivateDepositMaximum(
+        buildShieldTransferRequest({
+          network: currentNetwork,
+          keyDomainId: effective!.walletId,
+          accountId: effective!.accountId,
+          from,
+          to,
+          method: 'directly',
+          amountRaw: shieldSourceRaw!,
+          asset: selected!.asset,
+          chain: selected!.chain,
+          managed: managedAsset!,
+          slippageBps,
+          feeSelection: evmMoveFee
+        }),
+        reserveMaximumRaw ?? '0'
+      )
+  })
+  const maximumRaw = privateShieldMaximum
+    ? privateShieldMaxEstimate.loading || privateShieldMaxEstimate.error
+      ? null
+      : privateShieldMaxEstimate.value
+    : reserveMaximumRaw
   const available =
     selected && source
       ? resolvePortfolioTransferAvailability({
@@ -1631,7 +1722,7 @@ function DepositWithdrawForm({
       slippageBps
     })
   const maxAmount =
-    selected && maximumRaw !== null
+    selected && maximumRaw !== null && (!privateShieldMaximum || maximumRaw !== '0')
       ? formatBaseUnitDecimalAmount(maximumRaw, selected.asset.metadata.decimals)
       : ''
   const currentAmount = maxSelected ? maxAmount : amount
@@ -1714,7 +1805,7 @@ function DepositWithdrawForm({
     }
   })
   const clusterQuoted = Boolean(canEstimateMethods && managedAsset && clusterEstimate.value)
-  const clusterNetworkFee = useBalanceTransferEstimate({
+  const clusterNetworkFeeEstimate = useBalanceTransferEstimate({
     enabled: clusterQuoted && Boolean(estimateAmountRaw) && !preparingShield,
     requestKey: `${clusterEstimateKey}:${JSON.stringify(evmMoveFee)}`,
     estimate: () =>
@@ -1722,14 +1813,34 @@ function DepositWithdrawForm({
         ...buildClusterPreviewRequest(estimateAmountRaw!),
         feeSelection: evmMoveFee
       })
-  }).value
+  })
+  const clusterNetworkFee = clusterNetworkFeeEstimate.value
   const clusterEstimateWithFee =
     clusterEstimate.value && clusterNetworkFee
       ? { ...clusterEstimate.value, sourceNetworkFee: clusterNetworkFee }
       : clusterEstimate.value
   const directQuoted = Boolean(canEstimateMethods && methodAvailable && directEstimate.value)
   const selectedEstimate = clusterSelected ? clusterEstimate : directEstimate
-  const maxLoading = maxSelected && selectedEstimate.loading
+  const maxLoading =
+    maxSelected &&
+    (privateShieldMaximum
+      ? canEstimatePrivateShieldMax &&
+        (shieldSourceRaw === null || privateShieldMaxEstimate.loading)
+      : selectedEstimate.loading)
+  const privateShieldMaxError =
+    canEstimatePrivateShieldMax && maxSelected && !maxLoading && !privateShieldMaxEstimate.error
+      ? shieldSourceRaw === '0'
+        ? formatInsufficientBalance(selected?.asset.metadata.symbol)
+        : maximumRaw === '0'
+          ? formatInsufficientBalance()
+          : null
+      : null
+  const privateShieldMaxUnavailable =
+    canEstimatePrivateShieldMax &&
+    maxSelected &&
+    !maxLoading &&
+    shieldSourceRaw !== '0' &&
+    maximumRaw === null
   const clusterUnavailable = !clusterAvailable || clusterEstimate.error
   const directUnavailable =
     directEstimate.errorMessage === 'Move route unavailable' ||
@@ -1760,6 +1871,7 @@ function DepositWithdrawForm({
     !clusterEstimate.loading &&
     !directEstimate.loading
   const transferError =
+    privateShieldMaxError ??
     amountError ??
     quoteMinimumError ??
     confidentialRouteError ??
@@ -1826,11 +1938,11 @@ function DepositWithdrawForm({
   }, [fixedDirection, scopeKey])
   const stateChange = useRef(fixedShield?.onStateChange)
   stateChange.current = fixedShield?.onStateChange
-  const reviewing = Boolean(activeShieldReview || shieldActivity || nativeReceiveState.reviewing)
+  const reviewing = Boolean(activeShieldReview || nativeReceiveState.reviewing)
   const busy = preparingShield || confirmingShield || cancellingShield || nativeReceiveState.busy
   const submittingShield =
     confirmingShield && confirmAttemptedPlanId.current === activeShieldReview?.planId
-  const fullHeight = Boolean(shieldActivity || submittingShield)
+  const fullHeight = submittingShield
   useLayoutEffect(() => {
     stateChange.current?.({ reviewing, busy, fullHeight })
   }, [reviewing, busy, fullHeight])
@@ -2023,23 +2135,30 @@ function DepositWithdrawForm({
     if (domain === 'shield') return ''
     return domain === 'private' ? privateAddress : mainAddress
   }
-  const maxDisabled = fundingRoute
-    ? !eligible ||
-      !managedAsset ||
-      !fundingReady ||
-      !shieldAvailable ||
-      BigInt(shieldAvailable.amountRaw) === 0n
-    : !eligible ||
-      !supportedPair ||
-      (direction === 'main-to-private' ? publicRaw === null : privateRaw === null) ||
-      routeState !== 'supported' ||
-      !available ||
-      BigInt(available.amountRaw) === 0n
+  const maxDisabled = privateShieldMaximum
+    ? !canEstimatePrivateShieldMax
+    : fundingRoute
+      ? !eligible ||
+        !managedAsset ||
+        !fundingReady ||
+        !shieldAvailable ||
+        BigInt(shieldAvailable.amountRaw) === 0n
+      : !eligible ||
+        !supportedPair ||
+        (direction === 'main-to-private' ? publicRaw === null : privateRaw === null) ||
+        routeState !== 'supported' ||
+        !available ||
+        BigInt(available.amountRaw) === 0n
   const handleMax = () => {
-    if (!selected || maxDisabled || maximumRaw === '0' || maxLoading) return
+    if (!selected || maxDisabled || (!privateShieldMaximum && maximumRaw === '0') || maxLoading)
+      return
     setSelectedAssetId(selected.asset.asset.id)
     setMaxSelected(true)
     setAmount(maxAmount)
+    if (privateShieldMaximum) {
+      setShieldError(null)
+      setRetry(value => value + 1)
+    }
   }
 
   const scopeStillCurrent = () => {
@@ -2145,7 +2264,11 @@ function DepositWithdrawForm({
       }
       if (result.phase !== 'prepared') {
         const status = await checkShieldPlan(result.planId, expectedKey)
-        if (replacingReview && scopeStillCurrent() && latestShieldReviewKey.current === expectedKey) {
+        if (
+          replacingReview &&
+          scopeStillCurrent() &&
+          latestShieldReviewKey.current === expectedKey
+        ) {
           if (status !== 'started')
             throw new Error('Transfer review could not be prepared. Try again.')
         }
@@ -2173,10 +2296,15 @@ function DepositWithdrawForm({
       setConfirmUncertain(false)
       reviewAttempt.current = null
       if (replacingReview) setEvmMoveFee(feeSelection)
-      setPreparedShield({ key, review: result })
+      setPreparedShield({
+        key,
+        review: result,
+        sourcePriceUsd: findAssetPrice(assetPrices, selected.asset.asset.id)?.priceUsd ?? null
+      })
       return true
     } catch (error) {
       if (scopeStillCurrent() && latestShieldReviewKey.current === expectedKey) {
+        logger.error('[Shield] Transfer review failed', undefined, undefined, error)
         const message = error instanceof Error ? error.message : ''
         const classifiedMessage = classifyError(error, {
           source: selected.asset.metadata.symbol,
@@ -2185,7 +2313,11 @@ function DepositWithdrawForm({
         const userMessage =
           message === 'Gas limit is below the estimated gas required'
             ? 'Gas limit is below the estimated gas required. Edit the network fee and try again.'
-            : classifiedMessage
+            : (formatTransferQuoteMinimumError(
+                message,
+                selected.asset.metadata.decimals,
+                formatSymbol(selected.asset.metadata.symbol)
+              ) ?? classifiedMessage)
         setShieldError(userMessage)
         if (replacingReview) throw new Error(userMessage)
       }
@@ -2224,13 +2356,20 @@ function DepositWithdrawForm({
             network: selected.chain.chain.displayName
           }
         : undefined
-      if (fixedDirection) setShieldActivity({ plan, display })
-      else
-        void openConfidentialActivity(
-          plan,
-          () => navigate(homeActivityPath(domain, plan.transactionId)),
-          display
-        )
+      const activity: ShieldTransferActivity = {
+        plan: {
+          network: plan.network,
+          keyDomainId: plan.keyDomainId,
+          accountId: plan.accountId,
+          transactionId: plan.transactionId
+        },
+        display,
+        domain
+      }
+      if (fixedDirection && fixedShield?.onBack) {
+        fixedShield.onBack()
+        navigate(`/${fixedDirection}`, { state: { shieldTransferActivity: activity } })
+      } else setShieldActivity(activity)
     }
   }
   const checkShieldPlan = async (
@@ -2323,6 +2462,7 @@ function DepositWithdrawForm({
       if (canOpenShieldActivity(plan)) openShieldActivity(plan)
       else await checkShieldPlan(plan.planId)
     } catch (error) {
+      logger.error('[Shield] Transfer confirmation failed', undefined, undefined, error)
       const status = await checkShieldPlan(pending.planId)
       if (status === 'prepared' && scopeStillCurrent())
         setShieldError(classifyError(error).userMessage)
@@ -2333,8 +2473,8 @@ function DepositWithdrawForm({
   }
 
   const moveReviewFiatValue = useMemo(() => {
-    if (!selected || !assetPrices || !activeShieldReview) return null
-    const priceUsd = findAssetPrice(assetPrices, selected.asset.asset.id)?.priceUsd
+    if (!selected || !activeShieldReview) return null
+    const priceUsd = preparedShield?.sourcePriceUsd
     if (typeof priceUsd !== 'string' || !priceUsd) return null
     const usd = Number(priceUsd)
     if (!Number.isFinite(usd) || usd <= 0) return null
@@ -2347,7 +2487,7 @@ function DepositWithdrawForm({
     } catch {
       return null
     }
-  }, [selected, assetPrices, activeShieldReview])
+  }, [selected, preparedShield?.sourcePriceUsd, activeShieldReview])
 
   const changeShieldFee = async (next: EvmFeeSelection) => {
     const review = activeShieldReview
@@ -2376,6 +2516,7 @@ function DepositWithdrawForm({
       if (!scopeStillCurrent() || latestShieldReviewKey.current !== shieldReviewKey) return
       if (await prepareShield(next, true)) updateFeeRefresh(null)
     } catch (error) {
+      logger.error('[Shield] Transfer fee update failed', undefined, undefined, error)
       if (scopeStillCurrent()) setShieldError(classifyError(error).userMessage)
       throw error
     } finally {
@@ -2388,17 +2529,23 @@ function DepositWithdrawForm({
     void prepareShield()
   }
   if (shieldActivity && draftScope === scopeKey) {
-    const { plan, display } = shieldActivity
+    const { plan, display, domain } = shieldActivity
     return (
-      <div className="page-container" data-wallet-mode="shield">
+      <div className="page-container" data-wallet-mode={domain}>
         <ConfidentialActivityView
           plan={plan}
           display={display}
-          onDone={() => {
-            fixedShield?.onBack?.()
-            navigate(homeAssetDomainPath('', 'shield'), { replace: true })
+          onDone={closeShieldActivity}
+          onViewActivity={() => {
+            if (
+              !scopeStillCurrent() ||
+              plan.network !== currentNetwork ||
+              plan.keyDomainId !== effective?.walletId ||
+              plan.accountId !== effective.accountId
+            )
+              return
+            navigate(homeActivityPath(domain, plan.transactionId), { replace: true })
           }}
-          onViewActivity={() => navigate(homeActivityPath('shield', plan.transactionId))}
         />
       </div>
     )
@@ -2693,7 +2840,12 @@ function DepositWithdrawForm({
     })}`
   const fixedNativeRetryPath =
     fixedDirection && fixedZecForm && fixedProvider && fixedAvailableProviders[fixedProvider]
-      ? shieldFundsPath(fixedDirection, zcashAssetId, fixedProvider)
+      ? shieldFundsPath(
+          fixedDirection,
+          zcashAssetId,
+          fixedProvider,
+          originPath ? shieldFundsOrigin : undefined
+        )
       : null
   const showNativeMove = Boolean(nativeRetryPath || fixedNativeRetryPath)
   const canChooseFixedProvider =
@@ -2807,9 +2959,7 @@ function DepositWithdrawForm({
           onStateChange={setNativeReceiveState}
           actionLabel={fixedActionLabel}
           slippageBps={shieldHasQuote ? shieldSlippageBps : undefined}
-          resultReturnPath={
-            fixedShield?.onBack ? location.pathname + location.search : '/?domain=shield'
-          }
+          resultReturnPath={nativeResultReturnPath}
         />
       ) : nativeRetryPath ? (
         <NativeZcashMoveForm
@@ -2820,6 +2970,7 @@ function DepositWithdrawForm({
           asset={assetControl}
           accounts={receiveAccounts}
           onStateChange={setNativeReceiveState}
+          resultReturnPath={nativeResultReturnPath}
         />
       ) : externalReceive ? (
         <>
@@ -2867,7 +3018,11 @@ function DepositWithdrawForm({
                 onClick: handleMax,
                 selected: maxSelected,
                 loading: maxLoading,
-                disabled: !selected || maxDisabled || maximumRaw === '0' || maxLoading
+                disabled:
+                  !selected ||
+                  maxDisabled ||
+                  (!privateShieldMaximum && maximumRaw === '0') ||
+                  maxLoading
               }}
             />
             {receiveEntry ? (
@@ -2987,6 +3142,10 @@ function DepositWithdrawForm({
                   unavailableReason={clusterMinimumError}
                   estimate={clusterEstimate.value}
                   loading={canEstimateMethods && clusterEstimate.loading}
+                  networkFeeLoading={
+                    canEstimateMethods &&
+                    (clusterEstimate.loading || clusterNetworkFeeEstimate.loading)
+                  }
                   fee={formatBalanceTransferFee(clusterEstimateWithFee, selected.asset)}
                   onClick={() => {
                     userPickedMethod.current = true
@@ -3058,6 +3217,12 @@ function DepositWithdrawForm({
               />
             ) : transferError ? (
               <TransactionNotice className="mt-2" message={transferError} tone="warning" />
+            ) : privateShieldMaxUnavailable ? (
+              <TransactionNotice
+                className="mt-2"
+                message="Transfer estimate unavailable."
+                onRetry={() => setRetry(value => value + 1)}
+              />
             ) : shieldError && !activeShieldReview && shieldConnection !== 'required' ? (
               <TransactionNotice className="mt-2" message={shieldError} />
             ) : showGenericEstimateError ? (

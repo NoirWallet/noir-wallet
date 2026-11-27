@@ -55,6 +55,7 @@ import {
   TRANSACTION_PENDING_MESSAGE
 } from '@/lib/transaction-status-copy'
 import { publishHardwareSignResult } from '@/lib/hardware-sign-result'
+import { focusHardwareSignOrigin } from '@/lib/hardware-sign-launcher'
 import { toHardwarePcztError } from '@/core/zcash/hardware-pczt'
 import {
   formatHardwareSigningError,
@@ -158,6 +159,7 @@ export function KeystoneSign() {
     invalidated.current = true
     ledgerAbort.current?.abort()
     if (requestId) await clearHardwareSignRequest(requestId).catch(() => {})
+    await focusHardwareSignOrigin().catch(() => false)
     window.close()
   }
 
@@ -315,7 +317,9 @@ export function KeystoneSign() {
     if (!req.dappRequestId) return
     chrome.runtime
       .sendMessage({ type: 'HW_SIGN_RESULT', requestId: req.dappRequestId, ...result })
-      .catch(console.error)
+      .catch(error =>
+        logger.error('Hardware signing result could not be delivered', undefined, undefined, error)
+      )
   }
 
   const submitHardwareSignature = async (
@@ -449,7 +453,12 @@ export function KeystoneSign() {
           )
         }
       } catch (bookkeepingError) {
-        console.error('[HardwareSign] Broadcast record update failed:', bookkeepingError)
+        logger.error(
+          '[HardwareSign] Broadcast record update failed',
+          undefined,
+          undefined,
+          bookkeepingError
+        )
       }
 
       try {
@@ -481,13 +490,23 @@ export function KeystoneSign() {
           })
         }
       } catch (monitorError) {
-        console.error('[HardwareSign] Broadcast monitor registration failed:', monitorError)
+        logger.error(
+          '[HardwareSign] Broadcast monitor registration failed',
+          undefined,
+          undefined,
+          monitorError
+        )
       }
 
       try {
         zcashWalletRuntimeClient.requestSync()
       } catch (syncError) {
-        console.error('[HardwareSign] Post-broadcast sync request failed:', syncError)
+        logger.error(
+          '[HardwareSign] Post-broadcast sync request failed',
+          undefined,
+          undefined,
+          syncError
+        )
       }
       let originResultPublished = false
       if (request.reportToOrigin) {
@@ -503,7 +522,12 @@ export function KeystoneSign() {
           })
           originResultPublished = true
         } catch (cause) {
-          console.error('[HardwareSign] Failed to report result to the origin surface:', cause)
+          logger.error(
+            '[HardwareSign] Failed to report result to the origin surface',
+            undefined,
+            undefined,
+            cause
+          )
         }
       }
       recordHardwareOperationOutcome(
@@ -515,7 +539,7 @@ export function KeystoneSign() {
       )
       setTxHash(hash)
       setStep('success')
-      if (request.reportToOrigin && originResultPublished) {
+      if (request.reportToOrigin && request.kind !== 'swap' && originResultPublished) {
         window.setTimeout(() => window.close(), 800)
       }
     } catch (e) {
@@ -535,7 +559,14 @@ export function KeystoneSign() {
             transactionId,
             updates: { status: 'failed', notified: true }
           })
-          .catch(console.error)
+          .catch(error =>
+            logger.error(
+              'Hardware signing failure could not be recorded',
+              undefined,
+              undefined,
+              error
+            )
+          )
       }
       if (broadcastHash) {
         reportDappResult(request, { success: true, txHash: broadcastHash })
@@ -863,7 +894,11 @@ export function KeystoneSign() {
             timestamp={resultView.timestamp}
             customTitle={resultCopy.title}
             customDescription={resultCopy.description}
-            onDone={() => window.close()}
+            onDone={() => {
+              void focusHardwareSignOrigin()
+                .catch(() => false)
+                .then(() => window.close())
+            }}
             onCancel={resultView.step === 'failed' ? () => window.close() : undefined}
           />
         </div>

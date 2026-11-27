@@ -11,6 +11,7 @@ import { credentialSession } from './credential-session'
 import { syncScheduler } from './sync-scheduler'
 import { normalizeAccountName } from '@/core/wallet/account-name'
 import {
+  isAccountNetworkEnabled,
   parseSelectedNetworkFamilies,
   type AccountNetworkFamily
 } from '@/core/wallet/account-network-selection'
@@ -316,7 +317,10 @@ export async function provisionPrimarySoftwareWallet(
     }
     await synchronizeNetworkMetadata?.()
 
-    if (selectedNetworkFamilies?.includes('zcash') !== false) syncScheduler.onRequestSync()
+    const account = useWalletStore.getState().getCurrentAccount()
+    if (account && isAccountNetworkEnabled(account, DEFAULT_NETWORK, 'zcash')) {
+      syncScheduler.onRequestSync()
+    }
     return Object.freeze({ walletId: currentWalletId, credentialStatus: credentials.status })
   } catch (error) {
     await lockProvisioningSession()
@@ -380,7 +384,13 @@ export async function addSoftwareWallet(
     }
     await synchronizeNetworkMetadata?.()
 
-    if (selectedNetworkFamilies?.includes('zcash') !== false) syncScheduler.onRequestSync()
+    const account = useWalletStore.getState().getWallet(walletId)?.accounts[0]
+    const zcashEnabled = account
+      ? isAccountNetworkEnabled(account, DEFAULT_NETWORK, 'zcash')
+      : selectedNetworkFamilies?.includes('zcash') !== false
+    if (zcashEnabled) {
+      syncScheduler.onRequestSync()
+    }
     return Object.freeze({ walletId, credentialStatus: credentials.status })
   } catch (error) {
     await lockProvisioningSession()

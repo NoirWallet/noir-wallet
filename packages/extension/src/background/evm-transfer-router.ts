@@ -11,6 +11,7 @@ import {
   parseEvmTransferIntent,
   type EvmPendingTransferStore,
   type EvmFeeEstimate,
+  type EvmReviewedFeeBudget,
   type EvmNonceRecoveryState,
   type PeaEvmExecutionAccount,
   type EvmTransferApprovalResult,
@@ -50,7 +51,7 @@ export interface BackgroundEvmTransferRouteController {
     executionAccount?: PeaEvmExecutionAccount,
     executionModeValue?: unknown,
     debugRequestId?: string,
-    reviewedMaxFeePerGas?: bigint
+    reviewedFeeBudget?: EvmReviewedFeeBudget
   ) => Promise<BackgroundEvmTransferReview>
   readonly getTokenAllowance: (
     token: string,
@@ -114,6 +115,10 @@ export interface BackgroundEvmTransferRouteController {
   readonly cancelAwaitingApprovalsForScope: (scope: TransactionAccountScope) => Promise<number>
   readonly cancelAwaitingApprovalsExceptScope: (scope: TransactionAccountScope) => Promise<number>
   readonly clearPendingTransfers: () => Promise<number>
+  readonly clearActivity: (
+    expected: TransactionAccountScope,
+    assertAvailable: () => Promise<void>
+  ) => Promise<void>
   readonly cancelAllAwaitingApprovals: () => Promise<number>
 }
 
@@ -243,7 +248,7 @@ export class BackgroundEvmTransferRouter {
     rheaSwapBindingValue?: unknown,
     executionMode: EvmTransferExecutionMode = 'main',
     debugRequestId?: string,
-    reviewedMaxFeePerGas?: bigint
+    reviewedFeeBudget?: EvmReviewedFeeBudget
   ): Promise<BackgroundEvmTransferReview> {
     const intent = parseEvmContractCallIntent(intentValue)
     const controller = this.requireController(intent.chainId)
@@ -254,7 +259,7 @@ export class BackgroundEvmTransferRouter {
       undefined,
       executionMode,
       debugRequestId,
-      reviewedMaxFeePerGas
+      reviewedFeeBudget
     )
     if (result.review.chainId !== intent.chainId) {
       throw new Error('Prepared EVM contract call was returned by the wrong network controller')
@@ -352,6 +357,14 @@ export class BackgroundEvmTransferRouter {
       throw new Error('EVM nonce recovery returned the wrong chain')
     }
     return state
+  }
+
+  clearActivity(
+    chainId: string,
+    expected: TransactionAccountScope,
+    assertAvailable: () => Promise<void>
+  ): Promise<void> {
+    return this.requireController(parseChainId(chainId).id).clearActivity(expected, assertAvailable)
   }
 
   async estimateReplacementFee(

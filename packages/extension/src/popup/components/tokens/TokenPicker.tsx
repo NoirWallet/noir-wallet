@@ -204,7 +204,6 @@ export function TokenPicker<Row>({
           aria-label="Search tokens"
           placeholder="Search tokens"
           className="h-[45px] rounded-xl border-transparent bg-card"
-          autoFocus
         />
         {toolbar}
         {networks.length > 0 && (
@@ -382,7 +381,7 @@ function TokenPickerRow({
       aria-pressed={selected}
       aria-label={item.ariaLabel}
       className={cn(
-        'wallet-interactive flex min-h-[55px] w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-card active:bg-white/10 focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed',
+        'wallet-interactive flex min-h-[55px] w-full items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left enabled:hover:bg-wallet-selected focus-visible:-outline-offset-2 focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-not-allowed',
         position && 'overflow-hidden py-2',
         item.disabledReason && !item.busy && 'opacity-45',
         selected && 'bg-primary/[0.08]'

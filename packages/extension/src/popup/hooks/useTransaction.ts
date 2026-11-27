@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { useState, useCallback, useRef } from 'react'
 import { buildAccountKey } from '@/store/account-data-store'
 import { rehydrateWalletStore, useWalletStore } from '@/store/wallet-store'
@@ -292,7 +293,7 @@ export function useTransaction(): UseTransactionReturn {
             timestamp: tx.timestamp
           }
         }
-        console.error('Transaction failed:', err)
+        logger.error('Transaction failed', undefined, undefined, err)
         const errorMessage =
           expectedAccountKey &&
           err instanceof Error &&

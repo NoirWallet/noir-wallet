@@ -5,7 +5,9 @@ export const ASSET_PRICE_SOURCE = 'wallet-market-data' as const
 export const ASSET_PRICE_QUOTE_SOURCES = Object.freeze({
   dexScreener: 'dex-screener',
   oneClick: 'near-intents-1click',
-  fourMeme: 'four-meme'
+  fourMeme: 'four-meme',
+  swapCatalog: 'swap-catalog',
+  confidentialCatalog: 'confidential-catalog'
 } as const)
 export const ASSET_MARKET_CHANGE_SOURCES = Object.freeze({
   dexScreener: 'dex-screener',
@@ -14,6 +16,8 @@ export const ASSET_MARKET_CHANGE_SOURCES = Object.freeze({
 export const ASSET_MARKET_CHANGE_SOURCE = ASSET_MARKET_CHANGE_SOURCES.dexScreener
 export const ASSET_PRICE_FRESH_MS = 5 * 60 * 1000
 export const ASSET_PRICE_EXPIRES_MS = 30 * 60 * 1000
+export const ASSET_MARKET_CHANGE_FRESH_MS = 30 * 60 * 1000
+export const ASSET_MARKET_CHANGE_EXPIRES_MS = 2 * 60 * 60 * 1000
 export const MAXIMUM_ASSET_PRICE_ITEMS = 2_048
 
 export type AssetPriceFreshness = 'fresh' | 'stale'
@@ -51,6 +55,47 @@ export interface AssetPriceReadModel {
 const DECIMAL_PRICE_PATTERN = /^(?:0|[1-9][0-9]{0,63})(?:\.[0-9]{1,18})?$/
 const PERCENT_CHANGE_PATTERN = /^-?(?:0|[1-9][0-9]{0,5})(?:\.[0-9]{1,8})?$/
 
+export function catalogPriceAssetId(provider: 'rhea' | 'confidential', tokenId: string): string {
+  return `catalog:${provider}/${encodeURIComponent(tokenId)}`
+}
+
+export function normalizePriceAssetId(assetId: string): string {
+  if (/^catalog:(rhea|confidential)\/[A-Za-z0-9_.!~*'()%\-]{1,768}$/.test(assetId)) {
+    return assetId
+  }
+  return parseAssetId(assetId).id
+}
+
+export function normalizeUsdPrice(value: string | number): string | null {
+  if (typeof value === 'number' && !Number.isFinite(value)) return null
+  if (typeof value === 'string' && !DECIMAL_PRICE_PATTERN.test(value)) return null
+  try {
+    const price = new Big(value).toFixed()
+    return DECIMAL_PRICE_PATTERN.test(price) && new Big(price).gt(0) ? price : null
+  } catch {
+    return null
+  }
+}
+
+export function isFreshWalletAssetPrice(
+  quote: AssetPriceQuote | null,
+  now = Date.now()
+): quote is AssetPriceQuote {
+  if (
+    !quote ||
+    quote.freshness !== 'fresh' ||
+    quote.source === ASSET_PRICE_QUOTE_SOURCES.swapCatalog ||
+    quote.source === ASSET_PRICE_QUOTE_SOURCES.confidentialCatalog
+  )
+    return false
+  const limit =
+    quote.source === ASSET_PRICE_QUOTE_SOURCES.dexScreener
+      ? ASSET_MARKET_CHANGE_FRESH_MS
+      : ASSET_PRICE_FRESH_MS
+  const age = now - quote.sourceUpdatedAt
+  return age >= -ASSET_PRICE_FRESH_MS && age <= limit
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
   const prototype = Object.getPrototypeOf(value)
@@ -82,7 +127,7 @@ function readAssetIds(value: unknown, label: string): readonly string[] {
   }
   const ids = value.map(item => {
     if (typeof item !== 'string') throw new Error(`Invalid ${label}`)
-    return parseAssetId(item).id
+    return normalizePriceAssetId(item)
   })
   if (new Set(ids).size !== ids.length) throw new Error(`Duplicate ${label}`)
   return Object.freeze(ids)
@@ -99,7 +144,9 @@ function readQuote(value: unknown): AssetPriceQuote {
     typeof value.assetId !== 'string' ||
     (value.source !== ASSET_PRICE_QUOTE_SOURCES.dexScreener &&
       value.source !== ASSET_PRICE_QUOTE_SOURCES.oneClick &&
-      value.source !== ASSET_PRICE_QUOTE_SOURCES.fourMeme) ||
+      value.source !== ASSET_PRICE_QUOTE_SOURCES.fourMeme &&
+      value.source !== ASSET_PRICE_QUOTE_SOURCES.swapCatalog &&
+      value.source !== ASSET_PRICE_QUOTE_SOURCES.confidentialCatalog) ||
     typeof value.priceUsd !== 'string' ||
     !DECIMAL_PRICE_PATTERN.test(value.priceUsd) ||
     new Big(value.priceUsd).lte(0) ||
@@ -109,7 +156,7 @@ function readQuote(value: unknown): AssetPriceQuote {
   }
   const marketChange = readMarketChange(value.marketChange)
   return Object.freeze({
-    assetId: parseAssetId(value.assetId).id,
+    assetId: normalizePriceAssetId(value.assetId),
     source: value.source,
     priceUsd: value.priceUsd,
     sourceUpdatedAt: readTimestamp(value.sourceUpdatedAt, 'asset price source timestamp'),
@@ -179,11 +226,18 @@ export function parseAssetPriceReadModel(value: unknown): AssetPriceReadModel {
   })
 }
 
+const quotesByModel = new WeakMap<AssetPriceReadModel, ReadonlyMap<string, AssetPriceQuote>>()
+
 export function findAssetPrice(
   model: AssetPriceReadModel | null,
   assetId: string
 ): AssetPriceQuote | null {
   if (!model) return null
-  const canonical = parseAssetId(assetId).id
-  return model.quotes.find(quote => quote.assetId === canonical) ?? null
+  const canonical = normalizePriceAssetId(assetId)
+  let quotes = quotesByModel.get(model)
+  if (!quotes) {
+    quotes = new Map(model.quotes.map(quote => [quote.assetId, quote]))
+    quotesByModel.set(model, quotes)
+  }
+  return quotes.get(canonical) ?? null
 }
