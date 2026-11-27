@@ -2747,18 +2747,72 @@ test.describe('confidential funding persisted recovery', () => {
     })
   }
 
-  test('resumes settlement monitoring after authorization without creating another batch', async () => {
-    const h = await harness('processing')
-    h.state.session = null
-    const paused = await h.restart().continuePlan(h.initial.planId)
-    expect(paused.phase).toBe('needs-auth')
-    expect(paused.resumePhase).toBe('processing')
-    const coordinator = h.restart()
-    await coordinator.confirm(h.initial.planId, h.initial.approvalFingerprint)
-    expect((await coordinator.continuePlan(h.initial.planId)).phase).toBe('processing')
-    expect(h.state.submissions).toHaveLength(0)
-    expect(h.state.intentSignatures).toBe(0)
-  })
+  for (const [operation, direct, cluster] of [
+    ['withdraw', true, false],
+    ['swap', true, false],
+    ['cluster', false, true]
+  ]) {
+    test(`observes submitted ${operation} without a funding session or another submission`, async () => {
+      const h = await harness('processing', direct, cluster)
+      h.state.session = null
+      const destinationToken = 'nep141:eth-usdc.omft.near'
+      const swapWithdraws = h.initial.withdraws.map(row => ({
+        ...row,
+        destinationAddress: h.initial.signerId,
+        token: destinationToken
+      }))
+      const swapRequest = {
+        from_amount: h.initial.source.amountRaw,
+        from_chain: h.initial.source.chainName,
+        from_token: h.initial.source.protocolAssetId,
+        signer_id: h.initial.signerId,
+        mode: 'SWAP',
+        withdraws: swapWithdraws.map(row => ({
+          amount: row.amountRaw,
+          deposit_address: row.depositAddress,
+          destination_address: row.destinationAddress,
+          destination_chain: row.destinationChain,
+          execution_type: 'CONFIDENTIAL_1CLICK',
+          sequence: row.sequence,
+          signed_payload: row.signedPayload,
+          token: row.token
+        }))
+      }
+      await h.store.putPlan({
+        ...h.initial,
+        operation,
+        ...(operation === 'swap'
+          ? {
+              destinationDomain: 'shield',
+              destination: {
+                ...h.initial.destination,
+                assetId: 'eip155:1/erc20:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+                protocolAssetId: destinationToken,
+                address: h.initial.signerId
+              },
+              withdraws: swapWithdraws,
+              requestFingerprint: await fingerprintConfidentialValue(swapRequest),
+              frozenRequest: swapRequest,
+              swapQuote: { quoteRequest: {}, quote: {} }
+            }
+          : {}),
+        phase: 'needs-auth',
+        resumePhase: 'processing'
+      })
+      const pending = await h.restart().continuePlan(h.initial.planId)
+      expect(pending.phase).toBe('needs-auth')
+      expect(h.state.statusRequests).toEqual(h.initial.withdraws.map(row => row.depositAddress))
+      expect(h.state.monitoring).toBeGreaterThan(0)
+
+      h.state.statuses = h.initial.withdraws.map(() => 'SUCCESS')
+      expect((await h.restart().continuePlan(h.initial.planId)).phase).toBe('ready')
+      expect(h.state.submissions).toHaveLength(0)
+      expect(h.state.batchSubmissions).toBe(0)
+      expect(h.state.intentSignatures).toBe(0)
+      expect(h.state.authSignatures).toBe(0)
+      expect(h.state.historySignatures).toBe(0)
+    })
+  }
 
   test('settles staggered children monotonically across restart and temporary RPC failure', async () => {
     const h = await harness('processing')

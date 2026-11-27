@@ -3126,11 +3126,24 @@ export class ConfidentialFundingCoordinator {
 
   async refreshBalances(
     scope: Readonly<{ network: Network; keyDomainId: string; accountId: string }>,
-    authorize: boolean
+    authorize: boolean,
+    notifyPortfolio = false
   ): Promise<readonly Readonly<{ tokenId: string; available: string; source: string }>[]> {
     const { identity, session } = await this.requireConfidentialSession(scope, authorize)
     try {
-      return await this.refreshPortfolioBalances(identity, session.accessToken)
+      const balances = await this.refreshPortfolioBalances(identity, session.accessToken)
+      if (notifyPortfolio) {
+        await this.options
+          .refreshPortfolio?.({
+            keyDomainId: scope.keyDomainId,
+            accountId: scope.accountId,
+            chainIds: [],
+            domain: 'confidential',
+            balanceUpdated: true
+          })
+          .catch(() => {})
+      }
+      return balances
     } catch (error) {
       if (error instanceof ConfidentialFundingApiError && error.status === 401) {
         await withMetadataLock(async () => {
@@ -3545,11 +3558,30 @@ export class ConfidentialFundingCoordinator {
       this.confirmingByPlan.has(planId)
     )
       return plan
-    if (plan.phase === 'needs-auth') return plan
+    const settlementPhase = plan.phase === 'needs-auth' ? plan.resumePhase : plan.phase
+    const awaitingSettlement =
+      (settlementPhase === 'processing' || settlementPhase === 'partial') &&
+      plan.operation !== 'deposit' &&
+      plan.withdraws.length > 0
+    if (plan.phase === 'needs-auth' && !awaitingSettlement) {
+      if (!this.shieldDepositObservationPhase(plan)) return plan
+      const settled = await this.finishArrivedShieldDeposit(plan)
+      if (settled) return settled
+      await this.scheduleMonitoring()
+      return plan
+    }
     const session = await this.readUsableSessionForPlan(plan)
+    if (awaitingSettlement && (!session || plan.phase === 'needs-auth')) {
+      await this.ensureGraph(plan)
+      const observed = await this.refreshSettlement(plan, session?.accessToken, true)
+      if (!isTerminalPhase(observed.phase)) await this.scheduleMonitoring()
+      return observed
+    }
+    if (plan.phase === 'needs-auth') return plan
     if (!session) {
       const settled = await this.finishArrivedShieldDeposit(plan)
       if (settled) return settled
+      if (this.shieldDepositObservationPhase(plan)) await this.scheduleMonitoring()
       return this.updatePlan(plan, {
         phase: 'needs-auth',
         resumePhase: plan.phase
