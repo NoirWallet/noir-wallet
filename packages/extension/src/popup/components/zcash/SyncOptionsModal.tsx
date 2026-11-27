@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { useEffect, useRef, useState } from 'react'
 import { Input } from '../ui/input'
 import { Button } from '../ui/button'
@@ -59,12 +60,14 @@ export function SyncOptionsModal({ onConfirm, initialSelection }: SyncOptionsMod
 
       if (activeRequest.current === controller && !controller.signal.aborted) {
         onConfirm(
-          syncType === 'date' ? { type: 'date', height, date: syncDate } : { type: 'height', height }
+          syncType === 'date'
+            ? { type: 'date', height, date: syncDate }
+            : { type: 'height', height }
         )
       }
     } catch (err) {
       if (activeRequest.current === controller && !controller.signal.aborted) {
-        console.error('Failed to get block height:', err)
+        logger.error('Failed to get block height', undefined, undefined, err)
         setError('Failed to fetch block height for this date. Please check your connection.')
       }
     } finally {

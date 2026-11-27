@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useWalletStore } from '@/store/wallet-store'
 import type { ConnectedDApp, SiteDisconnectedDApp } from '@/core/dapp/dapp-manager'
@@ -33,7 +34,7 @@ export function useDAppConnection() {
       )
     } catch (error) {
       if (request !== statusRequest.current) return
-      console.error('Failed to load current tab dApp:', error)
+      logger.error('Failed to load current tab dApp', undefined, undefined, error)
       setCurrentDApp(null)
       setCurrentAccountAuthorized(true)
       setCanConnectCurrentAccount(false)
@@ -51,7 +52,7 @@ export function useDAppConnection() {
       if (!Array.isArray(response?.dapps)) throw new Error('Unable to load connected dApps')
       if (request === listRequest.current) setConnectedDApps(response.dapps)
     } catch (error) {
-      console.error('Failed to load connected dApps:', error)
+      logger.error('Failed to load connected dApps', undefined, undefined, error)
       if (request === listRequest.current) setConnectionError(true)
     } finally {
       if (request === listRequest.current) setLoading(false)
@@ -68,7 +69,7 @@ export function useDAppConnection() {
 
       await Promise.all([loadCurrentTabDApp(), loadConnectedDApps()])
     } catch (error) {
-      console.error('Failed to disconnect dApp:', error)
+      logger.error('Failed to disconnect dApp', undefined, undefined, error)
       throw error
     }
   }

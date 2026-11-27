@@ -35,6 +35,7 @@ import { getChainEndpointRuntimeKey } from '@/core/chains/chain-endpoint-setting
 import { resolveChainIconAlias } from '@/lib/chain-icon'
 import { cn } from '@/lib/utils'
 import { classifyError } from '@/lib/errors'
+import { logger } from '@/lib/logger'
 import { getSwapQuoteFailureMessage } from '@/popup/services/swap-quote-error-message'
 import { useWalletStore } from '@/store/wallet-store'
 import { useAccountDataStore } from '@/store/account-data-store'
@@ -2303,6 +2304,7 @@ function DepositWithdrawForm({
       return true
     } catch (error) {
       if (scopeStillCurrent() && latestShieldReviewKey.current === expectedKey) {
+        logger.error('[Shield] Transfer review failed', undefined, undefined, error)
         const message = error instanceof Error ? error.message : ''
         const classifiedMessage = classifyError(error, {
           source: selected.asset.metadata.symbol,
@@ -2460,6 +2462,7 @@ function DepositWithdrawForm({
       if (canOpenShieldActivity(plan)) openShieldActivity(plan)
       else await checkShieldPlan(plan.planId)
     } catch (error) {
+      logger.error('[Shield] Transfer confirmation failed', undefined, undefined, error)
       const status = await checkShieldPlan(pending.planId)
       if (status === 'prepared' && scopeStillCurrent())
         setShieldError(classifyError(error).userMessage)
@@ -2513,6 +2516,7 @@ function DepositWithdrawForm({
       if (!scopeStillCurrent() || latestShieldReviewKey.current !== shieldReviewKey) return
       if (await prepareShield(next, true)) updateFeeRefresh(null)
     } catch (error) {
+      logger.error('[Shield] Transfer fee update failed', undefined, undefined, error)
       if (scopeStillCurrent()) setShieldError(classifyError(error).userMessage)
       throw error
     } finally {
@@ -3139,7 +3143,8 @@ function DepositWithdrawForm({
                   estimate={clusterEstimate.value}
                   loading={canEstimateMethods && clusterEstimate.loading}
                   networkFeeLoading={
-                    canEstimateMethods && (clusterEstimate.loading || clusterNetworkFeeEstimate.loading)
+                    canEstimateMethods &&
+                    (clusterEstimate.loading || clusterNetworkFeeEstimate.loading)
                   }
                   fee={formatBalanceTransferFee(clusterEstimateWithFee, selected.asset)}
                   onClick={() => {

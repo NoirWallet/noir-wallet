@@ -1,6 +1,4 @@
-self.addEventListener('error', e => e.preventDefault())
-self.addEventListener('unhandledrejection', e => e.preventDefault())
-
+import { logger } from '@/lib/logger'
 import { getOffscreenClient } from '@/core/worker/client'
 import type { RPCSchema, SyncOwner, ZcashTransactionContext } from '@/core/worker/types'
 import { decodeWorkerRpcError, encodeWorkerRpcError } from '@/core/worker/rpc-errors'
@@ -49,6 +47,7 @@ import {
   type ZcashCredentialSessionPort
 } from '@/infrastructure/keyring/session'
 
+logger.captureUnhandledErrors(window)
 registerOffscreenSyncAbortListener()
 
 const zcashWorkerClient = getOffscreenClient()
@@ -145,7 +144,6 @@ const zcashCredentialSessionPort: ZcashCredentialSessionPort = {
   },
   forceRestart() {
     zcashWorkerClient.recreateWorker()
-    logForwardingEnabled = false
     clearAllWalletRuntimeState()
   }
 }
@@ -176,7 +174,6 @@ interface WalletInitPayload {
   dbKey?: string
 }
 
-let logForwardingEnabled = false
 const initPayloadsByWallet = new Map<string, WalletInitPayload>()
 const reinitializingByWallet = new Map<string, Promise<void>>()
 const pendingInitByWallet = new Map<string, Promise<any>>()
@@ -419,7 +416,6 @@ async function executeWalletReload(payload: {
     }
     rememberInitPayload({ walletId, network, lightwalletdUrl, compactBlockCdn, dbKey })
     clearWalletDirty(walletId)
-    trySetupLogForwarding()
     const generation = getWalletGeneration(walletId)
     offscreenLog(`[WALLET RELOAD] completed generation=${generation}`, walletId)
     return { generation }
@@ -724,9 +720,7 @@ async function waitForSyncOperationsWithGeneration(
   assertWalletGeneration(walletId, generationBefore)
 }
 
-zcashWorkerClient.onWorkerRecreated = () => {
-  logForwardingEnabled = false
-}
+zcashWorkerClient.onWorkerRecreated = () => {}
 
 function getMessageWalletId(message: any): string | undefined {
   return message?.payload?.walletId
@@ -742,8 +736,7 @@ function offscreenWarn(message: string, walletId?: string): void {
 }
 
 function offscreenError(message: string, error: unknown, walletId?: string): void {
-  const detail = error instanceof Error ? error.message : String(error)
-  forwardOffscreenLog('error', `${message}: ${detail}`, walletId)
+  logger.error(message, walletId, undefined, error)
 }
 
 function forwardOffscreenLog(
@@ -815,7 +808,6 @@ async function ensureWalletInitialized(walletId?: string): Promise<void> {
         compactBlockCdn: payload.compactBlockCdn,
         dbBytes
       })
-      trySetupLogForwarding()
       offscreenLog('Wallet reinitialized successfully', payload.walletId)
     } catch (e) {
       if (getWalletGeneration(walletId) === generationBefore) {
@@ -830,29 +822,6 @@ async function ensureWalletInitialized(walletId?: string): Promise<void> {
 
   reinitializingByWallet.set(walletId, reinitializing)
   return reinitializing
-}
-
-const setupLogForwarding = () => {
-  if (!debugLogsEnabled) return false
-  if (logForwardingEnabled) return
-
-  const worker = zcashWorkerClient.getWorker()
-  if (!worker) return false
-
-  worker.addEventListener('message', event => {
-    if (event.data?.type === 'WORKER_LOG') {
-      const { level, message, walletId } = event.data
-      chrome.runtime.sendMessage({ type: 'WORKER_LOG', level, message, walletId }).catch(() => {})
-    }
-  })
-
-  logForwardingEnabled = true
-  return true
-}
-
-function trySetupLogForwarding() {
-  if (!debugLogsEnabled) return
-  if (!logForwardingEnabled) setupLogForwarding()
 }
 
 function isWalletNotInitializedError(msg: string): boolean {
@@ -979,7 +948,6 @@ async function restoreWalletFromPersistedDb(walletId: string): Promise<boolean> 
     dbBytes
   })
   clearWalletDirty(walletId)
-  trySetupLogForwarding()
   return true
 }
 
@@ -1271,7 +1239,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     void credentialSessionHost
       .invalidateForWorkerRestart()
       .then(() => {
-        trySetupLogForwarding()
         sendResponse({ result: true })
       })
       .catch(() => sendResponse({ error: 'Credential session invalidation failed' }))
@@ -1355,7 +1322,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           })()
             .then(async result => {
               assertWalletGeneration(walletId, generationBefore)
-              trySetupLogForwarding()
               rememberInitPayload({ walletId, network, lightwalletdUrl, compactBlockCdn, dbKey })
               offscreenLog('RPC init completed (fast-path)', walletId)
               return result
@@ -1400,7 +1366,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           })()
             .then(async result => {
               assertWalletGeneration(walletId, generationBefore)
-              trySetupLogForwarding()
               if (result === 'empty' && loadedDbBytes && dbKey) {
                 offscreenWarn(`Persisted DB restore was rejected; quarantining ${dbKey}`, walletId)
                 await quarantineWalletPersistence({
@@ -1646,7 +1611,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const batchOperation = zcashWorkerClient
       .requestToWorker('wallet.prepareSyncBatch', { walletId, batchSize, refresh })
       .then(async (result: any) => {
-        trySetupLogForwarding()
         if (!result) {
           sendResponse({ result: null })
           return
@@ -1712,7 +1676,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             }
           }
         })
-        trySetupLogForwarding()
         sendResponse({ result: replayed })
       } catch (error: any) {
         offscreenError('replayJournalEntries failed', error, walletId)
@@ -1873,7 +1836,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (debugRequestId) {
         logDebugTiming(debugRequestId, 'offscreen-worker-roundtrip', workerStartedAt)
       }
-      trySetupLogForwarding()
       if (message.method === 'wallet.reset' && rpcWalletId) {
         clearWalletDirty(rpcWalletId)
       }
@@ -1922,7 +1884,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             message.payload,
             transactionContext
           )
-          trySetupLogForwarding()
           if (isTransactionMutation(message.method)) {
             await persistBroadcastHashSafely(
               message.method,
@@ -1967,8 +1928,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 })
 
 setTimeout(() => {
-  setupLogForwarding()
-
   chrome.runtime.sendMessage({ type: 'OFFSCREEN_READY' }).catch(err => {
     console.warn('[Offscreen] Failed to send ready signal:', err)
   })

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { ZcashBalance, Transaction, Network, SyncReason } from '@/types'
@@ -372,7 +373,12 @@ export const useAccountDataStore = create<AccountDataStore>()(
             }
           })
         } catch (error) {
-          console.error('[AccountDataStore] Failed to load transactions:', error)
+          logger.error(
+            '[AccountDataStore] Failed to load transactions',
+            undefined,
+            undefined,
+            error
+          )
         }
       },
 
@@ -396,7 +402,12 @@ export const useAccountDataStore = create<AccountDataStore>()(
             }
           })
         } catch (error) {
-          console.error('[AccountDataStore] Failed to reload transactions:', error)
+          logger.error(
+            '[AccountDataStore] Failed to reload transactions',
+            undefined,
+            undefined,
+            error
+          )
         }
       },
 

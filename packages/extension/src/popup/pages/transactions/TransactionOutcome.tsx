@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { useEffect, useRef, useState } from 'react'
 import { PageHeader } from '../../components/common/PageHeader'
 import { StandardTransactionResult } from '../../components/transaction/StandardTransactionResult'
@@ -437,7 +438,12 @@ export function TransactionOutcome() {
       { interval: 5_000, signal: controller.signal }
     ).catch(error => {
       if (error instanceof DOMException && error.name === 'AbortError') return
-      console.error('[TransactionOutcome] Zcash confirmation polling failed:', error)
+      logger.error(
+        '[TransactionOutcome] Zcash confirmation polling failed',
+        undefined,
+        undefined,
+        error
+      )
     })
 
     return () => controller.abort()

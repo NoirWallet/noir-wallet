@@ -6,7 +6,7 @@ import {
   fetchWithTimeout,
   jsonRequestInit
 } from '@/lib/fetch-utils'
-import { logDevelopmentError } from '@/lib/development-console'
+import { logger } from '@/lib/logger'
 import type { EvmDAppReadMethod } from '@/core/dapp/eip1193'
 
 export const EVM_RPC_ERROR_CODES = Object.freeze([
@@ -373,9 +373,13 @@ export function createEvmRpcClient(
       let decoded: unknown
       try {
         decoded = await response.json()
-      } catch (error) {
-        logDevelopmentError(`[EVM RPC] ${method} returned invalid JSON`, error)
-        throw new EvmRpcError('invalid-response', 'EVM RPC response is not valid JSON')
+      } catch {
+        throw new EvmRpcError(
+          'invalid-response',
+          'EVM RPC response is not valid JSON',
+          undefined,
+          method
+        )
       }
       if (!isRecord(decoded) || decoded.jsonrpc !== '2.0' || decoded.id !== id) {
         throw new EvmRpcError('invalid-response', 'Invalid EVM RPC response envelope')
@@ -392,7 +396,9 @@ export function createEvmRpcClient(
       return decoded.result
     } catch (error) {
       if (error instanceof EvmRpcError) throw error
-      logDevelopmentError(`[EVM RPC] ${method} request failed`, error)
+      if (!externalSignal?.aborted) {
+        logger.error(`[EVM RPC] ${method} transport failed`, undefined, undefined, error)
+      }
       if (externalSignal?.aborted || error instanceof FetchTimeoutError) {
         throw new EvmRpcError(
           externalSignal?.aborted ? 'cancelled' : 'timeout',

@@ -4,6 +4,7 @@
  */
 
 type StorageArea = 'local' | 'session'
+import { logger } from '@/lib/logger'
 import { SETTINGS_STORAGE_KEY, withWalletSettingsLock } from './wallet-settings-storage'
 
 interface StorageAdapter {
@@ -31,7 +32,7 @@ export function createChromeStorageAdapter(
         const result = await storage.get(key)
         return result[key] ?? null
       } catch (error) {
-        console.error('[ChromeStorageAdapter] getItem error:', error)
+        logger.error('[ChromeStorageAdapter] getItem error', undefined, undefined, error)
         if (options.strictRead) throw error
         return null
       }
@@ -87,7 +88,7 @@ export function createChromeStorageAdapter(
             await clearOldCacheEntries(storage)
             await storage.set({ [key]: value })
           } else {
-            console.error('[ChromeStorageAdapter] setItem error:', error)
+            logger.error('[ChromeStorageAdapter] setItem error', undefined, undefined, error)
             throw error
           }
         }
@@ -101,7 +102,7 @@ export function createChromeStorageAdapter(
         try {
           await storage.remove(key)
         } catch (error) {
-          console.error('[ChromeStorageAdapter] removeItem error:', error)
+          logger.error('[ChromeStorageAdapter] removeItem error', undefined, undefined, error)
           throw error
         }
       }
@@ -128,7 +129,7 @@ async function clearOldCacheEntries(storage: chrome.storage.StorageArea): Promis
       console.log('[ChromeStorageAdapter] Cleared cache entries:', toRemove.length)
     }
   } catch (error) {
-    console.error('[ChromeStorageAdapter] clearOldCacheEntries error:', error)
+    logger.error('[ChromeStorageAdapter] clearOldCacheEntries error', undefined, undefined, error)
   }
 }
 import {

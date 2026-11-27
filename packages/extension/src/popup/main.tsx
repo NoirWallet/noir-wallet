@@ -7,6 +7,7 @@ import walletPrivateIcon from './lib/wallet-private-icon.json'
 import walletDesignIcons from './lib/wallet-design-icons.json'
 import './index.css'
 import { initializeRuntimeNetwork } from '@/lib/runtime-network'
+import { logger } from '@/lib/logger'
 
 // Navigation and action icons must remain available without the Iconify API.
 addCollection(walletUiIcons)
@@ -27,8 +28,10 @@ async function bootstrap(): Promise<void> {
   )
 }
 
+logger.captureUnhandledErrors(window)
+
 void bootstrap().catch(error => {
-  console.error('[Popup] Network initialization failed:', error)
+  logger.error('Network initialization failed', undefined, undefined, error)
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <main className="flex min-h-screen items-center justify-center bg-background p-6 text-center text-foreground">
       <div>

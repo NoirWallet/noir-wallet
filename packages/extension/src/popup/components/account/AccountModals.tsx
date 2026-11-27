@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { useEffect, useState } from 'react'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -133,7 +134,7 @@ export function ResyncZcashContent({
 
       await onConfirm(height)
     } catch (e) {
-      console.error('Resync failed:', e)
+      logger.error('Resync failed', undefined, undefined, e)
       setError(classifyError(e).userMessage)
     } finally {
       setIsLoading(false)

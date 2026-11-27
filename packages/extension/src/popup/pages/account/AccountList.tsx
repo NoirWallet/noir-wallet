@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { useZcashUsdPrice } from '@/popup/hooks/useAssetPrices'
 import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { Icon } from '@iconify/react'
@@ -224,7 +225,7 @@ export function AccountList() {
       await loadWallets()
       replace('/')
     } catch (error) {
-      console.error('Failed to switch account:', error)
+      logger.error('Failed to switch account', undefined, undefined, error)
       if (isWalletLockedError(error)) {
         replace('/unlock?redirect=%2Faccount-list')
         return
@@ -358,7 +359,7 @@ export function AccountList() {
       await zcashWalletRuntimeClient.switchAccount(walletId, accountId)
       replace('/')
     } catch (e) {
-      console.error('Failed to add account:', e)
+      logger.error('Failed to add account', undefined, undefined, e)
       await alert({
         title: accountCreated ? 'Unable to switch account' : 'Account setup incomplete',
         message:

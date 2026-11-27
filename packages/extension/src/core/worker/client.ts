@@ -35,6 +35,7 @@ import { getOwnExtensionSenderContext } from '@/lib/runtime-message-security'
 import { decodeWorkerRpcError } from './rpc-errors'
 import { readZeroIndexerOptionsForWorker } from '@/infrastructure/chains/zero-indexer-preferences'
 import type { ZeroIndexerOptions } from '@/core/zcash/zero-indexer'
+import { logger } from '@/lib/logger'
 
 const { LIGHT, MEDIUM, WASM_HEAVY, TRANSACTION } = WALLET_CONFIG.SYNC.RPC_TIMEOUT_MS
 const syncOwner: SyncOwner = {
@@ -346,7 +347,7 @@ async function forwardToOffscreen<T = any>(
         console.log('[ZcashWorkerClient] Offscreen Document created')
       })
       .catch(err => {
-        console.error('[ZcashWorkerClient] Failed to create Offscreen:', err)
+        logger.error('Could not create Zcash offscreen document', undefined, undefined, err)
         throw err
       })
       .finally(() => {
@@ -465,7 +466,7 @@ export class ZcashWorkerClient {
 
     // Offscreen environment: create Worker directly
     if (typeof Worker === 'undefined') {
-      console.error('[ZcashWorker] Worker is not available in this environment')
+      logger.error('Zcash Worker is unavailable in this environment')
       throw new Error('Web Worker is not supported in this environment')
     }
 
@@ -473,22 +474,31 @@ export class ZcashWorkerClient {
     worker = new Worker(new URL('./zcash.worker.ts', import.meta.url), {
       type: 'module'
     })
-
     // Handle responses
-    worker.onmessage = (event: MessageEvent<RPCResponse<any>>) => {
-      const { id, result, error } = event.data
+    worker.onmessage = (
+      event: MessageEvent<
+        RPCResponse<any> | { type: 'WORKER_LOG'; level: string; message: string; walletId?: string }
+      >
+    ) => {
+      const response = event.data
+      if ('type' in response) {
+        const { level, message, walletId } = response
+        void chrome.runtime
+          .sendMessage({ type: 'WORKER_LOG', level, message, walletId })
+          .catch(() => {})
+        return
+      }
+      const { id, result, error } = response
       const pending = pendingRequests.get(id)
 
       if (pending) {
         pendingRequests.delete(id)
         if (pending.timedOut) {
-          pending.onLateResult?.(event.data)
+          pending.onLateResult?.(response)
           return
         }
         if (error) {
-          pending.reject(
-            decodeWorkerRpcError(event.data as OffscreenRpcResponse & { error: string })
-          )
+          pending.reject(decodeWorkerRpcError(response as OffscreenRpcResponse & { error: string }))
         } else {
           pending.resolve(result)
         }
@@ -497,7 +507,7 @@ export class ZcashWorkerClient {
 
     worker.onerror = error => {
       error.preventDefault()
-      console.warn('[ZcashWorker] Worker error:', error.message)
+      logger.error('Zcash Worker crashed', undefined, undefined, error.error ?? error.message)
       this.handleWorkerCrash(error.message || 'Worker error')
     }
   }
@@ -741,7 +751,7 @@ export class ZcashWorkerClient {
       } else {
         clearTimeout(timeoutId)
         pendingRequests.delete(id)
-        console.error('[ZcashWorkerClient] Worker is null before postMessage!')
+        logger.error('Zcash Worker is unavailable before the RPC request')
         reject(new Error('Worker not initialized'))
       }
     })

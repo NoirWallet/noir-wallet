@@ -5,6 +5,7 @@
  * so the tab can rebuild state after an unlock redirect.
  */
 
+import { logger } from '@/lib/logger'
 import type { QuoteBinding } from '@/types'
 import type { FeeTier } from '@/config/fee'
 import type { TransactionId } from '@/core/transactions/domain'
@@ -481,7 +482,9 @@ export function openHardwareConnectTab(
   const query = vendor === 'ledger' && ledgerTarget ? `?${new URLSearchParams(ledgerTarget)}` : ''
   chrome.tabs
     .create({ url: chrome.runtime.getURL(`index.html#${route}${query}`) })
-    .catch(console.error)
+    .catch(error =>
+      logger.error('Hardware connection window could not open', undefined, undefined, error)
+    )
 }
 
 interface HardwareSignSession {

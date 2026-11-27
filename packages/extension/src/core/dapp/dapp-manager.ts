@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { parseChainId } from '@/core/chains/registry'
 import { parseStoredCaip25Session, type Caip25StoredSession } from './caip25'
 import { getDAppSessionScopeLimit, shouldAutoConnectDApp } from './first-party-policy'
@@ -1222,7 +1223,7 @@ export class DAppManager {
     try {
       await operation
     } catch (error) {
-      console.error('Failed to initialize DAppManager:', error)
+      logger.error('Failed to initialize DAppManager', undefined, undefined, error)
       throw error
     } finally {
       if (this.initializationPromise === operation) this.initializationPromise = null
@@ -2084,7 +2085,7 @@ export class DAppManager {
         disconnectedBySite
       }
     } catch (error) {
-      console.error('Failed to get current tab dApp:', error)
+      logger.error('Failed to get current tab dApp', undefined, undefined, error)
       return null
     }
   }

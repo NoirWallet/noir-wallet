@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { isZcashHardwareKeySource } from '@/core/wallet/hardware-wallet-data'
 import { useState, useCallback } from 'react'
 import { useRef } from 'react'
@@ -309,7 +310,7 @@ export function useShieldFunds(pageId: string): UseShieldFundsResult {
             )
           }
         } catch (error) {
-          console.error('[useShieldFunds] Shield funds failed:', error)
+          logger.error('[useShieldFunds] Shield funds failed', undefined, undefined, error)
 
           if (pendingTx && currentWalletId && currentAccountId) {
             const accountKey = buildAccountKey(network, currentWalletId, currentAccountId)

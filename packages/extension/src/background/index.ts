@@ -84,7 +84,11 @@ import { syncJobStore } from '@/lib/sync-job-store'
 import { toHardwarePcztError } from '@/core/zcash/hardware-pczt'
 import { formatHardwareSigningError } from '@/lib/hardware-signing-error'
 import { appendDiagnosticLog, exportDiagnosticLogs } from '@/lib/diagnostic-log-store'
-import { parseDiagnosticLogDraft, sanitizeDiagnosticMessage } from '@/lib/diagnostic-log'
+import {
+  parseDiagnosticLogDraft,
+  sanitizeDiagnosticMessage,
+  writeDiagnosticConsoleError
+} from '@/lib/diagnostic-log'
 import { logDebugTiming, traceDebugStage } from '@/lib/debug-performance'
 import { hasWalletDb, loadTransactions, observeLegacyTransactionCommits } from '@/lib/indexed-db'
 import { isExternalActivityReceipt } from '@/core/activity/activity-notification'
@@ -271,7 +275,6 @@ import {
 import {
   computeEvmSigningPayloadFingerprint,
   createConfiguredEvmRpcClient,
-  EvmRpcError,
   EvmTransactionError,
   type EvmSigningPreparePayload,
   ChromeSessionEvmPendingTransferStore,
@@ -2220,6 +2223,7 @@ if (__EXTENSION_UPDATES_ENABLED__) {
 const debugLogsEnabled = typeof __DEBUG_LOGS__ !== 'boolean' || __DEBUG_LOGS__
 let forwardedDiagnosticSequence = 0
 logger.configureDiagnostics(appendDiagnosticLog)
+logger.captureUnhandledErrors(self)
 configureLedgerSigningCoordinator(async scope => {
   if (networkRestartRequired || !(await credentialSession.hasUnlockSession()))
     throw new Error('Wallet is locked or restarting')
@@ -2253,7 +2257,12 @@ const trustedStorageAccessReady = Promise.all([
 ])
   .then(() => true)
   .catch(error => {
-    console.error('[Security] Failed to restrict extension storage access:', error)
+    logger.error(
+      '[Security] Failed to restrict extension storage access',
+      undefined,
+      undefined,
+      error
+    )
     return false
   })
 
@@ -3678,8 +3687,12 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       },
       { walletId: message.walletId }
     ).catch(() => {})
+    if (message.level === 'error') {
+      writeDiagnosticConsoleError(`[worker] ${message.message}`)
+      return false
+    }
     if (!debugLogsEnabled) return false
-    if (message.walletId || message.level === 'error' || message.level === 'warn') {
+    if (message.walletId || message.level === 'warn') {
       const rawLevel = message.level as string
       const fallbackPrefix = `[Worker ${rawLevel.toUpperCase()}]`
       const prefix = message.walletId ? logger.getPrefix(message.walletId) : fallbackPrefix
@@ -4817,10 +4830,9 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
       })
       .catch(error => {
         const safeMessage = getSafeRheaSwapRuntimeErrorMessage(error)
-        console.error('[RHEA Swap] Request failed', {
-          operation: message.type,
-          errorName: error instanceof Error ? error.name : 'UnknownError',
-          errorMessage: safeMessage
+        logger.error(`[RHEA Swap] ${message.type} failed`, undefined, undefined, {
+          name: error instanceof Error ? error.name : 'UnknownError',
+          message: safeMessage
         })
         sendResponse({ error: safeMessage })
       })
@@ -5142,27 +5154,20 @@ const handleRuntimeMessage: Parameters<typeof chrome.runtime.onMessage.addListen
         sendResponse({ result })
       })
       .catch(error => {
-        logger.warn(
-          `[EVM Transfer] ${message.type} failed (${error instanceof Error ? error.name : 'UnknownError'})`
+        logger.error(
+          `[EVM Transfer] ${message.type} failed`,
+          undefined,
+          undefined,
+          error instanceof EvmTransactionError && error.rpcFailure
+            ? {
+                name: error.name,
+                message: error.message,
+                code: error.code,
+                rpcCode: error.rpcFailure.code,
+                rpcMethod: error.rpcFailure.method
+              }
+            : error
         )
-        console.error('[EVM Transfer] Request failed', {
-          operation: message.type,
-          errorName: error instanceof Error ? error.name : 'UnknownError',
-          ...(message.type === 'GET_EVM_TOKEN_BALANCE'
-            ? {}
-            : {
-                errorMessage: error instanceof Error ? error.message : 'EVM transfer request failed'
-              }),
-          ...(error instanceof EvmRpcError
-            ? { rpcErrorCode: error.code, rpcCode: error.rpcCode, rpcMethod: error.rpcMethod }
-            : error instanceof EvmTransactionError && error.rpcFailure
-              ? {
-                  rpcErrorCode: error.code,
-                  rpcCode: error.rpcFailure.code,
-                  rpcMethod: error.rpcFailure.method
-                }
-              : {})
-        })
         sendResponse({ error: mapEvmWalletRuntimeError(error, message.type) })
       })
     return true
@@ -8494,8 +8499,7 @@ async function handleBackgroundZcashTx(params: {
 
     if (walletId && accountId) {
       void refreshAfterOnChainBroadcast(walletId).catch(error => {
-        logger.warn('Post-send balance refresh failed', walletId, accountId)
-        console.error('[Background] refreshAfterOnChainBroadcast failed:', error)
+        logger.error('Post-send balance refresh failed', walletId, accountId, error)
       })
     }
   } catch (error: any) {

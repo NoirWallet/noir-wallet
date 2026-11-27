@@ -47,8 +47,11 @@ function projectError(error: unknown, seen: WeakSet<object>, depth: number): unk
       'message',
       'code',
       'errorCode',
+      'businessCode',
       'status',
       'statusCode',
+      'rpcCode',
+      'rpcMethod',
       'type',
       'retryable',
       'details',
@@ -182,6 +185,10 @@ function redactText(input: string): string {
   input = redactRecoveryPhrases(input)
   const redacted = input
     .replace(
+      /\b(?:request (?:arguments|body|payload)|raw (?:request|response|transaction)|response body)\s*[:=][\s\S]*/i,
+      '[Payload redacted]'
+    )
+    .replace(
       /["']?\b(seed(?:\s*phrase)?|mnemonic)\b["']?\s*[:=]\s*["']?((?:[a-z]{2,}\s+){11,23}[a-z]{2,})["']?/gi,
       '$1=[Recovery phrase redacted]'
     )
@@ -196,10 +203,17 @@ function redactText(input: string): string {
       '$1=[Redacted]'
     )
     .replace(
+      /\b((?:balance|amount|gas (?:cost|fee)|transaction cost|tx cost|try at least)\s+)(?:is\s+)?-?\d+(?:\.\d+)?\b/gi,
+      '$1[Redacted amount]'
+    )
+    .replace(
       /["']?\b(address|walletId|accountId|transactionId|txHash|txid|requestId|origin|domain|hostname|endpoint)\b["']?\s*[:=]\s*(?:\[Redacted identifier\]|"[^"]*"|'[^']*'|[^\s,;)}\]]+)/gi,
       '$1=[Redacted identifier]'
     )
-    .replace(/-?\d+(?:\.\d+)?\s*(?:ZEC|zatoshis?|USD)\b/gi, '[Redacted amount]')
+    .replace(
+      /-?\d+(?:\.\d+)?\s*(?:ZEC|zatoshis?|USD|USDC|USDT|ETH|gwei|wei|BTC|satoshis?|SOL|NEAR|BNB|POL)\b/gi,
+      '[Redacted amount]'
+    )
     .replace(/\b(?:https?|wss?):\/\/[^\s)\]}>,]+/gi, '[URL]')
     .replace(
       /\b(?:u1|utest1|zs1|ztestsapling1|t1|t2|t3|tm)[a-zA-Z0-9]{28,}\b/g,
@@ -271,6 +285,10 @@ export function serializeDiagnosticArgs(args: unknown[]): string {
 
 export function sanitizeDiagnosticMessage(message: string): string {
   return truncateDiagnosticText(redactText(message), DIAGNOSTIC_LOG_MAX_ENTRY_BYTES)
+}
+
+export function writeDiagnosticConsoleError(message: string): void {
+  globalThis.console.error('[Noir diagnostic]', sanitizeDiagnosticMessage(message))
 }
 
 export function getDiagnosticEntryByteSize(entry: Pick<DiagnosticLogEntry, 'message'>): number {

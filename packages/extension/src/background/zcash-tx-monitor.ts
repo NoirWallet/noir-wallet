@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { transactionRecorder } from './transaction-recorder'
 import { WALLET_CONFIG } from '@/config/wallet'
 import { DEFAULT_NETWORK, getNetworkConfig } from '@/lib/runtime-network'
@@ -271,7 +272,7 @@ export class ZcashTxMonitor {
         }
       }
     } catch (error) {
-      console.error(TAG, 'Failed to load from storage:', error)
+      logger.error(`${TAG} Failed to load from storage`, undefined, undefined, error)
     }
   }
 
@@ -371,7 +372,7 @@ export class ZcashTxMonitor {
 
       await this.applyMonitorAction(tx, action, lookup, rpcUrl)
     } catch (error) {
-      console.error(TAG, `Check failed for ${tx.txHash}:`, error)
+      logger.error(`${TAG} Transaction status check failed`, undefined, undefined, error)
     }
   }
 

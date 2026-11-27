@@ -1376,7 +1376,7 @@ export class DAppHandler {
 
         void catchUpAfterOnChainTx(walletId, accountId).catch(err => {
           logger.warn('Post-send catch-up failed, scheduling sync retry', walletId, accountId)
-          console.error('[DAppHandler] catchUpAfterOnChainTx failed:', err)
+          logger.error('[DAppHandler] catchUpAfterOnChainTx failed', undefined, undefined, err)
           backgroundZcashWalletRuntime.requestSync()
         })
 
@@ -1785,7 +1785,7 @@ export class DAppHandler {
 
         void catchUpAfterOnChainTx(walletId, accountId).catch(err => {
           logger.warn('Post-shield catch-up failed', walletId, accountId)
-          console.error('[DAppHandler] catchUpAfterOnChainTx failed:', err)
+          logger.error('[DAppHandler] catchUpAfterOnChainTx failed', undefined, undefined, err)
           backgroundZcashWalletRuntime.requestSync()
         })
 
@@ -2654,7 +2654,12 @@ export class DAppHandler {
         try {
           await this.broadcastEvent(dapp.origin, 'accountsChanged', [])
         } catch (error) {
-          console.error(`[DAppHandler] Failed to notify ${dapp.origin}:`, error)
+          logger.error(
+            '[DAppHandler] Failed to notify a connected site',
+            undefined,
+            undefined,
+            error
+          )
         }
       }
       return
@@ -2678,7 +2683,7 @@ export class DAppHandler {
           shielded: bound.account.addresses.shielded
         })
       } catch (error) {
-        console.error(`[DAppHandler] Failed to notify ${dapp.origin}:`, error)
+        logger.error('[DAppHandler] Failed to notify a connected site', undefined, undefined, error)
       }
     }
   }
@@ -2704,7 +2709,7 @@ export class DAppHandler {
       try {
         await this.broadcastEvent(dapp.origin, 'accountsChanged', params.accounts)
       } catch (error) {
-        console.error(`[DAppHandler] Failed to notify ${dapp.origin}:`, error)
+        logger.error('[DAppHandler] Failed to notify a connected site', undefined, undefined, error)
       }
     }
   }
@@ -2717,7 +2722,12 @@ export class DAppHandler {
         try {
           await this.broadcastEvent(dapp.origin, 'chainChanged', chainInfo)
         } catch (error) {
-          console.error(`[DAppHandler] Failed to notify ${dapp.origin}:`, error)
+          logger.error(
+            '[DAppHandler] Failed to notify a connected site',
+            undefined,
+            undefined,
+            error
+          )
         }
       }
     }

@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useNavigate, useLocation } from '../provider/Router'
 import { prepareWalletStoreForUse, useWalletStore } from '@/store/wallet-store'
@@ -312,7 +313,7 @@ export function useAppRouting() {
         replace(walletEntryRoute.current)
       }
     } catch (error) {
-      console.error('[useAppRouting] Initialization error:', error)
+      logger.error('[useAppRouting] Initialization error', undefined, undefined, error)
       setInitializationFailure(initializationPhase)
     } finally {
       setIsLoading(false)

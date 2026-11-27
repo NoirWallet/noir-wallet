@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AccountData, Network, WalletItem } from '@/types'
@@ -343,7 +344,7 @@ export async function migrateWalletDataIfNeeded(): Promise<void> {
       await rehydrateWalletStore()
     }
   } catch (error) {
-    console.error('[WalletStore] Legacy wallet metadata migration failed')
+    logger.error('[WalletStore] Legacy wallet metadata migration failed')
     throw error
   }
 }

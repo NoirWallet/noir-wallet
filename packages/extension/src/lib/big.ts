@@ -1,3 +1,4 @@
+import { logger } from '@/lib/logger'
 import Big from 'big.js'
 
 Big.DP = 40
@@ -12,7 +13,12 @@ export function safeBig(val: BigValue, defaultVal = '0') {
     const v = val || defaultVal
     return new Big(v)
   } catch (error) {
-    console.error('safeBig error', val, error)
+    logger.error(
+      'Invalid decimal value',
+      undefined,
+      undefined,
+      error instanceof Error ? error.name : undefined
+    )
     return new Big('0')
   }
 }

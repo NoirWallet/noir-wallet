@@ -130,6 +130,22 @@ function containsExecutableDiagnostic(source, fileName) {
       (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
       isConsoleExpression(node.expression)
     ) {
+      const call = node.parent
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        node.name.text === 'error' &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === 'globalThis' &&
+        ts.isCallExpression(call) &&
+        call.expression === node &&
+        call.arguments.length === 2 &&
+        ts.isStringLiteral(call.arguments[0]) &&
+        call.arguments[0].text === '[Noir diagnostic]'
+      ) {
+        visit(call.arguments[1])
+        return
+      }
       found = true
       return
     }
@@ -179,6 +195,8 @@ console.log(
       ? 'Verified E2E-only Multichain conformance surface'
       : 'Verified production build excludes E2E-only surfaces',
     'Verified packaged Zcash and Multichain WASM integrity',
-    ...(isProductionChannel ? ['Verified production build excludes diagnostic code'] : [])
+    ...(isProductionChannel
+      ? ['Verified production build excludes raw console and debugger code']
+      : [])
   ].join('\n')
 )

@@ -313,7 +313,9 @@ export function KeystoneSign() {
     if (!req.dappRequestId) return
     chrome.runtime
       .sendMessage({ type: 'HW_SIGN_RESULT', requestId: req.dappRequestId, ...result })
-      .catch(console.error)
+      .catch(error =>
+        logger.error('Hardware signing result could not be delivered', undefined, undefined, error)
+      )
   }
 
   const submitHardwareSignature = async (
@@ -447,7 +449,12 @@ export function KeystoneSign() {
           )
         }
       } catch (bookkeepingError) {
-        console.error('[HardwareSign] Broadcast record update failed:', bookkeepingError)
+        logger.error(
+          '[HardwareSign] Broadcast record update failed',
+          undefined,
+          undefined,
+          bookkeepingError
+        )
       }
 
       try {
@@ -479,13 +486,23 @@ export function KeystoneSign() {
           })
         }
       } catch (monitorError) {
-        console.error('[HardwareSign] Broadcast monitor registration failed:', monitorError)
+        logger.error(
+          '[HardwareSign] Broadcast monitor registration failed',
+          undefined,
+          undefined,
+          monitorError
+        )
       }
 
       try {
         zcashWalletRuntimeClient.requestSync()
       } catch (syncError) {
-        console.error('[HardwareSign] Post-broadcast sync request failed:', syncError)
+        logger.error(
+          '[HardwareSign] Post-broadcast sync request failed',
+          undefined,
+          undefined,
+          syncError
+        )
       }
       let originResultPublished = false
       if (request.reportToOrigin) {
@@ -501,7 +518,12 @@ export function KeystoneSign() {
           })
           originResultPublished = true
         } catch (cause) {
-          console.error('[HardwareSign] Failed to report result to the origin surface:', cause)
+          logger.error(
+            '[HardwareSign] Failed to report result to the origin surface',
+            undefined,
+            undefined,
+            cause
+          )
         }
       }
       recordHardwareOperationOutcome(
@@ -533,7 +555,14 @@ export function KeystoneSign() {
             transactionId,
             updates: { status: 'failed', notified: true }
           })
-          .catch(console.error)
+          .catch(error =>
+            logger.error(
+              'Hardware signing failure could not be recorded',
+              undefined,
+              undefined,
+              error
+            )
+          )
       }
       if (broadcastHash) {
         reportDappResult(request, { success: true, txHash: broadcastHash })

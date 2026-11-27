@@ -2,6 +2,7 @@
  * NEAR Intents API service for cross-chain swap quotes and status tracking
  */
 
+import { logger } from '@/lib/logger'
 import {
   RHEA_TOKEN_ICONS_API,
   NOIR_SWAP_APP_FEES,
@@ -632,7 +633,7 @@ export async function fetchSwapTokens(): Promise<SwapToken[]> {
   try {
     return await refreshSwapTokenCatalog()
   } catch (error) {
-    console.error('Error fetching swap tokens:', error)
+    logger.error('Error fetching swap tokens', undefined, undefined, error)
     return tokenCache.length > 0 ? tokenCache : []
   }
 }

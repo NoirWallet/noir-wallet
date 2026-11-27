@@ -4,6 +4,7 @@
  * Tracks user activity on route changes for auto-lock functionality
  */
 
+import { logger } from '@/lib/logger'
 import {
   createContext,
   useCallback,
@@ -57,7 +58,7 @@ export function useNavigate() {
     }
 
     SecureStorage.saveLastActivityTime().catch(err => {
-      console.error('[Router] Failed to save activity time:', err)
+      logger.error('[Router] Failed to save activity time', undefined, undefined, err)
     })
   }, [])
 
@@ -172,7 +173,7 @@ function RouteActivityTracker() {
     }
 
     SecureStorage.saveLastActivityTime().catch(err => {
-      console.error('[Router] Route change activity tracking failed:', err)
+      logger.error('[Router] Route change activity tracking failed', undefined, undefined, err)
     })
   }, [location.pathname])
 
