@@ -42,9 +42,6 @@ export interface VerboseTransaction {
   time?: number
   confirmations?: number
   height?: number
-  valueBalanceZat?: number
-  orchard?: { valueBalanceZat?: number }
-  ironwood?: { valueBalanceZat?: number }
 }
 
 /**
@@ -98,8 +95,8 @@ export function getVerboseTransaction(
 const TX_NOT_FOUND_RPC_CODE = -5
 
 export type TxLookup =
-  | { status: 'confirmed'; confirmations: number; shieldedNetZatoshis?: number }
-  | { status: 'mempool'; shieldedNetZatoshis?: number }
+  | { status: 'confirmed'; confirmations: number }
+  | { status: 'mempool' }
   | { status: 'notfound' }
   | { status: 'error' }
 
@@ -126,19 +123,7 @@ export async function lookupTransaction(
     if (!Number.isSafeInteger(confirmations) || confirmations < 0) {
       return { status: 'error' }
     }
-    const balances = [tx.valueBalanceZat, tx.orchard?.valueBalanceZat, tx.ironwood?.valueBalanceZat]
-    const shieldedNetZatoshis = balances.every(
-      balance => balance === undefined || (Number.isSafeInteger(balance) && balance <= 0)
-    )
-      ? balances.reduce<number>((total, balance) => total - (balance ?? 0), 0)
-      : 0
-    const shielded =
-      Number.isSafeInteger(shieldedNetZatoshis) && shieldedNetZatoshis > 0
-        ? { shieldedNetZatoshis }
-        : {}
-    return confirmations > 0
-      ? { status: 'confirmed', confirmations, ...shielded }
-      : { status: 'mempool', ...shielded }
+    return confirmations > 0 ? { status: 'confirmed', confirmations } : { status: 'mempool' }
   } catch (error) {
     if (error instanceof ZcashRpcError && error.code === TX_NOT_FOUND_RPC_CODE) {
       return { status: 'notfound' }

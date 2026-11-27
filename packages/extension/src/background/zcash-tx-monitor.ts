@@ -25,13 +25,7 @@ import type { AccountScope } from '@/core/wallet/account-scope'
 import { isAccountScopeForNetwork, resolveAccountScope } from '@/core/wallet/account-scope'
 import { useWalletStore, waitForHydration } from '@/store/wallet-store'
 import { getZcashDestinationCatchUpThreshold } from '@/lib/intents-progress'
-import { normalizeTxHash } from '@/lib/tx-history-dedup'
 import { deliverTerminalNotificationAndRemoveTask } from './tx-monitor-finalization'
-import { recordZcashReceiveObservations } from './zcash-receive-confirmations'
-import {
-  isLocalZcashShield,
-  resolveZcashReceiveObservation
-} from '@/core/wallet/transparent-history'
 
 export interface PendingZcashTx extends AccountScope {
   txHash: string
@@ -305,11 +299,7 @@ export class ZcashTxMonitor {
         const recordHash = record.txHash?.trim().toLowerCase()
         const recoverable =
           isRecoverableZcashFailure(record) &&
-          (tx.type == null ||
-            record.type === tx.type ||
-            (tx.type === 'send' &&
-              record.type === 'shield' &&
-              record.fromType === 'transparent')) &&
+          (tx.type == null || record.type === tx.type) &&
           (!recordHash || recordHash === tx.txHash.trim().toLowerCase())
         if (recoverable) {
           const rpcUrl = this.rpcUrlForCurrentNetwork()
@@ -363,21 +353,6 @@ export class ZcashTxMonitor {
       const lookup: TxLookup = rpcUrl
         ? await lookupTransaction(rpcUrl, tx.txHash)
         : { status: 'error' }
-
-      const observation = resolveZcashReceiveObservation(lookup)
-      if (observation) {
-        const addresses = useWalletStore
-          .getState()
-          .getWallet(tx.walletId)
-          ?.accounts.find(account => account.id === tx.accountId)?.addresses
-        if (isLocalZcashShield(record, addresses)) {
-          await recordZcashReceiveObservations(
-            tx.accountKey,
-            new Map([[normalizeTxHash(tx.txHash), observation]]),
-            addresses
-          )
-        }
-      }
 
       let expired = false
       if (rpcUrl && lookup.status === 'notfound' && tx.expiryHeight != null) {

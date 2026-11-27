@@ -81,7 +81,6 @@ import { estimateZcashSendTime } from '@/popup/services/send-time-estimate'
 import {
   getZcashTransparentToShieldMoveAmountError,
   isZcashSendRecipientReady,
-  resolveZcashTransparentShieldMaximum,
   resolveZcashSendRecipientInput,
   shouldRetainZcashSendRecipient
 } from '@/popup/services/zcash-send-validation'
@@ -159,7 +158,6 @@ export function useZcashTransfer({
         })
   const isSelfMove = Boolean(shieldReceive)
   const isConfidentialMove = shieldReceive?.destination === 'confidential'
-  const isNativeMove = isSelfMove && !isConfidentialMove
   const moveSource = shieldReceive
     ? isConfidentialMove
       ? shieldReceive.fundingSource
@@ -197,7 +195,7 @@ export function useZcashTransfer({
   const [maxSelected, setMaxSelected] = useState(retryDraft?.maxSelected ?? false)
   const [memo, setMemo] = useState(retryDraft?.memo ?? '')
   const [showReview, setShowReview] = useState(false)
-  const [reviewedNativeMax, setReviewedNativeMax] = useState<{
+  const [reviewedUnshieldMax, setReviewedUnshieldMax] = useState<{
     amount: string
     fee: string
   } | null>(null)
@@ -256,8 +254,10 @@ export function useZcashTransfer({
     (getFundingSourceUnavailableReason(currentWallet?.keySource, selectedFundingSource)
       ? 'shielded'
       : selectedFundingSource)
-  const isTransparentToShieldMove = isNativeMove && fundingSource === 'transparent'
-  const nativeMoveMax = isNativeMove && maxSelected
+  const isTransparentToShieldMove =
+    isSelfMove && !isConfidentialMove && fundingSource === 'transparent'
+  const nativeUnshieldMax =
+    isSelfMove && !isConfidentialMove && fundingSource === 'shielded' && maxSelected
   const actionLabel = shieldReceive?.actionLabel ?? (shieldReceive ? 'Deposit' : 'Send')
   const sendDraftPath =
     shieldReceive?.retryPath ??
@@ -396,7 +396,7 @@ export function useZcashTransfer({
     (!effectiveToAddress || isTransparentZcashAddress(effectiveToAddress)) &&
     !getFundingSourceUnavailableReason(currentWallet?.keySource, 'transparent')
   const sendPrivately = privateSendAvailable && privateSendScope === privacyScope
-  const usesBufferedMaximum = isConfidentialMove || sendPrivately
+  const usesBufferedMaximum = isSelfMove || sendPrivately || Boolean(shieldReceive)
   const cachedAssetPrices = useCachedAssetPrices(currentNetwork, active && usesBufferedMaximum)
   const memoUnsupported = Boolean(!isSelfMove && !sendPrivately && memo && !recipientSupportsMemo)
   const {
@@ -437,30 +437,19 @@ export function useZcashTransfer({
     feeTier,
     fundingSource,
     scopeKey: feeSyncScope,
-    timeoutMs: isNativeMove ? 3_000 : undefined,
     enabled:
       active &&
       balanceKnown &&
       !syncBlocked &&
       !usesBufferedMaximum &&
-      (!isNativeMove || nativeMoveMax) &&
       !moveUnavailable &&
       !!effectiveToAddress &&
       !!fromAddress &&
       !recipientFormatError
   })
-  const exactMaximum = isTransparentToShieldMove
-    ? resolveZcashTransparentShieldMaximum(balance, maxTransfer.maxAmount, maxTransfer.fee)
-    : maxTransfer.maxAmount
-  const nativeShieldMaxExceedsBalance =
-    isTransparentToShieldMove && maxTransfer.maxAmount !== null && exactMaximum === null
-  const nativeMaxFallback = isNativeMove && (syncBlocked || maxTransfer.timedOut)
+  const exactMaximum = maxTransfer.maxAmount
   const isMaxTransferAmount = !!exactMaximum && safeBig(amount || '0').eq(exactMaximum)
   const staleSelectedMax = maxSelected && !!exactMaximum && !isMaxTransferAmount
-  const isMaxFeeMode =
-    (nativeMoveMax && !nativeMaxFallback) ||
-    (maxSelected && exactMaximum !== null) ||
-    isMaxTransferAmount
   const feeEstimate = useFeeEstimate({
     type: 'send',
     to: effectiveToAddress,
@@ -482,9 +471,11 @@ export function useZcashTransfer({
         )) &&
       !!effectiveToAddress &&
       !recipientFormatError &&
-      !isMaxFeeMode
+      (!maxSelected || exactMaximum === null) &&
+      !isMaxTransferAmount
   })
 
+  const isMaxFeeMode = (maxSelected && exactMaximum !== null) || isMaxTransferAmount
   const displayedFeeByTier = isMaxFeeMode ? maxTransfer.feeByTier : feeEstimate.feeByTier
   const displayedFeeLoadingByTier = isMaxFeeMode
     ? maxTransfer.loadingByTier
@@ -492,21 +483,16 @@ export function useZcashTransfer({
   const feeRequired =
     !moveUnavailable &&
     !!effectiveToAddress &&
-    ((nativeMoveMax && !nativeMaxFallback) || safeBig(amount || '0').gt(0)) &&
+    safeBig(amount || '0').gt(0) &&
     recipientFormatError === null
-  const feeError =
-    feeRequired &&
-    (isMaxFeeMode ? maxTransfer.error || nativeShieldMaxExceedsBalance : feeEstimate.error)
+  const feeError = feeRequired && (isMaxFeeMode ? maxTransfer.error : feeEstimate.error)
   const feeErrorMessage = isMaxFeeMode
-    ? (maxTransfer.errorMessage ??
-      (nativeShieldMaxExceedsBalance ? getFundingAmountErrorCopy('fee') : undefined) ??
-      'Could not calculate maximum amount')
+    ? (maxTransfer.errorMessage ?? 'Could not calculate maximum amount')
     : (feeEstimate.errorMessage ?? 'Could not estimate network fee')
   const feeReady =
     feeRequired &&
     !feeError &&
     !staleSelectedMax &&
-    (!nativeMoveMax || nativeMaxFallback || isMaxTransferAmount) &&
     !!(isMaxFeeMode ? maxTransfer.feeQuote : feeEstimate.feeQuote) &&
     (isMaxFeeMode ? maxTransfer.feeQuote!.expiresAt : feeEstimate.feeQuote!.expiresAt) >
       Date.now() &&
@@ -516,11 +502,11 @@ export function useZcashTransfer({
         !!maxTransfer.fee &&
         safeBig(maxTransfer.fee).gt(0)
       : !feeEstimate.loading && !!feeEstimate.feeQuote && feeEstimate.feeZats !== null)
-  const displayedFeeLoading = feeRequired && !syncBlocked && !feeReady && !feeError
+  const displayedFeeLoading = feeRequired && !feeReady && !feeError
   const retryFeeEstimate = () => {
     if (moveUnavailable) return
     if (isMaxFeeMode) void maxTransfer.request()
-    else if (maxSelected && !usesBufferedMaximum && !nativeMaxFallback) {
+    else if (maxSelected && !usesBufferedMaximum) {
       const retryAccountScope = getActiveAccountScopeKey()
       const retryTarget = effectiveToAddress
       const retryAmount = amount
@@ -580,28 +566,15 @@ export function useZcashTransfer({
     maximumAmount: exactMaximum,
     capTransparentToShieldable: isTransparentToShieldMove
   })
-  const nativeBufferedMaximum = nativeMaxFallback
-    ? formatBaseUnitDecimalAmount(
-        resolveTransferMaximum({
-          mode: 'reserve',
-          family: 'zcash',
-          availableRaw: parseDisplayUnitAmount(
-            isTransparentToShieldMove && safeBig(shieldableBalance).lt(sourceBalance.available)
-              ? shieldableBalance
-              : sourceBalance.available,
-            ZEC_DECIMALS
-          ),
-          decimals: ZEC_DECIMALS
-        }),
-        ZEC_DECIMALS
-      )
-    : null
   const effectiveMaxStr = usesBufferedMaximum
     ? formatBaseUnitDecimalAmount(
         resolveTransferMaximum({
           mode: 'reserve',
           family: 'zcash',
-          availableRaw: parseDisplayUnitAmount(sourceBalance.available, ZEC_DECIMALS),
+          availableRaw: parseDisplayUnitAmount(
+            isTransparentToShieldMove ? shieldableBalance : sourceBalance.available,
+            ZEC_DECIMALS
+          ),
           decimals: ZEC_DECIMALS,
           priceUsd: findAssetPrice(
             cachedAssetPrices,
@@ -610,13 +583,7 @@ export function useZcashTransfer({
         }),
         ZEC_DECIMALS
       )
-    : isNativeMove
-      ? nativeBufferedMaximum === null
-        ? (exactMaximum ?? '')
-        : safeBig(nativeBufferedMaximum).lt(feeAdjustedAvailable)
-          ? nativeBufferedMaximum
-          : feeAdjustedAvailable
-      : feeAdjustedAvailable
+    : feeAdjustedAvailable
   const amountError = isTransparentToShieldMove
     ? null
     : getFundingAmountError(amount, sourceBalance, feeAdjustedAvailable)
@@ -633,11 +600,11 @@ export function useZcashTransfer({
     balanceKnown && !!fromAddress && safeBig(amount || '0').gt(0) && !reviewInsufficient
   const selectedFeeZec = isMaxFeeMode ? (maxTransfer.fee ?? estimatedFeeZec) : estimatedFeeZec
   const selectedFeeQuote = isMaxFeeMode ? maxTransfer.feeQuote : feeEstimate.feeQuote
-  const nativeMaxChanged = Boolean(
-    nativeMoveMax &&
-    reviewedNativeMax &&
+  const unshieldMaxChanges = Boolean(
+    nativeUnshieldMax &&
+    reviewedUnshieldMax &&
     feeReady &&
-    (amount !== reviewedNativeMax.amount || selectedFeeZec !== reviewedNativeMax.fee)
+    (amount !== reviewedUnshieldMax.amount || selectedFeeZec !== reviewedUnshieldMax.fee)
   )
   const latestFee = useRef({
     selectedFeeQuote,
@@ -663,9 +630,15 @@ export function useZcashTransfer({
   }
 
   useEffect(() => {
-    if (showReview && staleSelectedMax && !isConfirming && !isConfidentialMove && !nativeMoveMax)
+    if (
+      showReview &&
+      staleSelectedMax &&
+      !isConfirming &&
+      !isConfidentialMove &&
+      !nativeUnshieldMax
+    )
       setShowReview(false)
-  }, [showReview, staleSelectedMax, isConfirming, isConfidentialMove, nativeMoveMax])
+  }, [showReview, staleSelectedMax, isConfirming, isConfidentialMove, nativeUnshieldMax])
 
   useEffect(() => {
     if (active && maxSelected && effectiveMaxStr && !(usesBufferedMaximum && showReview)) {
@@ -782,7 +755,7 @@ export function useZcashTransfer({
         isZcashSendRecipientReady(effectiveToAddress, recipientFormatError, zns.loading))
     ) {
       if (isConfidentialMove) beginMoveReview()
-      setReviewedNativeMax(nativeMoveMax ? { amount, fee: selectedFeeZec } : null)
+      setReviewedUnshieldMax(nativeUnshieldMax ? { amount, fee: selectedFeeZec } : null)
       setShowReview(true)
     }
   }
@@ -805,7 +778,7 @@ export function useZcashTransfer({
       !currentAccount ||
       syncBlocked ||
       moveUnavailable ||
-      nativeMaxChanged ||
+      unshieldMaxChanges ||
       (isConfidentialMove && !moveReviewReady)
     )
       return
@@ -1021,9 +994,7 @@ export function useZcashTransfer({
                 destinationChain: 'zcash'
               }
             }
-          : isTransparentToShieldMove
-            ? { txType: 'shield' as const }
-            : {}),
+          : {}),
         ...(isSelfMove ? { expectedAccountKey: executionScope.accountKey } : {}),
         memo: effectiveMemo,
         fee: selectedFeeZec,
@@ -1134,7 +1105,6 @@ export function useZcashTransfer({
   const privateRoute = privatePreviewReady ? privatePreview : null
   const privatePreviewNotice = getSwapQuoteNotice(privatePreviewError)
   const moveQuoteNotice = getSwapQuoteNotice(moveQuoteError)
-  const displayedBalance = isTransparentToShieldMove ? shieldableBalance : sourceBalance.available
   return {
     available: Boolean(currentAccount),
     networkName,
@@ -1172,7 +1142,11 @@ export function useZcashTransfer({
     },
     amountField: { value: amount, onChange: changeAmount, invalid: reviewInsufficient },
     amountError: amountErrorCopy,
-    balance: balanceKnown ? displayedBalance : null,
+    balance: balanceKnown
+      ? isTransparentToShieldMove
+        ? shieldableBalance
+        : sourceBalance.available
+      : null,
     balanceError:
       !balanceKnown && balanceReadStatus === 'error' && retryBalance
         ? { message: 'ZEC balance unavailable.', onRetry: retryBalance }
@@ -1191,18 +1165,14 @@ export function useZcashTransfer({
       disabled:
         !fromAddress ||
         !balanceKnown ||
-        (isNativeMove
-          ? safeBig(displayedBalance).lte(0) ||
-            (nativeMaxFallback && safeBig(effectiveMaxStr).lte(0)) ||
-            (exactMaximum !== null && safeBig(exactMaximum).lte(0))
-          : safeBig(effectiveMaxStr).lte(0)) ||
+        safeBig(effectiveMaxStr).lte(0) ||
         (isSelfMove
           ? (!isConfidentialMove && !effectiveToAddress) || moveUnavailable
           : !effectiveToAddress || zns.loading),
       onClick: () => {
         setMaxSelected(true)
         setAmount(effectiveMaxStr)
-        if (!usesBufferedMaximum && !nativeMaxFallback) void maxTransfer.request()
+        if (!usesBufferedMaximum) void maxTransfer.request()
       }
     },
     privacy: privateSendAvailable
@@ -1309,11 +1279,11 @@ export function useZcashTransfer({
       feeControl,
       quote: reviewedMoveQuote,
       changes: moveReviewStatus.changes,
-      error: nativeMaxChanged
+      error: unshieldMaxChanges
         ? { message: 'The amount or network fee changed. Review the updated transfer.' }
-        : nativeMoveMax && feeError
+        : nativeUnshieldMax && feeError
           ? { message: feeErrorMessage, onRetry: retryFeeEstimate }
-          : nativeMoveMax && feeCalculating
+          : nativeUnshieldMax && feeCalculating
             ? { message: 'Refreshing network fee…', tone: 'muted' as const }
             : isConfidentialMove && !moveReviewReady && !moveReviewStatus.acceptLabel
               ? {
@@ -1336,13 +1306,13 @@ export function useZcashTransfer({
                   : null,
       confirmLabel: isHardwareSigning
         ? 'Waiting for wallet...'
-        : (moveReviewStatus.acceptLabel ?? (nativeMaxChanged ? 'Accept changes' : 'Confirm')),
+        : (moveReviewStatus.acceptLabel ?? (unshieldMaxChanges ? 'Accept changes' : 'Confirm')),
       confirmTone:
-        moveReviewStatus.acceptLabel || nativeMaxChanged
+        moveReviewStatus.acceptLabel || unshieldMaxChanges
           ? ('warning' as const)
           : ('default' as const),
       preparing:
-        showReview && !syncBlocked && (moveQuoteLoading || (!nativeMoveMax && feeCalculating)),
+        showReview && !syncBlocked && (moveQuoteLoading || (!nativeUnshieldMax && feeCalculating)),
       confirming: isConfirming,
       submitting: isConfirming && !isHardwareWallet,
       confirmDisabled:
@@ -1357,8 +1327,8 @@ export function useZcashTransfer({
       onCancel: () => setReviewOpen(false),
       onConfirm: moveReviewStatus.acceptLabel
         ? acceptMoveReview
-        : nativeMaxChanged
-          ? () => setReviewedNativeMax({ amount, fee: selectedFeeZec })
+        : unshieldMaxChanges
+          ? () => setReviewedUnshieldMax({ amount, fee: selectedFeeZec })
           : () => void handleConfirm()
     }
   }

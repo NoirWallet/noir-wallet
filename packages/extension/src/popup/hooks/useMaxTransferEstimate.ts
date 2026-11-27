@@ -22,7 +22,6 @@ interface TierEstimate {
   loading: boolean
   error: boolean
   errorMessage: string | null
-  timedOut: boolean
   request: (refresh?: boolean) => Promise<void>
   update: (estimate: MaxTransferEstimate, to: string) => void
   estimateForTarget: (to: string) => Promise<MaxTransferEstimate | null>
@@ -40,7 +39,6 @@ interface UseMaxTransferEstimateArgs {
   fundingSource?: FundingSource
   enabled?: boolean
   scopeKey?: string
-  timeoutMs?: number
 }
 
 function tierState(
@@ -48,10 +46,7 @@ function tierState(
   to: string | undefined,
   tier: FeeTier,
   active: boolean
-): Pick<
-  TierEstimate,
-  'maxAmount' | 'fee' | 'feeQuote' | 'loading' | 'error' | 'errorMessage' | 'timedOut'
-> {
+): Pick<TierEstimate, 'maxAmount' | 'fee' | 'feeQuote' | 'loading' | 'error' | 'errorMessage'> {
   if (!active || !to)
     return {
       maxAmount: null,
@@ -59,18 +54,16 @@ function tierState(
       feeQuote: null,
       loading: false,
       error: false,
-      errorMessage: null,
-      timedOut: false
+      errorMessage: null
     }
-  const { estimate, error, errorMessage, timedOut } = cache.peek(to, tier)
+  const { estimate, error, errorMessage } = cache.peek(to, tier)
   return {
     maxAmount: estimate ? formatBaseUnitDecimalAmount(estimate.maxAmountZats, ZEC_DECIMALS) : null,
     fee: estimate ? formatBaseUnitDecimalAmount(estimate.feeZats, ZEC_DECIMALS) : null,
     feeQuote: estimate?.feeQuote ?? null,
     loading: !estimate && !error,
     error,
-    errorMessage,
-    timedOut: timedOut === true
+    errorMessage
   }
 }
 
@@ -81,8 +74,7 @@ export function useMaxTransferEstimate({
   feeTier,
   fundingSource = 'shielded',
   enabled = true,
-  scopeKey: estimateScopeKey,
-  timeoutMs
+  scopeKey: estimateScopeKey
 }: UseMaxTransferEstimateArgs): MaxTransferEstimateState {
   const walletId = useWalletStore(state => state.currentWalletId)
   const accountId = useWalletStore(state => state.currentAccountId)
@@ -104,8 +96,7 @@ export function useMaxTransferEstimate({
     pending: sourceBalance.pending,
     rpcPreference,
     rpcScope,
-    scopeKey: estimateScopeKey,
-    timeoutMs
+    scopeKey: estimateScopeKey
   }
   const mountedRef = useRef(false)
   const enabledRef = useRef(enabled)

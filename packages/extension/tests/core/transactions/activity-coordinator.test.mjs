@@ -13,10 +13,6 @@ import {
   parseTransactionSegmentId
 } from '../../../src/core/transactions/domain/index.ts'
 import { ActivityCoordinator } from '../../../src/infrastructure/activity/index.ts'
-import {
-  applyZcashReceiveObservations,
-  readZcashReceiveObservations
-} from '../../../src/core/wallet/transparent-history.ts'
 import { createEvmTransferGraph } from '../../../src/infrastructure/chains/evm/index.ts'
 import { InMemoryTransactionRepository } from '../../../src/infrastructure/persistence/repositories/index.ts'
 
@@ -283,72 +279,6 @@ test.describe('Activity coordinator', () => {
     expect(await readCredits([unshield])).toMatchObject([
       { id: `receive:${unshield.id}`, assetDomains: ['public'] }
     ])
-  })
-
-  test('shows a native Shield credit as soon as RPC sees it and tracks its confirmations', async () => {
-    const txHash = 'e'.repeat(64)
-    const addresses = { transparent: 'owned-transparent', shielded: 'owned-shielded' }
-    const externalSend = zcashTransaction({
-      id: 'tx_external',
-      type: 'send',
-      fromType: 'transparent',
-      to: 'external-shielded',
-      txHash: 'f'.repeat(64),
-      status: 'pending'
-    })
-    let transactions = [
-      zcashTransaction({
-        id: 'tx_shield',
-        type: 'send',
-        fromType: 'transparent',
-        to: addresses.shielded,
-        txHash,
-        status: 'pending'
-      }),
-      externalSend
-    ]
-    const coordinator = new ActivityCoordinator({
-      storageRepository: storage(),
-      transactionRepository: new InMemoryTransactionRepository(),
-      loadZcashTransactions: async () => transactions
-    })
-    const readCredit = async () =>
-      (await coordinator.readActive()).items.find(item => item.kind === 'receive')
-
-    expect(await readCredit()).toBeUndefined()
-    const originalFetch = globalThis.fetch
-    try {
-      for (const [confirmations, status, orchard] of [
-        [0, 'broadcast', undefined],
-        [1, 'confirming', undefined],
-        [3, 'final', { valueBalanceZat: -99000 }]
-      ]) {
-        globalThis.fetch = async () =>
-          Response.json({
-            result: { txid: txHash, confirmations, orchard }
-          })
-        const observations = await readZcashReceiveObservations(
-          transactions,
-          'https://node.example',
-          undefined,
-          addresses
-        )
-        expect([...observations.keys()]).toEqual([txHash])
-        transactions = applyZcashReceiveObservations(transactions, observations, addresses)
-        const credit = await readCredit()
-        expect(credit).toMatchObject({
-          id: 'receive:tx_shield',
-          status,
-          assetDomains: ['shield'],
-          segments: [{ status, evidence: { confirmations, requiredConfirmations: 3 } }]
-        })
-        expect(credit.snapshot.primaryAmount?.amountRaw).toBe(orchard ? '99000' : undefined)
-        expect(transactions[0].status).toBe('pending')
-        expect(transactions[1]).toBe(externalSend)
-      }
-    } finally {
-      globalThis.fetch = originalFetch
-    }
   })
 
   test('returns null without an active generation or Account', async () => {

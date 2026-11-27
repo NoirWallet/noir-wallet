@@ -1,4 +1,4 @@
-import { DedupPromise, TimeoutError, withTimeout } from '@/lib/async-utils'
+import { DedupPromise } from '@/lib/async-utils'
 import { safeBig } from '@/lib/big'
 import { marginalFeeForTier } from '@/core/zcash/fee-policy'
 import { classifyError } from '@/lib/errors'
@@ -21,7 +21,6 @@ export interface MaxTransferContext {
   readonly rpcPreference: unknown
   readonly rpcScope: string
   readonly scopeKey?: string
-  readonly timeoutMs?: number
 }
 
 type Client = Pick<typeof zcashWalletRuntimeClient, 'getFeeQuote' | 'estimateMaxTransfer'>
@@ -42,8 +41,7 @@ function contextKey(context: MaxTransferContext): string {
     context.pending,
     context.rpcPreference,
     context.rpcScope,
-    context.scopeKey,
-    context.timeoutMs
+    context.scopeKey
   ])
 }
 
@@ -73,7 +71,6 @@ export class MaxTransferEstimateCache {
   private estimates = new Map<string, MaxTransferEstimate>()
   private pending = new Map<string, Promise<MaxTransferEstimate | null>>()
   private errors = new Map<string, string>()
-  private timedOut = new Set<string>()
   private revisions = new Map<string, number>()
 
   constructor(
@@ -105,7 +102,6 @@ export class MaxTransferEstimateCache {
     this.estimates.clear()
     this.pending.clear()
     this.errors.clear()
-    this.timedOut.clear()
     this.revisions.clear()
   }
 
@@ -117,7 +113,6 @@ export class MaxTransferEstimateCache {
     pending: boolean
     error: boolean
     errorMessage: string | null
-    timedOut?: true
   } {
     const key = entryKey(to, tier)
     const estimate = this.estimates.get(key)
@@ -128,8 +123,7 @@ export class MaxTransferEstimateCache {
           : null,
       pending: this.pending.has(key),
       error: this.errors.has(key),
-      errorMessage: this.errors.get(key) ?? null,
-      ...(this.timedOut.has(key) ? { timedOut: true } : {})
+      errorMessage: this.errors.get(key) ?? null
     }
   }
 
@@ -149,37 +143,26 @@ export class MaxTransferEstimateCache {
     if (this.errors.has(key) && !retry) return null
 
     this.errors.delete(key)
-    this.timedOut.delete(key)
     const generation = this.generation
     const revision = this.revisions.get(key) ?? 0
     const { memo, fundingSource } = this.context
-    const timeoutMs = this.context.timeoutMs
-    const deadline = timeoutMs === undefined ? undefined : this.now() + timeoutMs
-    const withinDeadline = <Result>(operation: () => Promise<Result>) => {
-      if (deadline === undefined) return operation()
-      const remainingMs = deadline - this.now()
-      if (remainingMs <= 0) throw new TimeoutError('Zcash Max estimate timed out')
-      return withTimeout(operation(), remainingMs, 'Zcash Max estimate')
-    }
     const promise = (async () => {
       let stage = 'network fee quote'
       try {
-        let quote = await this.getQuote(generation, timeoutMs, withinDeadline)
+        let quote = await this.getQuote(generation)
         if (!quote || generation !== this.generation) return null
         const estimateWithQuote = (selected: FeeQuote) =>
-          withinDeadline(() =>
-            resolveTransferMaximum({
-              mode: 'exact',
-              estimate: () =>
-                this.client.estimateMaxTransfer({
-                  to,
-                  memo,
-                  fundingSource,
-                  marginalFeeZats: marginalFeeForTier(tier, selected.standardMarginalFeeZats),
-                  feeQuoteId: selected.id
-                })
-            })
-          )
+          resolveTransferMaximum({
+            mode: 'exact',
+            estimate: () =>
+              this.client.estimateMaxTransfer({
+                to,
+                memo,
+                fundingSource,
+                marginalFeeZats: marginalFeeForTier(tier, selected.standardMarginalFeeZats),
+                feeQuoteId: selected.id
+              })
+          })
         let estimate: MaxTransferEstimate
         try {
           stage = 'maximum transfer proposal'
@@ -197,7 +180,7 @@ export class MaxTransferEstimateCache {
           // Refresh this read-only preview once; execution still reviews its fee.
           if (this.quote?.id === quote.id) this.quote = null
           stage = 'network fee quote refresh'
-          quote = await this.getQuote(generation, timeoutMs, withinDeadline)
+          quote = await this.getQuote(generation)
           if (!quote || generation !== this.generation) return null
           stage = 'maximum transfer proposal'
           estimate = await estimateWithQuote(quote)
@@ -214,7 +197,6 @@ export class MaxTransferEstimateCache {
         if (generation === this.generation && (this.revisions.get(key) ?? 0) === revision) {
           const classified = classifyError(cause)
           this.errors.set(key, sanitizeDiagnosticMessage(classified.technicalMessage))
-          if (cause instanceof TimeoutError) this.timedOut.add(key)
           logger.warn(
             `Zcash Max estimate failed at ${stage}`,
             this.context.walletId ?? undefined,
@@ -239,7 +221,6 @@ export class MaxTransferEstimateCache {
   update(to: string, tier: FeeTier, estimate: MaxTransferEstimate): void {
     if (!this.canEstimate || !to) return
     const key = entryKey(to, tier)
-    this.timedOut.delete(key)
     this.revisions.set(key, (this.revisions.get(key) ?? 0) + 1)
     if (!validEstimate(estimate, tier, this.now())) {
       this.estimates.delete(key)
@@ -248,7 +229,6 @@ export class MaxTransferEstimateCache {
       if (this.quote?.id !== estimate.feeQuote.id) {
         this.estimates.clear()
         this.errors.clear()
-        this.timedOut.clear()
       }
       this.quote = estimate.feeQuote
       this.estimates.set(key, estimate)
@@ -264,25 +244,13 @@ export class MaxTransferEstimateCache {
     this.estimates.clear()
     this.pending.clear()
     this.errors.clear()
-    this.timedOut.clear()
     this.revisions.clear()
     this.onChange()
   }
 
-  private async getQuote(
-    generation: number,
-    timeoutMs: number | undefined,
-    withinDeadline: (operation: () => Promise<FeeQuote>) => Promise<FeeQuote>
-  ): Promise<FeeQuote | null> {
+  private async getQuote(generation: number): Promise<FeeQuote | null> {
     if (this.quote && this.quote.expiresAt > this.now()) return this.quote
-    const quote = await withinDeadline(() =>
-      this.quoteRequest.run(() => {
-        const request = this.client.getFeeQuote()
-        return timeoutMs === undefined
-          ? request
-          : withTimeout(request, timeoutMs, 'Zcash fee quote')
-      })
-    )
+    const quote = await this.quoteRequest.run(() => this.client.getFeeQuote())
     if (generation !== this.generation) return null
     if (this.quote && this.quote.expiresAt > this.now()) return this.quote
     if (quote.expiresAt <= this.now()) throw new Error('Expired maximum transfer fee quote')

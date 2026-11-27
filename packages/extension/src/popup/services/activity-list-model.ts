@@ -101,24 +101,15 @@ export function filterActivityItems(input: {
     }
     const primaryAssetId = item.snapshot?.primaryAmount?.assetId
     const counterAssetId = item.snapshot?.counterAmount?.assetId
-    const itemChainId = resolveActivityChainId(item)
-    const shieldReceiptAssetId =
-      !primaryAssetId &&
-      item.source === 'zcash-v1' &&
-      item.kind === 'receive' &&
-      item.assetDomains?.includes('shield') &&
-      itemChainId &&
-      ZCASH_CHAIN_IDS.has(itemChainId)
-        ? `${itemChainId}/slip44:133`
-        : undefined
     const originMatchesAsset =
       !input.assetId ||
       primaryAssetId === input.assetId ||
       counterAssetId === input.assetId ||
-      shieldReceiptAssetId === input.assetId ||
       getActivityAssetEffects(item)?.changes.some(change => change.assetId === input.assetId)
     const chainId =
-      requestedAssetChainId && originMatchesAsset ? requestedAssetChainId : itemChainId
+      requestedAssetChainId && originMatchesAsset
+        ? requestedAssetChainId
+        : resolveActivityChainId(item)
     const hasConfidentialIntentsSegment = item.segments.some(
       segment =>
         segment.target.kind === 'protocol' && segment.target.provider === 'Confidential Intents'

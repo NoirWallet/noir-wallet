@@ -39,23 +39,6 @@ export function getRequiredConfirmations(
     : WALLET_CONFIG.MIN_CONFIRMATIONS
 }
 
-export function resolveZcashReceiveStatus(
-  confirmations: number,
-  trust: ConfirmationTrust = 'untrusted'
-): ConfirmationState {
-  const requiredConfirmations = getRequiredConfirmations('receive', trust)
-  return {
-    status:
-      confirmations >= requiredConfirmations
-        ? 'success'
-        : confirmations > 0
-          ? 'confirming'
-          : 'pending',
-    confirmations,
-    requiredConfirmations
-  }
-}
-
 export function isRecoverableZcashFailure(
   transaction: Pick<Transaction, 'id' | 'type' | 'status' | 'txHash'>
 ): boolean {
@@ -87,8 +70,6 @@ export function resolveMinedTransactionStatus(
   }
 
   const confirmations = Math.max(0, chainTip - minedHeight + 1)
-  if (type === 'receive') return resolveZcashReceiveStatus(confirmations, trust)
-
   return {
     status:
       confirmations >= requiredConfirmations && scannedHeight >= chainTip
@@ -175,7 +156,7 @@ export function mergeZcashReceiveObservation(
   const preserveConfirmation =
     (transaction.status === 'success' && observation.status !== 'success') ||
     ((transaction.status === 'success' || transaction.status === 'confirming') &&
-      observation.status !== 'failed' &&
+      (observation.status === 'success' || observation.status === 'confirming') &&
       transaction.requiredConfirmations === observation.requiredConfirmations &&
       confirmations < (transaction.confirmations ?? 0))
 
@@ -186,7 +167,6 @@ export function mergeZcashReceiveObservation(
       ...(transaction.depositAddress ? { depositAddress: transaction.depositAddress } : {}),
       ...(preserveConfirmation
         ? {
-            status: transaction.status,
             confirmations: transaction.confirmations,
             requiredConfirmations: transaction.requiredConfirmations
           }
@@ -200,6 +180,7 @@ export function synchronizeInternalTransferConfirmations(
   transactions: Transaction[]
 ): Transaction[] {
   const sendConfirmationsByHash = new Map<string, number>()
+  const unsettledSendHashes = new Set<string>()
 
   for (const transaction of transactions) {
     if (
@@ -212,6 +193,7 @@ export function synchronizeInternalTransferConfirmations(
 
     const txHash = normalizeTxHash(transaction.txHash)
     if (!txHash) continue
+    if (transaction.status === 'confirming') unsettledSendHashes.add(txHash)
 
     const confirmations = Math.max(
       transaction.confirmations ?? 0,
@@ -243,8 +225,16 @@ export function synchronizeInternalTransferConfirmations(
 
     if (!isTransparentReceive(transaction)) return transaction
 
+    const requiredConfirmations = getRequiredConfirmations('receive', 'trusted')
     const confirmations = Math.max(transaction.confirmations ?? 0, confirmationHint)
 
-    return mergeTransactionUpdate(transaction, resolveZcashReceiveStatus(confirmations, 'trusted'))
+    return mergeTransactionUpdate(transaction, {
+      status:
+        !unsettledSendHashes.has(txHash) && confirmations >= requiredConfirmations
+          ? 'success'
+          : 'confirming',
+      confirmations,
+      requiredConfirmations
+    })
   })
 }

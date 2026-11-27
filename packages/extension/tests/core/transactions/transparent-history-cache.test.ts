@@ -2,12 +2,12 @@ import { test } from 'node:test'
 import { expect } from '@playwright/test'
 import { partitionVerboseTransactions } from '../../../src/core/wallet/transparent-history-cache'
 import {
-  applyZcashReceiveObservations,
+  applyExternalReceiveConfirmations,
   fetchTransparentReceiveTransactions,
   mapVerboseTransactionToReceive,
   mergeTransactionsWithWasmHistory,
   mergeTransactionsWithTransparentReceives,
-  readZcashReceiveObservations
+  readExternalReceiveConfirmations
 } from '../../../src/core/wallet/transparent-history'
 import type { VerboseTransaction } from '../../../src/lib/zcash-node-rpc'
 import type { AccountData, Transaction } from '../../../src/types/wallet'
@@ -321,22 +321,14 @@ test.describe('Transparent history transaction cache', () => {
           }
         })
       }
-      const observed = await readZcashReceiveObservations(transactions, 'https://node.example')
-      expect(queried.sort()).toEqual([
-        matureHash,
-        immatureHash,
-        mismatchedHash,
-        linkedHash,
-        transparentHash
-      ])
-      const updated = applyZcashReceiveObservations(transactions, observed)
+      const observed = await readExternalReceiveConfirmations(transactions, 'https://node.example')
+      expect(queried.sort()).toEqual([matureHash, immatureHash, mismatchedHash, transparentHash])
+      const updated = applyExternalReceiveConfirmations(transactions, observed)
       expect(updated).toEqual([
         { ...staleWasmReceipt, status: 'success', confirmations: 41 },
         { ...transactions[1], confirmations: 9 },
         { ...transactions[2], status: 'success', confirmations: 41 },
-        transactions[3],
-        { ...transactions[4], status: 'success', confirmations: 41 },
-        linkedSend
+        ...transactions.slice(3)
       ])
       const merged = mergeTransactionsWithWasmHistory(
         updated,
@@ -354,7 +346,7 @@ test.describe('Transparent history transaction cache', () => {
         requiredConfirmations: 10
       })
       expect(
-        applyZcashReceiveObservations([{ ...staleWasmReceipt, confirmations: 41 }], observed)[0]
+        applyExternalReceiveConfirmations([{ ...staleWasmReceipt, confirmations: 41 }], observed)[0]
       ).toMatchObject({ status: 'success', confirmations: 41 })
     } finally {
       globalThis.fetch = originalFetch
