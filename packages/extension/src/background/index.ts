@@ -108,7 +108,6 @@ import {
   clearPreparedHardwareSignRequest,
   consumePreparedHardwareSignRequest,
   hardwareSignRequestDeadline,
-  isHardwareDAppAuthorizationCurrent,
   isHardwareSignRequestFresh,
   readHardwareSignRequest,
   writePreparedHardwareSignRequest,
@@ -7839,27 +7838,21 @@ async function assertHardwareDAppBinding(
   request: NonNullable<Awaited<ReturnType<typeof readHardwareSignRequest>>>
 ): Promise<void> {
   if (walletLockCleanupPending) throw new Error('Wallet is locked')
-  if (request.kind !== 'send' || !request.origin || !request.dappRequestId) {
+  if (
+    request.kind !== 'send' ||
+    !request.origin ||
+    !request.dappRequestId ||
+    request.authorizationRevision === undefined
+  ) {
     throw new Error('Invalid dApp hardware signing request.')
   }
   if (
-    !isHardwareDAppAuthorizationCurrent(request, await dappManager.getAuthorization(request.origin))
-  ) {
-    throw new Error('This site authorization changed. Review the request again.')
-  }
-  const snapshot = await dappHandler.getAuthorizedActiveAccountSnapshot(request.origin)
-  const connection = await dappManager.getConnection(request.origin)
-  const boundAccount =
-    connection?.boundWalletId && connection.boundAccountId
-      ? useWalletStore.getState().getAccount(connection.boundWalletId, connection.boundAccountId)
-      : null
-  if (
-    connection?.boundWalletId !== request.walletId ||
-    connection.boundAccountId !== request.accountId ||
-    !boundAccount ||
-    snapshot?.transparent !== boundAccount.addresses.transparent ||
-    snapshot.shielded !== boundAccount.addresses.shielded ||
-    !isHardwareDAppAuthorizationCurrent(request, await dappManager.getAuthorization(request.origin))
+    !(await dappHandler.isAuthorizedZcashAccountCurrent(
+      request.origin,
+      request.walletId,
+      request.accountId,
+      request.authorizationRevision
+    ))
   ) {
     throw new Error('This site is no longer authorized. Review the request again.')
   }
