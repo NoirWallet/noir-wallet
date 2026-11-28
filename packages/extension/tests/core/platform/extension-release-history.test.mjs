@@ -81,6 +81,47 @@ describe('Release commit history', () => {
     )
   })
 
+  it('uses the previous published stable release even when the histories diverge', async () => {
+    const release = (tagName, flags = {}) => ({
+      tag_name: tagName,
+      draft: false,
+      prerelease: false,
+      ...flags
+    })
+    const sourceSha = sha('e')
+    const result = await collectReleaseCommits({
+      sourceSha,
+      productionVersion: '2.1.12',
+      request: async route => {
+        if (route === 'releases?per_page=100') {
+          return [
+            release('v2.1.9'),
+            release('v2.1.11-rc.1', { prerelease: true }),
+            release('v2.1.11', { draft: true }),
+            release('v2.1.12'),
+            release('v2.1.13'),
+            release('v2.1.10')
+          ]
+        }
+        if (route === `compare/v2.1.10...${sourceSha}`) {
+          return {
+            status: 'diverged',
+            commits: [
+              commit('a', 'fix(extension): restore Shield transfers'),
+              commit('b', 'chore(deps): update'),
+              commit('e', 'release: Noir Wallet 2.1.12')
+            ]
+          }
+        }
+        assert.fail(`Unexpected GitHub route ${route}`)
+      }
+    })
+    assert.deepEqual(
+      result.map(entry => entry.sha),
+      [sourceSha, sha('a')]
+    )
+  })
+
   it('bounds long subjects and validates serialized commit entries', async () => {
     const [entry] = await collectReleaseCommits({
       sourceSha: sha('a'),
@@ -114,7 +155,7 @@ describe('Release commit history', () => {
     assert.equal((body.match(/^- /gm) || []).length, 1)
     assert.match(
       formatReleaseCommitLog('NoirWallet/noir-wallet', []),
-      /Infrastructure changes only\./
+      /No eligible commits to list\./
     )
     assert.throws(
       () => formatReleaseCommitLog('owner/repo)\nattack', []),

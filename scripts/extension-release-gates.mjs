@@ -348,7 +348,11 @@ if (isCli) {
         writeOutputs({
           ...source,
           commits_json: JSON.stringify(
-            await collectReleaseCommits({ sourceSha: source.source_sha, request })
+            await collectReleaseCommits({
+              sourceSha: source.source_sha,
+              productionVersion: source.mode === 'candidate' ? source.version : undefined,
+              request
+            })
           )
         })
       } else if (env.GITHUB_STEP_SUMMARY) {
